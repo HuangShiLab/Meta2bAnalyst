@@ -28,8 +28,9 @@ class TestDataParser:
         assert df.shape == sample_feature_table.shape
 
     def test_parse_csv_with_name_header(self):
-        """Test CSV with #NAME header."""
-        lines = ["#NAME\t\tSample_01\tSample_02\tSample_03"]
+        """Test CSV/TSV with #NAME header prefix."""
+        lines = ["#NAME"]
+        lines += ["\tSample_01\tSample_02\tSample_03"]
         lines += ["Feature_01\t10\t20\t30"]
         lines += ["Feature_02\t5\t15\t25"]
         with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:

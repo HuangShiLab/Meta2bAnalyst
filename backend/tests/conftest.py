@@ -90,7 +90,6 @@ def sample_metadata_no_numeric_groups():
     groups = ["Control"] * 5 + ["Treatment"] * 5
     metadata = pd.DataFrame({
         "Treatment": groups,
-        "Sex": np.random.choice(["M", "F"], size=10),
     }, index=samples)
     return metadata
 

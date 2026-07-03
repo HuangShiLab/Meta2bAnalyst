@@ -1,6 +1,7 @@
 """
 Meta2bAnalyst - Strain-Level Analysis API Routes
 Provides direct endpoints for strain composition, alpha, beta, differential, dominance, and replacement analysis.
+Supports both synchronous and asynchronous (Celery) execution for large datasets.
 """
 import logging
 from datetime import datetime
@@ -11,6 +12,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session as DBSession
 
+from app.celery_app import celery_app
 from app.database import get_db
 from app.models import AnalysisJob, DataFile, Session as SessionModel
 from app.schemas import ErrorResponse, StrainAnalysisRequest, StrainAnalysisResponse
@@ -21,9 +23,37 @@ from app.services.strain_analyzer import (
     run_ani_matrix,
     run_strain_pcoa,
 )
+from app.tasks.analysis_tasks import strain_composition_task, strain_differential_task
+from app.utils.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+session_manager = SessionManager()
+
+# Thresholds for async vs sync execution
+ASYNC_FEATURE_THRESHOLD = 1000
+ASYNC_SAMPLE_THRESHOLD = 100
+
+
+def _get_celery_task_status(job_id: str) -> Optional[Dict[str, Any]]:
+    """Query Celery task status by job ID."""
+    try:
+        result = celery_app.AsyncResult(job_id)
+        if result.state == 'PENDING':
+            return {'status': 'pending', 'progress': 0}
+        elif result.state == 'STARTED':
+            meta = result.info or {}
+            return {'status': 'running', 'progress': meta.get('progress', 0), 'message': meta.get('message', '')}
+        elif result.state == 'SUCCESS':
+            return {'status': 'success', 'result': result.result}
+        elif result.state in ('FAILURE', 'REVOKED'):
+            return {'status': 'failed', 'error': str(result.info) if result.info else 'Task failed'}
+        else:
+            return {'status': result.state.lower(), 'progress': 0}
+    except Exception as e:
+        logger.warning(f"Failed to get Celery task status: {e}")
+        return None
 
 
 # ─────────────────────────────── Data retrieval helpers
@@ -88,6 +118,113 @@ def _save_strain_result(session_id: str, job: AnalysisJob, result_data: Dict[str
     job.result_data = result_data
 
 
+def _should_use_async(df: pd.DataFrame) -> bool:
+    """Determine if analysis should run asynchronously based on data size."""
+    n_rows = len(df)
+    n_strains = df['strain'].nunique() if 'strain' in df.columns else n_rows
+    return n_rows > ASYNC_FEATURE_THRESHOLD or n_strains > ASYNC_SAMPLE_THRESHOLD
+
+
+def _submit_async_task(task_func, session_id: str, job: AnalysisJob, **kwargs) -> StrainAnalysisResponse:
+    """Submit a Celery async task and return pending response."""
+    try:
+        celery_job = task_func.delay(**kwargs)
+        job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
+        return StrainAnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            species=kwargs.get('species', ''),
+            analysis_type=job.job_type,
+            status='pending',
+            message='Async task submitted',
+        )
+    except Exception as e:
+        logger.error(f'Failed to submit async task: {e}')
+        raise HTTPException(status_code=500, detail=f'Failed to submit async task: {str(e)}')
+
+
+# ─────────────────────────────── Strain Job Status & Result
+
+@router.get(
+    '/sessions/{session_id}/strain-jobs/{job_id}/status',
+    responses={404: {'model': ErrorResponse}},
+)
+async def get_strain_job_status(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Get status of a strain analysis job."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+
+    celery_task_id = job.parameters.get('celery_task_id') if job.parameters else None
+    if celery_task_id:
+        celery_status = _get_celery_task_status(celery_task_id)
+        if celery_status:
+            if celery_status['status'] == 'success' and job.status != 'completed':
+                job.status = 'completed'
+                job.result_data = celery_status.get('result')
+                if isinstance(job.result_data, dict) and 'result_data' in job.result_data:
+                    job.result_data = job.result_data['result_data']
+                db.commit()
+            elif celery_status['status'] == 'failed' and job.status != 'failed':
+                job.status = 'failed'
+                job.error_message = celery_status.get('error', 'Task failed')
+                db.commit()
+            elif celery_status['status'] == 'running' and job.status not in ('running', 'completed', 'failed'):
+                job.status = 'running'
+                db.commit()
+            return {
+                'job_id': job.id,
+                'status': celery_status['status'],
+                'progress': celery_status.get('progress', 0),
+                'message': celery_status.get('message', ''),
+                'celery_task_id': celery_task_id,
+            }
+
+    return {
+        'job_id': job.id,
+        'status': job.status,
+        'progress': 100 if job.status == 'completed' else 0,
+        'message': job.error_message if job.status == 'failed' else '',
+    }
+
+
+@router.get(
+    '/sessions/{session_id}/strain-jobs/{job_id}/result',
+    response_model=StrainAnalysisResponse,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}},
+)
+async def get_strain_job_result(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Get result of a completed strain analysis job."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+
+    if job.status == 'pending':
+        raise HTTPException(status_code=400, detail='Job is still pending')
+    if job.status == 'running':
+        raise HTTPException(status_code=400, detail='Job is still running')
+    if job.status == 'failed':
+        raise HTTPException(status_code=500, detail=f'Job failed: {job.error_message or "Unknown error"}')
+
+    return StrainAnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        species='',
+        analysis_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        message='Analysis completed',
+    )
+
+
 # ─────────────────────────────── Strain Composition
 
 
@@ -102,7 +239,7 @@ async def analyze_strain_composition(
     request: StrainAnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Generate strain composition stacked bar chart for a target species."""
+    """Generate strain composition stacked bar chart. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -118,12 +255,26 @@ async def analyze_strain_composition(
                 'min_ani': request.min_ani,
                 'min_coverage': request.min_coverage,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large strain dataset detected ({len(df)} rows), using async task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                strain_composition_task,
+                session_id, job,
+                session_id=session_id,
+                species=request.species,
+            )
+
+        job.status = 'running'
+        db.commit()
 
         analyzer = StrainAnalyzer()
         plot_data = analyzer.plotly_strain_composition(df, request.species)
@@ -300,7 +451,7 @@ async def analyze_strain_differential(
     request: StrainAnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run strain-level differential abundance analysis between two metadata groups."""
+    """Run strain-level differential abundance analysis. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -326,12 +477,27 @@ async def analyze_strain_differential(
                 'min_ani': request.min_ani,
                 'min_coverage': request.min_coverage,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large strain dataset detected ({len(df)} rows), using async task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                strain_differential_task,
+                session_id, job,
+                session_id=session_id,
+                group_var=group_var,
+                species=request.species,
+            )
+
+        job.status = 'running'
+        db.commit()
 
         analyzer = StrainAnalyzer()
         diff_df = analyzer.strain_differential(

@@ -98,7 +98,7 @@ class TestStrainAPI:
             json={
                 "species": "Escherichia_coli",
                 "analysis_type": "strain_profile",
-                "parameters": {},
+                "parameters": {"group_var": "Treatment"},
                 "min_ani": 95.0,
                 "min_coverage": 0.8,
             },
@@ -133,7 +133,7 @@ class TestStrainAPI:
             json={
                 "species": "Escherichia_coli",
                 "analysis_type": "strain_profile",
-                "parameters": {"group_column": "Treatment"},
+                "parameters": {"group_var": "Treatment", "group1": "Control", "group2": "Treatment"},
                 "min_ani": 95.0,
                 "min_coverage": 0.8,
             },

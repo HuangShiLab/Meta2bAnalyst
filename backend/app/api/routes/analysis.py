@@ -1,6 +1,7 @@
 """
 Meta2bAnalyst - Analysis API Routes (Alpha/Beta/Differential/PCoA/NMDS/Heatmap/StackedBar/RF/PERMANOVA/ANOSIM)
 Provides direct endpoints for each analysis type with Plotly JSON output.
+Supports both synchronous (fast) and asynchronous (Celery) execution modes.
 """
 import logging
 import os
@@ -9,12 +10,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session as DBSession
 
+from app.celery_app import celery_app
 from app.database import get_db
 from app.models import AnalysisJob, DataFile, Session as SessionModel
 from app.schemas import AnalysisRequest, AnalysisResponse, AnalysisResultResponse, ErrorResponse
+from app.services.r_analysis import run_deseq2, run_edger
 from app.services.analysis_engine import (
     AnalysisEngine,
     run_alpha_diversity,
@@ -28,10 +31,65 @@ from app.services.analysis_engine import (
     run_random_forest,
 )
 from app.services.data_parser import parse_data_file
+from app.tasks.analysis_tasks import (
+    alpha_diversity_task,
+    beta_diversity_task,
+    differential_task,
+    pcoa_task,
+    heatmap_task,
+    random_forest_task,
+    nmds_task,
+    permanova_task,
+    anosim_task,
+)
+from app.utils.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Session manager instance for caching
+session_manager = SessionManager()
+
+# Thresholds for async vs sync execution
+ASYNC_FEATURE_THRESHOLD = 1000
+ASYNC_SAMPLE_THRESHOLD = 100
+
+
+def _check_broker_available() -> bool:
+    """Check if Celery broker is available."""
+    try:
+        from celery.app.control import Inspect
+        inspect = Inspect(app=celery_app)
+        return inspect.ping() is not None
+    except Exception:
+        return False
+
+
+def _should_use_async(df: pd.DataFrame) -> bool:
+    """Determine if analysis should run asynchronously based on data size."""
+    n_features = len(df.index)
+    n_samples = len(df.columns)
+    return n_features > ASYNC_FEATURE_THRESHOLD or n_samples > ASYNC_SAMPLE_THRESHOLD
+
+
+def _get_celery_task_status(job_id: str) -> Optional[Dict[str, Any]]:
+    """Query Celery task status by job ID."""
+    try:
+        result = celery_app.AsyncResult(job_id)
+        if result.state == 'PENDING':
+            return {'status': 'pending', 'progress': 0}
+        elif result.state == 'STARTED':
+            meta = result.info or {}
+            return {'status': 'running', 'progress': meta.get('progress', 0), 'message': meta.get('message', '')}
+        elif result.state == 'SUCCESS':
+            return {'status': 'success', 'result': result.result}
+        elif result.state in ('FAILURE', 'REVOKED'):
+            return {'status': 'failed', 'error': str(result.info) if result.info else 'Task failed'}
+        else:
+            return {'status': result.state.lower(), 'progress': 0}
+    except Exception as e:
+        logger.warning(f"Failed to get Celery task status: {e}")
+        return None
 
 # ─────────────────────────────── Data retrieval helpers
 
@@ -53,7 +111,7 @@ def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
             detail='No feature table found for this session',
         )
     try:
-        df, _ = parse_data_file(Path(data_file.file_path))
+        df, _ = parse_data_file(Path(data_file.file_path), use_chunks=True)
         return df
     except Exception as e:
         logger.error(f'Failed to parse data file: {e}')
@@ -95,6 +153,124 @@ def _save_result(session_id: str, job: AnalysisJob, result_data: Dict[str, Any])
     job.result_data = result_data
 
 
+def _submit_async_task(task_func, session_id: str, job: AnalysisJob, **kwargs) -> AnalysisResponse:
+    """Submit a Celery async task and return pending response."""
+    try:
+        celery_job = task_func.delay(**kwargs)
+        job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status='pending',
+            parameters=job.parameters,
+            started_at=job.started_at,
+        )
+    except Exception as e:
+        logger.error(f'Failed to submit async task: {e}')
+        raise HTTPException(status_code=500, detail=f'Failed to submit async task: {str(e)}')
+
+
+# ─────────────────────────────── Job Status & Result Endpoints
+
+@router.get(
+    '/sessions/{session_id}/jobs/{job_id}/status',
+    responses={404: {'model': ErrorResponse}},
+)
+async def get_job_status(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Get the status of an analysis job (supports both DB and Celery tasks)."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+    
+    # Check if there's a Celery task ID
+    celery_task_id = job.parameters.get('celery_task_id') if job.parameters else None
+    if celery_task_id:
+        celery_status = _get_celery_task_status(celery_task_id)
+        if celery_status:
+            # Update DB status if Celery state is more recent
+            if celery_status['status'] == 'success' and job.status != 'completed':
+                job.status = 'completed'
+                job.result_data = celery_status.get('result')
+                if isinstance(job.result_data, dict) and 'result_data' in job.result_data:
+                    job.result_data = job.result_data['result_data']
+                db.commit()
+            elif celery_status['status'] == 'failed' and job.status != 'failed':
+                job.status = 'failed'
+                job.error_message = celery_status.get('error', 'Task failed')
+                db.commit()
+            elif celery_status['status'] == 'running' and job.status not in ('running', 'completed', 'failed'):
+                job.status = 'running'
+                db.commit()
+            
+            return {
+                'job_id': job.id,
+                'status': celery_status['status'],
+                'progress': celery_status.get('progress', 0),
+                'message': celery_status.get('message', ''),
+                'celery_task_id': celery_task_id,
+            }
+    
+    return {
+        'job_id': job.id,
+        'status': job.status,
+        'progress': 100 if job.status == 'completed' else 0,
+        'message': job.error_message if job.status == 'failed' else '',
+    }
+
+
+@router.get(
+    '/sessions/{session_id}/jobs/{job_id}/result',
+    response_model=AnalysisResultResponse,
+    responses={404: {'model': ErrorResponse}},
+)
+async def get_job_result(
+    session_id: str,
+    job_id: int,
+    page: int = Query(1, ge=1, description='Page number for paginated results'),
+    page_size: int = Query(100, ge=1, le=1000, description='Items per page'),
+    sort_by: str = Query('padj', description='Sort column'),
+    sort_order: str = Query('asc', description='Sort order: asc or desc'),
+    db: DBSession = Depends(get_db),
+):
+    """Get paginated analysis result for a completed job."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+    
+    if job.status == 'pending':
+        raise HTTPException(status_code=400, detail='Job is still pending')
+    if job.status == 'running':
+        raise HTTPException(status_code=400, detail='Job is still running')
+    if job.status == 'failed':
+        raise HTTPException(status_code=500, detail=f'Job failed: {job.error_message or "Unknown error"}')
+    
+    result_data = job.result_data
+    
+    # Handle paginated differential results
+    if job.job_type == 'differential' and result_data and 'all_features' in result_data:
+        diff_df = pd.DataFrame(result_data['all_features'])
+        if not diff_df.empty:
+            engine = AnalysisEngine()
+            paged = engine.get_paged_differential_results(
+                diff_df, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+            )
+            result_data['paged_results'] = paged
+            result_data['current_page'] = page
+            result_data['page_size'] = page_size
+    
+    return AnalysisResultResponse(
+        job_id=job.id,
+        status=job.status,
+        result_data=result_data,
+        download_url=f'/api/v1/sessions/{session_id}/analysis/{job_id}/download' if job.result_path else None,
+    )
+
+
 # ─────────────────────────────── Alpha Diversity
 
 
@@ -109,7 +285,7 @@ async def analyze_alpha_diversity(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run alpha diversity analysis and return Plotly boxplot data."""
+    """Run alpha diversity analysis. Uses async (Celery) for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -118,7 +294,7 @@ async def analyze_alpha_diversity(
     metadata_df = get_metadata_df(session_id, db)
 
     try:
-        # Create job
+        # Create job record
         job = AnalysisJob(
             session_id=session_id,
             job_type='alpha',
@@ -126,14 +302,30 @@ async def analyze_alpha_diversity(
                 'indices': request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
                 'group_column': request.group_column,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
 
-        # Run analysis
+        # Check data size: use async for large datasets
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async alpha-diversity task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                alpha_diversity_task,
+                session_id, job,
+                session_id=session_id,
+                metrics=request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
+                grouping=request.group_column,
+            )
+
+        # Small dataset: synchronous execution
+        job.status = 'running'
+        db.commit()
+
         result_data = run_alpha_diversity(df, metadata_df, job.parameters)
 
         # Generate Plotly chart if metadata available
@@ -176,7 +368,7 @@ async def analyze_beta_diversity(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run beta diversity analysis and return distance matrix data."""
+    """Run beta diversity analysis. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -192,12 +384,27 @@ async def analyze_beta_diversity(
                 'metric': request.parameters.get('metric', 'braycurtis'),
                 'group_column': request.group_column,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async beta-diversity task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                beta_diversity_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                grouping=request.group_column,
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_beta_diversity(df, metadata_df, job.parameters)
         _save_result(session_id, job, result_data)
@@ -233,7 +440,7 @@ async def analyze_pcoa(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run PCoA and return Plotly scatter plot data."""
+    """Run PCoA. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -250,12 +457,27 @@ async def analyze_pcoa(
                 'n_components': request.parameters.get('n_components', 3),
                 'group_column': request.group_column,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async PCoA task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                pcoa_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                grouping=request.group_column,
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_pcoa(df, metadata_df, job.parameters)
 
@@ -300,7 +522,7 @@ async def analyze_nmds(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run NMDS and return coordinate data."""
+    """Run NMDS. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -317,12 +539,27 @@ async def analyze_nmds(
                 'n_components': request.parameters.get('n_components', 2),
                 'group_column': request.group_column,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async NMDS task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                nmds_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                n_components=request.parameters.get('n_components', 2),
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_nmds(df, metadata_df, job.parameters)
         _save_result(session_id, job, result_data)
@@ -358,7 +595,7 @@ async def analyze_differential(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run differential abundance analysis and return Plotly volcano plot data."""
+    """Run differential abundance analysis. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -378,12 +615,32 @@ async def analyze_differential(
                 'test_method': request.parameters.get('test_method', 'mannwhitney'),
                 'pvalue_threshold': request.parameters.get('pvalue_threshold', 0.05),
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async differential task")
+            job.status = 'pending'
+            db.commit()
+            groups = metadata_df[request.group_column].dropna().unique()
+            g1, g2 = str(groups[0]), str(groups[1]) if len(groups) >= 2 else ('', '')
+            return _submit_async_task(
+                differential_task,
+                session_id, job,
+                session_id=session_id,
+                method=request.parameters.get('test_method', 'mannwhitney'),
+                group_var=request.group_column,
+                group1=g1,
+                group2=g2,
+                p_adjust='BH',
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_differential_analysis(df, metadata_df, job.parameters)
 
@@ -393,7 +650,6 @@ async def analyze_differential(
         if len(groups) == 2 and 'all_features' in result_data:
             diff_df = pd.DataFrame(result_data['all_features'])
             if len(diff_df) > 0 and 'pvalue' in diff_df.columns and 'log2_fold_change' in diff_df.columns:
-                # Rename column to match engine expectation
                 diff_df = diff_df.rename(columns={'log2_fold_change': 'log2FC'})
                 plot_data = engine.plotly_volcano(diff_df)
                 result_data['plot_data'] = plot_data
@@ -431,7 +687,7 @@ async def analyze_permanova(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run PERMANOVA statistical test."""
+    """Run PERMANOVA. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -451,12 +707,28 @@ async def analyze_permanova(
                 'group_column': request.group_column,
                 'n_permutations': request.parameters.get('n_permutations', 999),
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async PERMANOVA task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                permanova_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                group_var=request.group_column,
+                n_permutations=request.parameters.get('n_permutations', 999),
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_permanova(df, metadata_df, job.parameters)
         _save_result(session_id, job, result_data)
@@ -492,7 +764,7 @@ async def analyze_anosim(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run ANOSIM statistical test."""
+    """Run ANOSIM. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -512,12 +784,28 @@ async def analyze_anosim(
                 'group_column': request.group_column,
                 'n_permutations': request.parameters.get('n_permutations', 999),
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async ANOSIM task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                anosim_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                group_var=request.group_column,
+                n_permutations=request.parameters.get('n_permutations', 999),
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_anosim(df, metadata_df, job.parameters)
         _save_result(session_id, job, result_data)
@@ -553,7 +841,7 @@ async def analyze_random_forest(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Run Random Forest classification and feature importance analysis."""
+    """Run Random Forest. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -572,12 +860,27 @@ async def analyze_random_forest(
                 'group_column': request.group_column,
                 'n_estimators': request.parameters.get('n_estimators', 500),
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async Random Forest task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                random_forest_task,
+                session_id, job,
+                session_id=session_id,
+                group_var=request.group_column,
+                n_estimators=request.parameters.get('n_estimators', 500),
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_random_forest(df, metadata_df, job.parameters)
         _save_result(session_id, job, result_data)
@@ -613,7 +916,7 @@ async def analyze_heatmap(
     request: AnalysisRequest,
     db: DBSession = Depends(get_db),
 ):
-    """Generate heatmap with Plotly JSON output."""
+    """Generate heatmap. Uses async for large datasets."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
@@ -632,12 +935,26 @@ async def analyze_heatmap(
                 'normalize': request.parameters.get('normalize', 'zscore'),
                 'group_column': request.group_column,
             },
-            status='running',
+            status='pending',
             started_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async heatmap task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                heatmap_task,
+                session_id, job,
+                session_id=session_id,
+                n_top=request.parameters.get('top_n', 50),
+            )
+
+        job.status = 'running'
+        db.commit()
 
         result_data = run_heatmap(df, metadata_df, job.parameters)
 
@@ -663,6 +980,7 @@ async def analyze_heatmap(
         db.rollback()
         logger.error(f'Heatmap generation failed: {e}')
         raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
 
 
 # ─────────────────────────────── Stacked Bar
