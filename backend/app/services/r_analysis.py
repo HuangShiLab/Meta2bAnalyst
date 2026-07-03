@@ -1029,6 +1029,9 @@ def _python_maaslin3_fallback(
         if X.empty:
             continue
         X = sm.add_constant(X)
+        # Ensure all numeric columns
+        X = X.apply(pd.to_numeric, errors='coerce').fillna(0).astype(float)
+        y = pd.to_numeric(data[feature], errors='coerce').fillna(0).values
 
         try:
             model = sm.OLS(y, X).fit()
