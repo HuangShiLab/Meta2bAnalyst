@@ -642,15 +642,48 @@ async def analyze_differential(
         job.status = 'running'
         db.commit()
 
-        result_data = run_differential_analysis(df, metadata_df, job.parameters)
+        test_method = job.parameters['test_method']
+        groups = metadata_df[request.group_column].dropna().unique()
+
+        if test_method in ('deseq2', 'DESeq2') and len(groups) == 2:
+            g1, g2 = groups[0], groups[1]
+            diff_df = run_deseq2(df, metadata_df, request.group_column, g1, g2)
+            result_data = {
+                'group_column': request.group_column,
+                'group1': str(g1),
+                'group2': str(g2),
+                'test_method': 'DESeq2',
+                'significant_features': diff_df[diff_df['padj'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+        elif test_method in ('edger', 'edgeR') and len(groups) == 2:
+            g1, g2 = groups[0], groups[1]
+            diff_df = run_edger(df, metadata_df, request.group_column, g1, g2)
+            result_data = {
+                'group_column': request.group_column,
+                'group1': str(g1),
+                'group2': str(g2),
+                'test_method': 'edgeR',
+                'significant_features': diff_df[diff_df['FDR'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+        else:
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
 
         # Generate Plotly volcano chart
         engine = AnalysisEngine()
-        groups = metadata_df[request.group_column].dropna().unique()
         if len(groups) == 2 and 'all_features' in result_data:
             diff_df = pd.DataFrame(result_data['all_features'])
             if len(diff_df) > 0 and 'pvalue' in diff_df.columns and 'log2_fold_change' in diff_df.columns:
                 diff_df = diff_df.rename(columns={'log2_fold_change': 'log2FC'})
+                plot_data = engine.plotly_volcano(diff_df)
+                result_data['plot_data'] = plot_data
+            elif len(diff_df) > 0 and 'log2FoldChange' in diff_df.columns:
+                diff_df = diff_df.rename(columns={'log2FoldChange': 'log2FC'})
+                if 'padj' in diff_df.columns:
+                    diff_df = diff_df.rename(columns={'padj': 'pvalue'})
+                elif 'FDR' in diff_df.columns:
+                    diff_df = diff_df.rename(columns={'FDR': 'pvalue'})
                 plot_data = engine.plotly_volcano(diff_df)
                 result_data['plot_data'] = plot_data
 

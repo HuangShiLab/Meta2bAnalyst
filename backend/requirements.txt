@@ -17,3 +17,5 @@ httpx>=0.25.0
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 aiofiles>=23.0.0
+# rpy2 for R integration (install from source if binary wheels fail on macOS ARM)
+rpy2==3.5.15

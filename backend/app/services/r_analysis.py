@@ -286,9 +286,9 @@ def run_deseq2(
         count_sub = count_sub.loc[:, mask]
         meta_sub = meta_sub.loc[mask]
 
-        # Convert to R
+        # Convert to R (features as rows, samples as columns)
         with localconverter(ro.default_converter + pandas2ri.converter):
-            r_counts = ro.conversion.py2rpy(count_sub.T)
+            r_counts = ro.conversion.py2rpy(count_sub)
             r_meta = ro.conversion.py2rpy(meta_sub)
 
             # Build DESeq2 R script
@@ -298,12 +298,18 @@ def run_deseq2(
                 # Ensure grouping is factor with only 2 levels
                 coldata[[group_var]] <- factor(coldata[[group_var]], levels=c(group1, group2))
                 coldata <- coldata[coldata[[group_var]] %in% c(group1, group2), , drop=FALSE]
-                counts <- counts[, rownames(coldata), drop=FALSE]
+                # Align counts columns to coldata rows
+                common <- intersect(colnames(counts), rownames(coldata))
+                counts <- counts[, common, drop=FALSE]
+                coldata <- coldata[common, , drop=FALSE]
                 
-                dds <- DESeqDataSetFromMatrix(countData = counts,
+                dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts),
                                               colData = coldata,
                                               design = as.formula(paste0("~ ", group_var)))
-                dds <- DESeq(dds)
+                # Use poscounts for size factor estimation when many zeros present
+                dds <- estimateSizeFactors(dds, type="poscounts")
+                dds <- estimateDispersions(dds)
+                dds <- nbinomWaldTest(dds)
                 res <- results(dds, contrast=c(group_var, group2, group1))
                 res_df <- as.data.frame(res)
                 res_df$feature <- rownames(res_df)
@@ -359,14 +365,17 @@ def run_edger(
         meta_sub = meta_sub.loc[mask]
 
         with localconverter(ro.default_converter + pandas2ri.converter):
-            r_counts = ro.conversion.py2rpy(count_sub.T)
+            r_counts = ro.conversion.py2rpy(count_sub)
             r_meta = ro.conversion.py2rpy(meta_sub)
 
             ro.r('''
             run_edger <- function(counts, coldata, group_var, group1, group2, p_adjust) {
                 library(edgeR)
                 group <- factor(coldata[[group_var]], levels=c(group1, group2))
-                y <- DGEList(counts=counts, group=group)
+                common <- intersect(colnames(counts), rownames(coldata))
+                counts <- counts[, common, drop=FALSE]
+                group <- group[match(common, rownames(coldata))]
+                y <- DGEList(counts=as.matrix(counts), group=group)
                 y <- calcNormFactors(y)
                 design <- model.matrix(~ group)
                 y <- estimateDisp(y, design)
