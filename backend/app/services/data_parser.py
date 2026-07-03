@@ -11,156 +11,568 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-def detect_file_format(file_path: Path) -> str:
-    """Detect file format based on extension and content."""
-    ext = file_path.suffix.lower()
-    
-    if ext == ".biom":
-        return "biom"
-    elif ext in (".shared",):
-        return "mothur_shared"
-    elif ext in (".taxonomy",):
-        return "mothur_taxonomy"
-    elif ext in (".csv",):
-        return "csv"
-    elif ext in (".tsv", ".txt"):
-        # Check if it's a 2bRAD or Strain2bScan file by reading first line
-        with open(file_path, "r") as f:
-            first_line = f.readline().strip()
-        if "strain" in first_line.lower() or "ani" in first_line.lower():
-            return "strain"
-        if "tag" in first_line.lower():
-            return "tag2bmap"
-        return "tsv"
-    elif ext in (".h5", ".hdf5"):
-        return "biom_hdf5"
-    else:
-        return "unknown"
+class DataParser:
+    """Parser for various microbiome data formats."""
 
+    def parse_csv_tsv(self, file_path: str, sep: str = ',') -> pd.DataFrame:
+        """Parse CSV/TSV feature table.
 
-def parse_tsv_csv(file_path: Path, sep: str = "\t", index_col: int = 0, comment: str = "#") -> pd.DataFrame:
-    """Parse TSV or CSV file into a pandas DataFrame."""
-    try:
-        # Try to detect if first row is header
-        df = pd.read_csv(
-            file_path,
-            sep=sep,
-            index_col=index_col,
-            comment=comment,
-            engine="python",
-        )
-        # Ensure numeric data
-        df = df.apply(pd.to_numeric, errors="coerce")
-        # Drop rows/columns that are all NaN
-        df = df.dropna(how="all", axis=0).dropna(how="all", axis=1)
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse TSV/CSV file {file_path}: {e}")
-        raise
+        Expected format:
+            - First row: sample names (optional #NAME prefix)
+            - First column: feature names (OTU/ASV/species/strain)
+            - Subsequent columns: abundance values
 
+        Args:
+            file_path: Path to the CSV/TSV file.
+            sep: Separator character (',' for CSV, '\t' for TSV).
 
-def parse_biom_file(file_path: Path) -> pd.DataFrame:
-    """Parse BIOM format file into a pandas DataFrame."""
-    try:
-        import biom
-        table = biom.load_table(str(file_path))
-        df = pd.DataFrame(
-            table.matrix_data.toarray().T,
-            index=table.ids(axis="sample"),
-            columns=table.ids(axis="observation"),
-        ).T  # Transpose to features x samples
-        return df
-    except ImportError:
-        logger.warning("biom-format not installed, falling back to JSON parsing")
+        Returns:
+            DataFrame with features as index and samples as columns.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            # Read first line to check for #NAME header
+            with open(file_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+
+            # Check if first line starts with #NAME
+            if first_line.startswith('#NAME'):
+                # Skip the comment line, use second line as header
+                df = pd.read_csv(
+                    file_path,
+                    sep=sep,
+                    index_col=0,
+                    header=0,
+                    skiprows=1,
+                    comment='#',
+                    engine='python',
+                )
+            else:
+                df = pd.read_csv(
+                    file_path,
+                    sep=sep,
+                    index_col=0,
+                    header=0,
+                    comment='#',
+                    engine='python',
+                )
+
+            # Ensure numeric data (exclude index column)
+            df = df.apply(pd.to_numeric, errors='coerce')
+            # Drop rows/columns that are all NaN
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+            logger.info(
+                f"Parsed CSV/TSV file {file_path}: shape={df.shape}, "
+                f"features={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse CSV/TSV file {file_path}: {e}")
+            raise ValueError(f"Failed to parse CSV/TSV file: {e}") from e
+
+    def parse_biom(self, file_path: str) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """Parse BIOM format (BIOM 1.0 / 2.0).
+
+        Uses the biom-format library if available, otherwise falls back to
+        JSON parsing for BIOM 1.0.
+
+        Args:
+            file_path: Path to the BIOM file.
+
+        Returns:
+            Tuple of (feature_table DataFrame, optional taxonomy DataFrame).
+            The feature table has features as rows and samples as columns.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            import biom
+            table = biom.load_table(file_path)
+            df = pd.DataFrame(
+                table.matrix_data.toarray().T,
+                index=table.ids(axis='sample'),
+                columns=table.ids(axis='observation'),
+            ).T  # Transpose to features x samples
+
+            # Extract taxonomy if available
+            taxonomy_df = None
+            if table.metadata(axis='observation'):
+                metadata = table.metadata(axis='observation')
+                if metadata and 'taxonomy' in metadata[0]:
+                    taxonomy_data = {
+                        obs_id: meta['taxonomy']
+                        for obs_id, meta in zip(table.ids(axis='observation'), metadata)
+                        if meta and 'taxonomy' in meta
+                    }
+                    if taxonomy_data:
+                        taxonomy_df = pd.DataFrame.from_dict(
+                            taxonomy_data, orient='index', columns=['taxonomy']
+                        )
+
+            logger.info(
+                f"Parsed BIOM file {file_path}: shape={df.shape}, "
+                f"features={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df, taxonomy_df
+
+        except ImportError:
+            logger.warning("biom-format not installed, falling back to JSON parsing")
+            return self._parse_biom_json_fallback(file_path)
+        except Exception as e:
+            logger.error(f"Failed to parse BIOM file {file_path}: {e}")
+            raise ValueError(f"Failed to parse BIOM file: {e}") from e
+
+    def _parse_biom_json_fallback(self, file_path: str) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """Fallback BIOM 1.0 JSON parser when biom-format is not installed."""
         import json
-        with open(file_path, "r") as f:
+
+        with open(file_path, 'r', encoding='utf-8') as f:
             biom_data = json.load(f)
-        # Extract matrix data from BIOM JSON
-        matrix_type = biom_data.get("matrix_type", "dense")
-        data = biom_data.get("data", [])
-        rows = biom_data.get("rows", [])
-        columns = biom_data.get("columns", [])
-        
-        observation_ids = [r["id"] for r in rows]
-        sample_ids = [c["id"] for c in columns]
-        
-        if matrix_type == "dense":
+
+        matrix_type = biom_data.get('matrix_type', 'dense')
+        data = biom_data.get('data', [])
+        rows = biom_data.get('rows', [])
+        columns = biom_data.get('columns', [])
+
+        observation_ids = [r['id'] for r in rows]
+        sample_ids = [c['id'] for c in columns]
+
+        if matrix_type == 'dense':
             df = pd.DataFrame(data, index=observation_ids, columns=sample_ids)
         else:  # sparse
-            # Convert sparse matrix to dense
             matrix = [[0] * len(sample_ids) for _ in range(len(observation_ids))]
             for row_idx, col_idx, value in data:
                 matrix[row_idx][col_idx] = value
             df = pd.DataFrame(matrix, index=observation_ids, columns=sample_ids)
-        
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse BIOM file {file_path}: {e}")
-        raise
+
+        # Extract taxonomy from row metadata
+        taxonomy_df = None
+        taxonomy_data = {}
+        for row in rows:
+            meta = row.get('metadata', {})
+            if meta and 'taxonomy' in meta:
+                taxonomy_data[row['id']] = meta['taxonomy']
+        if taxonomy_data:
+            taxonomy_df = pd.DataFrame.from_dict(
+                taxonomy_data, orient='index', columns=['taxonomy']
+            )
+
+        logger.info(
+            f"Parsed BIOM JSON fallback {file_path}: shape={df.shape}, "
+            f"features={len(df.index)}, samples={len(df.columns)}"
+        )
+        return df, taxonomy_df
+
+    def parse_mothur(
+        self, shared_path: str, taxonomy_path: Optional[str] = None
+    ) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """Parse Mothur output (.shared + .taxonomy).
+
+        Args:
+            shared_path: Path to the .shared file.
+            taxonomy_path: Optional path to the .taxonomy file.
+
+        Returns:
+            Tuple of (OTU table DataFrame, optional taxonomy DataFrame).
+            The OTU table has OTUs as rows and samples as columns.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            # Mothur shared format: label\tgroup\tnumOtus\tOTU1\tOTU2...
+            df = pd.read_csv(shared_path, sep='\t', index_col=1)
+            # Drop label and numOtus columns, keep only OTU columns
+            if 'label' in df.columns:
+                df = df.drop(columns=['label'])
+            if 'numOtus' in df.columns:
+                df = df.drop(columns=['numOtus'])
+
+            # Ensure numeric
+            df = df.apply(pd.to_numeric, errors='coerce')
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+            logger.info(
+                f"Parsed Mothur shared file {shared_path}: shape={df.shape}, "
+                f"OTUs={len(df.index)}, samples={len(df.columns)}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse Mothur shared file {shared_path}: {e}")
+            raise ValueError(f"Failed to parse Mothur shared file: {e}") from e
+
+        taxonomy_df = None
+        if taxonomy_path:
+            try:
+                # Mothur taxonomy: OTU\ttaxonomy\tsize
+                taxonomy_df = pd.read_csv(
+                    taxonomy_path,
+                    sep='\t',
+                    names=['OTU', 'taxonomy', 'size'],
+                    index_col=0,
+                )
+                logger.info(
+                    f"Parsed Mothur taxonomy file {taxonomy_path}: "
+                    f"entries={len(taxonomy_df)}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to parse Mothur taxonomy file {taxonomy_path}: {e}"
+                )
+                raise ValueError(f"Failed to parse Mothur taxonomy file: {e}") from e
+
+        return df, taxonomy_df
+
+    def parse_metadata(self, file_path: str) -> pd.DataFrame:
+        """Parse metadata table.
+
+        Expected format:
+            - First row: sample names (optional #NAME prefix)
+            - Subsequent rows: experimental factors (grouping variables)
+
+        Args:
+            file_path: Path to the metadata file.
+
+        Returns:
+            DataFrame with samples as index and metadata variables as columns.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+
+            if first_line.startswith('#NAME'):
+                df = pd.read_csv(
+                    file_path,
+                    sep='\t',
+                    index_col=0,
+                    header=0,
+                    skiprows=1,
+                    comment='#',
+                    engine='python',
+                )
+            else:
+                df = pd.read_csv(
+                    file_path,
+                    sep='\t',
+                    index_col=0,
+                    header=0,
+                    comment='#',
+                    engine='python',
+                )
+
+            # Try to infer data types
+            df = df.infer_objects()
+
+            logger.info(
+                f"Parsed metadata file {file_path}: shape={df.shape}, "
+                f"samples={len(df.index)}, variables={len(df.columns)}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse metadata file {file_path}: {e}")
+            raise ValueError(f"Failed to parse metadata file: {e}") from e
+
+    def parse_2brad_m(
+        self,
+        species_path: str,
+        metadata_path: str,
+        functional_path: Optional[str] = None,
+    ) -> dict:
+        """Parse 2bRAD-M output.
+
+        Args:
+            species_path: Path to species abundance table.
+            metadata_path: Path to metadata table.
+            functional_path: Optional path to functional gene abundance table.
+
+        Returns:
+            Dictionary with keys:
+                - 'species': species abundance DataFrame
+                - 'metadata': metadata DataFrame
+                - 'functional': functional gene DataFrame or None
+
+        Raises:
+            ValueError: If any file cannot be parsed.
+        """
+        result = {}
+
+        try:
+            result['species'] = self.parse_csv_tsv(species_path, sep='\t')
+        except Exception as e:
+            logger.error(f"Failed to parse 2bRAD-M species file {species_path}: {e}")
+            raise ValueError(f"Failed to parse 2bRAD-M species file: {e}") from e
+
+        try:
+            result['metadata'] = self.parse_metadata(metadata_path)
+        except Exception as e:
+            logger.error(f"Failed to parse 2bRAD-M metadata file {metadata_path}: {e}")
+            raise ValueError(f"Failed to parse 2bRAD-M metadata file: {e}") from e
+
+        if functional_path:
+            try:
+                result['functional'] = self.parse_csv_tsv(functional_path, sep='\t')
+            except Exception as e:
+                logger.error(
+                    f"Failed to parse 2bRAD-M functional file {functional_path}: {e}"
+                )
+                raise ValueError(f"Failed to parse 2bRAD-M functional file: {e}") from e
+        else:
+            result['functional'] = None
+
+        logger.info(
+            "Parsed 2bRAD-M data: species_shape=%s, metadata_shape=%s, functional=%s",
+            result['species'].shape,
+            result['metadata'].shape,
+            result['functional'] is not None,
+        )
+        return result
+
+    def parse_strain2bscan(self, file_path: str) -> pd.DataFrame:
+        """Parse Strain2bScan output.
+
+        Expected 3D data: sample_id, species, strain, abundance.
+        Converts to a long-format DataFrame with columns:
+            sample_id, species, strain, abundance.
+
+        Args:
+            file_path: Path to the Strain2bScan output file.
+
+        Returns:
+            Long-format DataFrame.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            df = pd.read_csv(file_path, sep='\t')
+
+            # Standardize column names (case-insensitive matching)
+            df.columns = [c.lower().strip() for c in df.columns]
+
+            expected_cols = {'sample_id', 'species', 'strain', 'abundance'}
+            actual_cols = set(df.columns)
+
+            if not expected_cols.issubset(actual_cols):
+                # Try to auto-detect columns if exact names don't match
+                col_map = {}
+                for exp in expected_cols:
+                    for act in actual_cols:
+                        if exp in act or act in exp:
+                            col_map[exp] = act
+                            break
+                if len(col_map) >= 3:
+                    for exp, act in col_map.items():
+                        df[exp] = df[act]
+                else:
+                    raise ValueError(
+                        f"Strain2bScan file missing required columns. "
+                        f"Expected {expected_cols}, got {actual_cols}"
+                    )
+
+            # Ensure required columns exist
+            for col in expected_cols:
+                if col not in df.columns:
+                    raise ValueError(f"Missing required column: {col}")
+
+            # Ensure abundance is numeric
+            df['abundance'] = pd.to_numeric(df['abundance'], errors='coerce')
+            df = df.dropna(subset=['abundance'])
+
+            # Reorder columns
+            df = df[list(expected_cols)]
+
+            logger.info(
+                f"Parsed Strain2bScan file {file_path}: entries={len(df)}, "
+                f"samples={df['sample_id'].nunique()}, "
+                f"species={df['species'].nunique()}, strains={df['strain'].nunique()}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse Strain2bScan file {file_path}: {e}")
+            raise ValueError(f"Failed to parse Strain2bScan file: {e}") from e
+
+    def parse_tag2bmap(self, file_path: str) -> pd.DataFrame:
+        """Parse Tag2bMap output.
+
+        Contains strain identification results with ANI information.
+        Expected columns: sample_id, species, strain, ani, coverage, abundance.
+
+        Args:
+            file_path: Path to the Tag2bMap output file.
+
+        Returns:
+            DataFrame with strain identification results.
+
+        Raises:
+            ValueError: If the file cannot be parsed.
+        """
+        try:
+            df = pd.read_csv(file_path, sep='\t')
+
+            # Standardize column names
+            df.columns = [c.lower().strip() for c in df.columns]
+
+            # Map common column name variations
+            col_map = {
+                'sample_id': ['sample_id', 'sample', 'sampleid', 'sample_name'],
+                'species': ['species', 'specie', 'taxon'],
+                'strain': ['strain', 'strain_name', 'strain_id'],
+                'ani': ['ani', 'ani_value', 'average_nucleotide_identity'],
+                'coverage': ['coverage', 'cov', 'genome_coverage'],
+                'abundance': ['abundance', 'rel_abundance', 'relative_abundance', 'count'],
+            }
+
+            for standard, variants in col_map.items():
+                for variant in variants:
+                    if variant in df.columns and standard not in df.columns:
+                        df[standard] = df[variant]
+                        break
+
+            # Ensure numeric columns
+            numeric_cols = ['ani', 'coverage', 'abundance']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            df = df.dropna(how='all', subset=['sample_id', 'species', 'strain'])
+
+            logger.info(
+                f"Parsed Tag2bMap file {file_path}: entries={len(df)}, "
+                f"samples={df['sample_id'].nunique()}, "
+                f"species={df['species'].nunique()}, strains={df['strain'].nunique()}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse Tag2bMap file {file_path}: {e}")
+            raise ValueError(f"Failed to parse Tag2bMap file: {e}") from e
+
+    def to_wide_format(
+        self,
+        df: pd.DataFrame,
+        sample_col: str = 'sample_id',
+        feature_col: str = 'feature_id',
+        value_col: str = 'abundance',
+    ) -> pd.DataFrame:
+        """Convert long-format DataFrame to wide format (samples x features).
+
+        Args:
+            df: Long-format DataFrame.
+            sample_col: Column name for sample IDs.
+            feature_col: Column name for feature IDs.
+            value_col: Column name for abundance values.
+
+        Returns:
+            Wide-format DataFrame with samples as index and features as columns.
+
+        Raises:
+            ValueError: If required columns are missing.
+        """
+        if sample_col not in df.columns:
+            raise ValueError(f"Sample column '{sample_col}' not found in DataFrame")
+        if feature_col not in df.columns:
+            raise ValueError(f"Feature column '{feature_col}' not found in DataFrame")
+        if value_col not in df.columns:
+            raise ValueError(f"Value column '{value_col}' not found in DataFrame")
+
+        wide_df = df.pivot_table(
+            index=sample_col,
+            columns=feature_col,
+            values=value_col,
+            aggfunc='sum',
+            fill_value=0,
+        )
+
+        logger.info(
+            f"Converted long to wide format: shape={wide_df.shape}, "
+            f"samples={len(wide_df.index)}, features={len(wide_df.columns)}"
+        )
+        return wide_df
+
+
+# ─────────────────────────────── Module-level convenience functions
+
+
+def detect_file_format(file_path: Path) -> str:
+    """Detect file format based on extension and content."""
+    ext = file_path.suffix.lower()
+
+    if ext == '.biom':
+        return 'biom'
+    elif ext in ('.shared',):
+        return 'mothur_shared'
+    elif ext in ('.taxonomy',):
+        return 'mothur_taxonomy'
+    elif ext in ('.csv',):
+        return 'csv'
+    elif ext in ('.tsv', '.txt'):
+        # Check if it's a 2bRAD or Strain2bScan file by reading first line
+        with open(file_path, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+        if 'strain' in first_line.lower() or 'ani' in first_line.lower():
+            return 'strain'
+        if 'tag' in first_line.lower():
+            return 'tag2bmap'
+        return 'tsv'
+    elif ext in ('.h5', '.hdf5'):
+        return 'biom_hdf5'
+    else:
+        return 'unknown'
+
+
+def parse_tsv_csv(
+    file_path: Path, sep: str = '\t', index_col: int = 0, comment: str = '#'
+) -> pd.DataFrame:
+    """Parse TSV or CSV file into a pandas DataFrame."""
+    parser = DataParser()
+    return parser.parse_csv_tsv(str(file_path), sep=sep)
+
+
+def parse_biom_file(file_path: Path) -> pd.DataFrame:
+    """Parse BIOM format file into a pandas DataFrame."""
+    parser = DataParser()
+    df, _ = parser.parse_biom(str(file_path))
+    return df
 
 
 def parse_mothur_shared(file_path: Path) -> pd.DataFrame:
     """Parse Mothur .shared file into a pandas DataFrame."""
-    try:
-        # Mothur shared format: label	group	numOtus	OTU1	OTU2...
-        df = pd.read_csv(file_path, sep="\t", index_col=1)
-        # Drop label and numOtus columns, keep only OTU columns
-        if "label" in df.columns:
-            df = df.drop(columns=["label"])
-        if "numOtus" in df.columns:
-            df = df.drop(columns=["numOtus"])
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse Mothur shared file {file_path}: {e}")
-        raise
+    parser = DataParser()
+    df, _ = parser.parse_mothur(str(file_path))
+    return df
 
 
 def parse_mothur_taxonomy(file_path: Path) -> pd.DataFrame:
     """Parse Mothur .taxonomy file into a pandas DataFrame."""
-    try:
-        # Mothur taxonomy: OTU\ttaxonomy	size
-        df = pd.read_csv(
-            file_path,
-            sep="\t",
-            names=["OTU", "taxonomy", "size"],
-            index_col=0,
-        )
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse Mothur taxonomy file {file_path}: {e}")
-        raise
+    parser = DataParser()
+    _, tax_df = parser.parse_mothur('', str(file_path))
+    return tax_df
 
 
 def parse_2brad_file(file_path: Path) -> pd.DataFrame:
     """Parse 2bRAD-M species abundance table."""
-    try:
-        df = pd.read_csv(file_path, sep="\t", index_col=0)
-        df = df.apply(pd.to_numeric, errors="coerce")
-        df = df.dropna(how="all", axis=0).dropna(how="all", axis=1)
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse 2bRAD file {file_path}: {e}")
-        raise
+    parser = DataParser()
+    return parser.parse_csv_tsv(str(file_path), sep='\t')
 
 
 def parse_strain2bscan(file_path: Path) -> pd.DataFrame:
     """Parse Strain2bScan output file."""
-    try:
-        df = pd.read_csv(file_path, sep="\t", index_col=0)
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse Strain2bScan file {file_path}: {e}")
-        raise
+    parser = DataParser()
+    return parser.parse_strain2bscan(str(file_path))
 
 
 def parse_tag2bmap(file_path: Path) -> pd.DataFrame:
     """Parse Tag2bMap output file."""
-    try:
-        df = pd.read_csv(file_path, sep="\t", index_col=0)
-        return df
-    except Exception as e:
-        logger.error(f"Failed to parse Tag2bMap file {file_path}: {e}")
-        raise
+    parser = DataParser()
+    return parser.parse_tag2bmap(str(file_path))
 
 
 def parse_data_file(
@@ -171,35 +583,40 @@ def parse_data_file(
     Parse a data file and return a pandas DataFrame.
 
     Args:
-        file_path: Path to the data file
-        file_type: Optional explicit file type hint
+        file_path: Path to the data file.
+        file_type: Optional explicit file type hint.
 
     Returns:
-        Tuple of (DataFrame, detected_format)
+        Tuple of (DataFrame, detected_format).
     """
     detected_format = file_type or detect_file_format(file_path)
     logger.info(f"Parsing file {file_path} as format: {detected_format}")
-    
-    if detected_format in ("tsv", "txt"):
-        df = parse_tsv_csv(file_path, sep="\t")
-    elif detected_format == "csv":
-        df = parse_tsv_csv(file_path, sep=",")
-    elif detected_format == "biom":
-        df = parse_biom_file(file_path)
-    elif detected_format == "mothur_shared":
-        df = parse_mothur_shared(file_path)
-    elif detected_format == "mothur_taxonomy":
+
+    parser = DataParser()
+
+    if detected_format in ('tsv', 'txt'):
+        df = parser.parse_csv_tsv(str(file_path), sep='\t')
+    elif detected_format == 'csv':
+        df = parser.parse_csv_tsv(str(file_path), sep=',')
+    elif detected_format == 'biom':
+        df, _ = parser.parse_biom(str(file_path))
+    elif detected_format == 'mothur_shared':
+        df, _ = parser.parse_mothur(str(file_path))
+    elif detected_format == 'mothur_taxonomy':
         df = parse_mothur_taxonomy(file_path)
-    elif detected_format == "strain":
-        df = parse_strain2bscan(file_path)
-    elif detected_format == "tag2bmap":
-        df = parse_tag2bmap(file_path)
-    elif detected_format == "2brad":
-        df = parse_2brad_file(file_path)
+    elif detected_format == 'strain':
+        df = parser.parse_strain2bscan(str(file_path))
+    elif detected_format == 'tag2bmap':
+        df = parser.parse_tag2bmap(str(file_path))
+    elif detected_format == '2brad':
+        df = parser.parse_csv_tsv(str(file_path), sep='\t')
     else:
         # Fallback: try as TSV
         logger.warning(f"Unknown format '{detected_format}', attempting TSV parse")
-        df = parse_tsv_csv(file_path, sep="\t")
-    
-    logger.info(f"Parsed {file_path}: shape={df.shape}, features={len(df.index)}, samples={len(df.columns)}")
+        df = parser.parse_csv_tsv(str(file_path), sep='\t')
+
+    logger.info(
+        f"Parsed {file_path}: shape={df.shape}, features={len(df.index)}, "
+        f"samples={len(df.columns)}"
+    )
     return df, detected_format
