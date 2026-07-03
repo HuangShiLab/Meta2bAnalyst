@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Project paths
     PROJECT_ROOT: Path = Path(__file__).resolve().parent
-    UPLOAD_DIR: Path = Path("./uploads")
+    UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", "./uploads"))
     LOG_DIR: Path = Path("./logs")
 
     # Database
@@ -41,7 +41,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
 
     # CORS (production should be restricted)
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost,http://localhost:5173,http://localhost:80,http://localhost:3000",
+    ).split(",")
 
     class Config:
         env_file = ".env"
