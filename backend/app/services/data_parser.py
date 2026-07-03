@@ -3,16 +3,77 @@ Meta2bAnalyst - Data Parser Service
 Handles parsing of TSV/CSV, BIOM, Mothur, 2bRAD, and Strain2bScan formats.
 """
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 
 import pandas as pd
+from scipy import sparse
 
 logger = logging.getLogger(__name__)
 
 
 class DataParser:
     """Parser for various microbiome data formats."""
+
+    def parse_csv_tsv_chunked(self, file_path: str, sep: str = ',', chunksize: int = 10000) -> pd.DataFrame:
+        """Parse CSV/TSV feature table in chunks for large files.
+
+        Uses pd.read_csv with chunksize, then concatenates. Falls back to
+        standard parse if file is small enough.
+
+        Args:
+            file_path: Path to the CSV/TSV file.
+            sep: Separator character.
+            chunksize: Number of rows per chunk.
+
+        Returns:
+            Concatenated DataFrame.
+        """
+        # Check file size first
+        file_size = os.path.getsize(file_path)
+        # Use chunked reading for files > 50MB
+        if file_size < 50 * 1024 * 1024:
+            return self.parse_csv_tsv(file_path, sep=sep)
+
+        logger.info(f"Large file detected ({file_size / 1024 / 1024:.1f}MB), using chunked reading")
+
+        chunks = []
+        try:
+            # Read first line to check for #NAME header
+            with open(file_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+
+            skiprows = 1 if first_line.startswith('#NAME') else 0
+
+            chunk_iter = pd.read_csv(
+                file_path,
+                sep=sep,
+                index_col=0,
+                header=0,
+                skiprows=skiprows,
+                comment='#',
+                engine='python',
+                chunksize=chunksize,
+                dtype=str,  # Read as string first, then convert
+            )
+
+            for chunk in chunk_iter:
+                chunk = chunk.apply(pd.to_numeric, errors='coerce')
+                chunk = chunk.dropna(how='all', axis=0).dropna(how='all', axis=1)
+                chunks.append(chunk)
+
+            df = pd.concat(chunks, axis=0)
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+            logger.info(
+                f"Parsed chunked CSV/TSV file {file_path}: shape={df.shape}, "
+                f"features={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed chunked parse of CSV/TSV file {file_path}: {e}")
+            raise ValueError(f"Failed chunked parse: {e}") from e
 
     def parse_csv_tsv(self, file_path: str, sep: str = ',') -> pd.DataFrame:
         """Parse CSV/TSV feature table.
@@ -74,29 +135,32 @@ class DataParser:
             raise ValueError(f"Failed to parse CSV/TSV file: {e}") from e
 
     def parse_biom(self, file_path: str) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-        """Parse BIOM format (BIOM 1.0 / 2.0).
-
-        Uses the biom-format library if available, otherwise falls back to
-        JSON parsing for BIOM 1.0.
+        """Parse BIOM format (BIOM 1.0 / 2.0) with sparse matrix support.
 
         Args:
             file_path: Path to the BIOM file.
 
         Returns:
             Tuple of (feature_table DataFrame, optional taxonomy DataFrame).
-            The feature table has features as rows and samples as columns.
-
-        Raises:
-            ValueError: If the file cannot be parsed.
         """
         try:
             import biom
             table = biom.load_table(file_path)
-            df = pd.DataFrame(
-                table.matrix_data.toarray().T,
-                index=table.ids(axis='sample'),
-                columns=table.ids(axis='observation'),
-            ).T  # Transpose to features x samples
+            
+            # Use scipy sparse matrix for memory efficiency
+            matrix_data = table.matrix_data
+            if sparse.issparse(matrix_data):
+                df = pd.DataFrame(
+                    matrix_data.toarray().T,
+                    index=table.ids(axis='sample'),
+                    columns=table.ids(axis='observation'),
+                ).T  # Transpose to features x samples
+            else:
+                df = pd.DataFrame(
+                    matrix_data.toarray().T if hasattr(matrix_data, 'toarray') else matrix_data.T,
+                    index=table.ids(axis='sample'),
+                    columns=table.ids(axis='observation'),
+                ).T
 
             # Extract taxonomy if available
             taxonomy_df = None
@@ -115,7 +179,7 @@ class DataParser:
 
             logger.info(
                 f"Parsed BIOM file {file_path}: shape={df.shape}, "
-                f"features={len(df.index)}, samples={len(df.columns)}"
+                f"features={len(df.index)}, samples={len(df.columns)}, sparse={sparse.issparse(matrix_data)}"
             )
             return df, taxonomy_df
 
@@ -140,14 +204,34 @@ class DataParser:
 
         observation_ids = [r['id'] for r in rows]
         sample_ids = [c['id'] for c in columns]
+        n_obs = len(observation_ids)
+        n_samp = len(sample_ids)
 
         if matrix_type == 'dense':
             df = pd.DataFrame(data, index=observation_ids, columns=sample_ids)
         else:  # sparse
-            matrix = [[0] * len(sample_ids) for _ in range(len(observation_ids))]
-            for row_idx, col_idx, value in data:
-                matrix[row_idx][col_idx] = value
-            df = pd.DataFrame(matrix, index=observation_ids, columns=sample_ids)
+            # Use scipy sparse matrix for memory efficiency with large sparse data
+            if len(data) > 10000:
+                row_indices, col_indices, values = [], [], []
+                for row_idx, col_idx, value in data:
+                    row_indices.append(row_idx)
+                    col_indices.append(col_idx)
+                    values.append(value)
+                
+                sp_matrix = sparse.coo_matrix(
+                    (values, (row_indices, col_indices)),
+                    shape=(n_obs, n_samp)
+                )
+                df = pd.DataFrame(
+                    sp_matrix.toarray(),
+                    index=observation_ids,
+                    columns=sample_ids,
+                )
+            else:
+                matrix = [[0] * n_samp for _ in range(n_obs)]
+                for row_idx, col_idx, value in data:
+                    matrix[row_idx][col_idx] = value
+                df = pd.DataFrame(matrix, index=observation_ids, columns=sample_ids)
 
         # Extract taxonomy from row metadata
         taxonomy_df = None
@@ -163,7 +247,7 @@ class DataParser:
 
         logger.info(
             f"Parsed BIOM JSON fallback {file_path}: shape={df.shape}, "
-            f"features={len(df.index)}, samples={len(df.columns)}"
+            f"features={len(df.index)}, samples={len(df.columns)}, sparse={matrix_type=='sparse'}"
         )
         return df, taxonomy_df
 
@@ -578,6 +662,7 @@ def parse_tag2bmap(file_path: Path) -> pd.DataFrame:
 def parse_data_file(
     file_path: Path,
     file_type: Optional[str] = None,
+    use_chunks: bool = True,
 ) -> Tuple[pd.DataFrame, str]:
     """
     Parse a data file and return a pandas DataFrame.
@@ -585,6 +670,7 @@ def parse_data_file(
     Args:
         file_path: Path to the data file.
         file_type: Optional explicit file type hint.
+        use_chunks: Whether to use chunked reading for large files.
 
     Returns:
         Tuple of (DataFrame, detected_format).
@@ -595,9 +681,15 @@ def parse_data_file(
     parser = DataParser()
 
     if detected_format in ('tsv', 'txt'):
-        df = parser.parse_csv_tsv(str(file_path), sep='\t')
+        if use_chunks:
+            df = parser.parse_csv_tsv_chunked(str(file_path), sep='\t')
+        else:
+            df = parser.parse_csv_tsv(str(file_path), sep='\t')
     elif detected_format == 'csv':
-        df = parser.parse_csv_tsv(str(file_path), sep=',')
+        if use_chunks:
+            df = parser.parse_csv_tsv_chunked(str(file_path), sep=',')
+        else:
+            df = parser.parse_csv_tsv(str(file_path), sep=',')
     elif detected_format == 'biom':
         df, _ = parser.parse_biom(str(file_path))
     elif detected_format == 'mothur_shared':
@@ -609,14 +701,66 @@ def parse_data_file(
     elif detected_format == 'tag2bmap':
         df = parser.parse_tag2bmap(str(file_path))
     elif detected_format == '2brad':
-        df = parser.parse_csv_tsv(str(file_path), sep='\t')
+        if use_chunks:
+            df = parser.parse_csv_tsv_chunked(str(file_path), sep='\t')
+        else:
+            df = parser.parse_csv_tsv(str(file_path), sep='\t')
     else:
         # Fallback: try as TSV
         logger.warning(f"Unknown format '{detected_format}', attempting TSV parse")
-        df = parser.parse_csv_tsv(str(file_path), sep='\t')
+        if use_chunks:
+            df = parser.parse_csv_tsv_chunked(str(file_path), sep='\t')
+        else:
+            df = parser.parse_csv_tsv(str(file_path), sep='\t')
 
     logger.info(
         f"Parsed {file_path}: shape={df.shape}, features={len(df.index)}, "
         f"samples={len(df.columns)}"
     )
     return df, detected_format
+
+
+def to_sparse_matrix(df: pd.DataFrame, threshold: float = 0.7) -> sparse.csr_matrix:
+    """Convert DataFrame to scipy sparse matrix if sparsity is high enough.
+
+    Args:
+        df: Feature table DataFrame.
+        threshold: Minimum sparsity ratio (zeros / total) to convert.
+
+    Returns:
+        scipy sparse matrix in CSR format.
+    """
+    sparsity = (df == 0).sum().sum() / df.size
+    if sparsity < threshold:
+        logger.info(f"Sparsity {sparsity:.2f} below threshold {threshold}, keeping dense")
+        return sparse.csr_matrix(df.values)
+    
+    logger.info(f"Converting to sparse matrix (sparsity={sparsity:.2f})")
+    return sparse.csr_matrix(df.values)
+
+
+def write_intermediate_result(df: pd.DataFrame, path: Path, format: str = 'parquet') -> Path:
+    """Write intermediate analysis result to disk to free memory.
+
+    Args:
+        df: DataFrame to save.
+        path: Output path.
+        format: Output format ('parquet', 'csv', 'feather').
+
+    Returns:
+        Path to saved file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if format == 'parquet':
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        table = pa.Table.from_pandas(df)
+        pq.write_table(table, str(path))
+    elif format == 'feather':
+        df.to_feather(str(path))
+    else:
+        df.to_csv(str(path), sep='\t')
+    
+    logger.info(f"Saved intermediate result to {path} ({path.stat().st_size / 1024 / 1024:.1f}MB)")
+    return path

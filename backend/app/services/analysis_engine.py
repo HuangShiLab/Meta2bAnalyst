@@ -4,11 +4,12 @@ Implements Alpha/Beta diversity, differential abundance, PCoA, NMDS, heatmap,
 random forest, PERMANOVA, ANOSIM, and Plotly figure generation.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy import sparse
 from scipy.spatial.distance import braycurtis, cityblock, euclidean, jaccard, pdist, squareform
 from scipy.stats import f_oneway, mannwhitneyu, pearsonr, spearmanr, ttest_ind, wilcoxon
 from sklearn.decomposition import PCA
@@ -106,6 +107,107 @@ class AnalysisEngine:
         richness = self._calculate_observed(df)
         evenness = shannon / np.log(richness + 1e-10)
         return evenness
+
+    # ─────────────────────────────── Paged Result Helpers
+
+    def get_paged_differential_results(
+        self,
+        diff_df: pd.DataFrame,
+        page: int = 1,
+        page_size: int = 100,
+        sort_by: str = "padj",
+        sort_order: str = "asc",
+        p_threshold: float = 1.0,
+        fc_threshold: float = 0.0,
+    ) -> dict:
+        """Paginate differential analysis results.
+
+        Returns:
+            Dictionary with pagination metadata and data slice.
+        """
+        if diff_df.empty:
+            return {
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "data": [],
+            }
+
+        df = diff_df.copy()
+
+        # Filter by p-value and fold-change if thresholds set
+        if p_threshold < 1.0 and "pvalue" in df.columns:
+            df = df[df["pvalue"] < p_threshold]
+        if fc_threshold > 0 and "log2FC" in df.columns:
+            df = df[df["log2FC"].abs() > fc_threshold]
+
+        # Sort
+        sort_col = sort_by if sort_by in df.columns else "pvalue"
+        ascending = sort_order.lower() == "asc"
+        df = df.sort_values(sort_col, ascending=ascending)
+
+        total = len(df)
+        total_pages = (total + page_size - 1) // page_size
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        page_df = df.iloc[start:end]
+
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "data": page_df.to_dict(orient="records"),
+        }
+
+    def get_paged_feature_table(
+        self,
+        df: pd.DataFrame,
+        page: int = 1,
+        page_size: int = 100,
+        sort_by: str = None,
+        sort_order: str = "asc",
+    ) -> dict:
+        """Paginate feature table with optional sorting by total abundance.
+
+        Returns:
+            Dictionary with pagination metadata and data slice.
+        """
+        if df.empty:
+            return {
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "data": [],
+            }
+
+        df_sorted = df.copy()
+        if sort_by and sort_by in df_sorted.columns:
+            ascending = sort_order.lower() == "asc"
+            df_sorted = df_sorted.sort_values(sort_by, ascending=ascending)
+        elif sort_by == "total_abundance":
+            ascending = sort_order.lower() == "asc"
+            df_sorted = df_sorted.loc[df_sorted.sum(axis=1).sort_values(ascending=ascending).index]
+
+        total = len(df_sorted)
+        total_pages = (total + page_size - 1) // page_size
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        page_df = df_sorted.iloc[start:end]
+
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "data": page_df.to_dict(orient="index"),
+        }
 
     # ─────────────────────────────── Beta Diversity
 
