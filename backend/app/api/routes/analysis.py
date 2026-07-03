@@ -17,7 +17,7 @@ from app.celery_app import celery_app
 from app.database import get_db
 from app.models import AnalysisJob, DataFile, Session as SessionModel
 from app.schemas import AnalysisRequest, AnalysisResponse, AnalysisResultResponse, ErrorResponse
-from app.services.r_analysis import run_deseq2, run_edger
+from app.services.r_analysis import run_ancombc, run_deseq2, run_edger, run_maaslin3
 from app.services.analysis_engine import (
     AnalysisEngine,
     run_alpha_diversity,
@@ -644,6 +644,7 @@ async def analyze_differential(
 
         test_method = job.parameters['test_method']
         groups = metadata_df[request.group_column].dropna().unique()
+        engine = AnalysisEngine()
 
         if test_method in ('deseq2', 'DESeq2') and len(groups) == 2:
             g1, g2 = groups[0], groups[1]
@@ -667,6 +668,53 @@ async def analyze_differential(
                 'significant_features': diff_df[diff_df['FDR'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
                 'all_features': diff_df.to_dict(orient='records'),
             }
+        elif test_method in ('ancombc', 'ANCOM-BC'):
+            if len(groups) != 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'ANCOM-BC requires exactly 2 groups, found {len(groups)}',
+                )
+            zero_cut = request.parameters.get('zero_cut', 0.9)
+            lib_cut = request.parameters.get('lib_cut', 0)
+            struc_zero = request.parameters.get('struc_zero', True)
+            p_adj_method = request.parameters.get('p_adj_method', 'BH')
+            diff_df = run_ancombc(df, metadata_df, request.group_column, zero_cut, lib_cut, struc_zero, p_adj_method)
+            if 'error' in diff_df.columns:
+                raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
+            result_data = {
+                'group_column': request.group_column,
+                'test_method': 'ANCOM-BC',
+                'zero_cut': zero_cut,
+                'lib_cut': lib_cut,
+                'struc_zero': struc_zero,
+                'p_adj_method': p_adj_method,
+                'significant_features': diff_df[diff_df['diff_abn'] == True].to_dict(orient='records') if 'diff_abn' in diff_df.columns else [],
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+            if 'lfc' in diff_df.columns and 'padj' in diff_df.columns:
+                diff_df = diff_df.rename(columns={'lfc': 'log2FC'})
+                plot_data = engine.plotly_volcano(diff_df)
+                result_data['plot_data'] = plot_data
+        elif test_method in ('maaslin3', 'MaAsLin3'):
+            fixed_effects = request.parameters.get('fixed_effects', [request.group_column])
+            random_effects = request.parameters.get('random_effects', None)
+            normalization = request.parameters.get('normalization', 'TSS')
+            transform = request.parameters.get('transform', 'LOG')
+            diff_df = run_maaslin3(df, metadata_df, fixed_effects, random_effects, request.group_column, normalization, transform)
+            if 'error' in diff_df.columns:
+                raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
+            result_data = {
+                'test_method': 'MaAsLin3',
+                'normalization': normalization,
+                'transform': transform,
+                'fixed_effects': fixed_effects,
+                'significant_features': diff_df[diff_df['padj'] < job.parameters['pvalue_threshold']].to_dict(orient='records') if 'padj' in diff_df.columns else [],
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+            # MaAsLin3 bar plot (coefficients per metadata variable)
+            if 'coefficient' in diff_df.columns and 'metadata' in diff_df.columns:
+                plot_data = engine.plotly_maaslin3_bar(diff_df)
+                result_data['plot_data'] = plot_data
         else:
             result_data = run_differential_analysis(df, metadata_df, job.parameters)
 

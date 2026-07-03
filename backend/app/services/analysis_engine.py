@@ -1032,6 +1032,47 @@ class AnalysisEngine:
         )
         return fig.to_dict()
 
+    def plotly_maaslin3_bar(self, maaslin_df: pd.DataFrame) -> dict:
+        """Generate MaAsLin3 coefficient bar plot as Plotly JSON.
+
+        Args:
+            maaslin_df: MaAsLin3 result DataFrame with columns:
+                feature, metadata, coefficient, padj.
+
+        Returns:
+            Plotly figure JSON dict.
+        """
+        if len(maaslin_df) == 0:
+            return {'data': [], 'layout': {'title': 'MaAsLin3 Results (No significant associations)'}}
+
+        # Filter significant results
+        sig_df = maaslin_df[maaslin_df.get('padj', 1.0) < 0.05] if 'padj' in maaslin_df.columns else maaslin_df.head(50)
+        if sig_df.empty:
+            sig_df = maaslin_df.head(50)
+
+        colors = sig_df['coefficient'].apply(lambda x: '#dc2626' if x > 0 else '#1e40af')
+
+        return {
+            'data': [{
+                'type': 'bar',
+                'x': sig_df['feature'].tolist(),
+                'y': sig_df['coefficient'].tolist(),
+                'marker': {'color': colors.tolist()},
+                'text': sig_df['metadata'].tolist(),
+            }],
+            'layout': {
+                'title': 'MaAsLin3 Significant Associations',
+                'xaxis': {'title': 'Feature', 'tickangle': -45},
+                'yaxis': {'title': 'Coefficient'},
+                'shapes': [{
+                    'type': 'line',
+                    'x0': -0.5, 'x1': len(sig_df) - 0.5,
+                    'y0': 0, 'y1': 0,
+                    'line': {'color': '#94a3b8', 'width': 1, 'dash': 'dash'}
+                }]
+            }
+        }
+
 
 # ─────────────────────────────── Module-level convenience functions
 
@@ -1231,6 +1272,48 @@ def run_differential_analysis(
         return {'error': 'Metadata with group column required for differential analysis'}
 
     groups = metadata_df[group_column].dropna().unique()
+
+    # ANCOM-BC: requires exactly 2 groups
+    if test_method in ('ancombc', 'ANCOM-BC'):
+        if len(groups) != 2:
+            return {'error': f'ANCOM-BC requires exactly 2 groups, found {len(groups)}'}
+        from app.services.r_analysis import run_ancombc
+        zero_cut = params.get('zero_cut', 0.9)
+        lib_cut = params.get('lib_cut', 0)
+        struc_zero = params.get('struc_zero', True)
+        p_adj_method = params.get('p_adj_method', 'BH')
+        diff_df = run_ancombc(df, metadata_df, group_column, zero_cut, lib_cut, struc_zero, p_adj_method)
+        if 'error' in diff_df.columns:
+            return {'error': str(diff_df['error'].iloc[0])}
+        return {
+            'group_column': group_column,
+            'test_method': 'ANCOM-BC',
+            'zero_cut': zero_cut,
+            'lib_cut': lib_cut,
+            'struc_zero': struc_zero,
+            'significant_features': diff_df[diff_df['diff_abn'] == True].to_dict(orient='records') if 'diff_abn' in diff_df.columns else [],
+            'all_features': diff_df.to_dict(orient='records'),
+        }
+
+    # MaAsLin3: multivariate association, does not require exactly 2 groups
+    if test_method in ('maaslin3', 'MaAsLin3'):
+        from app.services.r_analysis import run_maaslin3
+        fixed_effects = params.get('fixed_effects', [group_column])
+        random_effects = params.get('random_effects', None)
+        normalization = params.get('normalization', 'TSS')
+        transform = params.get('transform', 'LOG')
+        diff_df = run_maaslin3(df, metadata_df, fixed_effects, random_effects, group_column, normalization, transform)
+        if 'error' in diff_df.columns:
+            return {'error': str(diff_df['error'].iloc[0])}
+        return {
+            'test_method': 'MaAsLin3',
+            'normalization': normalization,
+            'transform': transform,
+            'fixed_effects': fixed_effects,
+            'significant_features': diff_df[diff_df['padj'] < pvalue_threshold].to_dict(orient='records') if 'padj' in diff_df.columns else [],
+            'all_features': diff_df.to_dict(orient='records'),
+        }
+
     if len(groups) != 2:
         return {'error': f'Differential analysis requires exactly 2 groups, found {len(groups)}'}
 

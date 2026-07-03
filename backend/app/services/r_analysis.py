@@ -739,3 +739,416 @@ def run_aldex2(
         'status': 'placeholder',
         'message': 'ALDEx2 implementation requires R package installation',
     }
+
+
+# ─────────────────────────────── ANCOM-BC
+
+
+def _python_ancombc_fallback(
+    count_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    group_var: str,
+    zero_cut: float = 0.9,
+    lib_cut: int = 0,
+    struc_zero: bool = True,
+    p_adj_method: str = 'BH',
+) -> pd.DataFrame:
+    """Python fallback for ANCOM-BC differential abundance analysis.
+
+    Steps:
+        1. Filter features by zero proportion.
+        2. Filter samples by library size.
+        3. CLR transformation.
+        4. Two-group comparison (W statistic approximation).
+        5. P-value calculation (Wilcoxon rank-sum).
+        6. Multiple testing correction.
+    """
+    # Step 1: Filter features by zero proportion
+    zero_props = (count_df == 0).sum(axis=1) / count_df.shape[1]
+    keep_features = zero_props <= zero_cut
+    count_df = count_df.loc[keep_features]
+
+    if count_df.empty:
+        return pd.DataFrame({'error': ['No features remaining after zero filtering']})
+
+    # Step 2: Filter samples by library size
+    lib_sizes = count_df.sum(axis=0)
+    keep_samples = lib_sizes >= lib_cut
+    count_df = count_df.loc[:, keep_samples]
+    metadata_df = metadata_df.loc[keep_samples]
+
+    if count_df.shape[1] == 0:
+        return pd.DataFrame({'error': ['No samples remaining after library size filtering']})
+
+    # Step 3: CLR transformation
+    # Add small pseudocount to zeros
+    min_positive = count_df[count_df > 0].min().min()
+    pseudocount = 0.5 * min_positive if pd.notna(min_positive) else 1e-6
+    count_pseudo = count_df.replace(0, pseudocount)
+    # CLR: log(x / gmean(x)) for each sample
+    log_df = np.log(count_pseudo)
+    gmean = log_df.mean(axis=0)
+    clr_df = log_df.subtract(gmean, axis=1)
+
+    # Step 4: Two-group comparison
+    groups = metadata_df[group_var].dropna().unique()
+    if len(groups) != 2:
+        return pd.DataFrame({'error': ['ANCOM-BC requires exactly 2 groups']})
+    g1, g2 = groups[0], groups[1]
+    g1_samples = metadata_df[metadata_df[group_var] == g1].index.intersection(clr_df.columns)
+    g2_samples = metadata_df[metadata_df[group_var] == g2].index.intersection(clr_df.columns)
+
+    if len(g1_samples) == 0 or len(g2_samples) == 0:
+        return pd.DataFrame({'error': ['One or both groups have no valid samples']})
+
+    results = []
+    for feature in clr_df.index:
+        g1_vals = clr_df.loc[feature, g1_samples].dropna().values
+        g2_vals = clr_df.loc[feature, g2_samples].dropna().values
+
+        if len(g1_vals) == 0 or len(g2_vals) == 0:
+            continue
+
+        # W statistic: mean difference / pooled SE (approximate)
+        lfc = float(g2_vals.mean() - g1_vals.mean())
+        se = np.sqrt(g1_vals.var(ddof=1) / len(g1_vals) + g2_vals.var(ddof=1) / len(g2_vals)) + 1e-10
+        w = lfc / se
+
+        # p-value from Wilcoxon (Mann-Whitney U)
+        try:
+            from scipy.stats import mannwhitneyu
+            _, pvalue = mannwhitneyu(g1_vals, g2_vals, alternative='two-sided')
+        except Exception:
+            pvalue = 1.0
+
+        results.append({
+            'feature': feature,
+            'lfc': lfc,
+            'se': float(se),
+            'W': float(w),
+            'pvalue': float(pvalue),
+        })
+
+    result_df = pd.DataFrame(results)
+    if len(result_df) > 0:
+        # Multiple testing correction
+        pvalues = result_df['pvalue'].values
+        n = len(pvalues)
+        from scipy.stats import rankdata
+        if p_adj_method == 'BH':
+            ranks = rankdata(pvalues, method='max')
+            padj = np.minimum(pvalues * n / ranks, 1.0)
+        elif p_adj_method == 'bonferroni':
+            padj = np.minimum(pvalues * n, 1.0)
+        else:
+            padj = pvalues  # fallback
+        result_df['padj'] = padj
+        result_df['qvalue'] = padj  # simplified
+        result_df['diff_abn'] = result_df['padj'] < 0.05
+        result_df = result_df.sort_values('pvalue')
+
+    return result_df
+
+
+def run_ancombc(
+    count_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    group_var: str,
+    zero_cut: float = 0.9,
+    lib_cut: int = 0,
+    struc_zero: bool = True,
+    p_adj_method: str = 'BH',
+) -> pd.DataFrame:
+    """Run ANCOM-BC differential abundance analysis.
+
+    ANCOM-BC (Analysis of Composition of Microbiomes with Bias Correction)
+    is the bias-corrected version of ANCOM for differential abundance testing.
+
+    Parameters
+    ----------
+    count_df : pd.DataFrame
+        Raw count matrix (features × samples).
+    metadata_df : pd.DataFrame
+        Metadata with sample annotations.
+    group_var : str
+        Grouping variable in metadata.
+    zero_cut : float
+        Proportion of zero cutoff (0-1). Features with > zero_cut zeros removed.
+    lib_cut : int
+        Library size cutoff. Samples with < lib_cut total counts removed.
+    struc_zero : bool
+        Whether to detect structural zeros (used in R version).
+    p_adj_method : str
+        P-value adjustment method ('BH' or 'bonferroni').
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: feature, lfc, se, W, pvalue, padj, qvalue, diff_abn
+        (lfc = log fold change, W = W statistic, diff_abn = differentially abundant flag).
+    """
+    if not R_AVAILABLE or not R_PACKAGES.get('ANCOMBC'):
+        logger.warning("ANCOMBC not available via rpy2, using Python fallback")
+        return _python_ancombc_fallback(count_df, metadata_df, group_var, zero_cut, lib_cut, struc_zero, p_adj_method)
+
+    try:
+        metadata_copy = metadata_df.copy()
+        metadata_copy[group_var] = metadata_copy[group_var].astype(str)
+        common_samples = count_df.columns.intersection(metadata_copy.index)
+        count_sub = count_df[common_samples]
+        meta_sub = metadata_copy.loc[common_samples]
+
+        with localconverter(ro.default_converter + pandas2ri.converter):
+            r_counts = ro.conversion.py2rpy(count_sub)
+            r_meta = ro.conversion.py2rpy(meta_sub)
+
+            ro.r('''
+            run_ancombc <- function(counts, coldata, group_var, zero_cut, lib_cut, struc_zero, p_adj_method) {
+                library(ANCOMBC)
+                # Filter by library size
+                lib_sizes <- colSums(counts)
+                keep_samples <- lib_sizes >= lib_cut
+                counts <- counts[, keep_samples, drop=FALSE]
+                coldata <- coldata[keep_samples, , drop=FALSE]
+                # Filter by zero proportion
+                zero_props <- rowSums(counts == 0) / ncol(counts)
+                keep_features <- zero_props <= zero_cut
+                counts <- counts[keep_features, , drop=FALSE]
+                # Run ANCOM-BC
+                out <- ancombc(
+                    data = counts,
+                    tax_data = NULL,
+                    formula = paste0("~ ", group_var),
+                    group = group_var,
+                    p_adj_method = p_adj_method,
+                    struc_zero = struc_zero,
+                    neg_lb = TRUE
+                )
+                res <- out$res
+                res_df <- as.data.frame(res)
+                res_df$feature <- rownames(res_df)
+                rownames(res_df) <- NULL
+                res_df <- res_df[, c("feature", "lfc", "se", "W", "pvalue", "padj", "qvalue", "diff_abn")]
+                return(res_df)
+            }
+            ''')
+
+            r_func = ro.r['run_ancombc']
+            result_r = r_func(r_counts, r_meta, group_var, zero_cut, lib_cut, struc_zero, p_adj_method)
+            result_df = ro.conversion.rpy2py(result_r)
+
+        result_df = result_df.dropna(subset=['feature'])
+        result_df = result_df.sort_values('pvalue')
+        return result_df
+
+    except Exception as e:
+        logger.error(f"ANCOM-BC R analysis failed: {e}")
+        return _python_ancombc_fallback(count_df, metadata_df, group_var, zero_cut, lib_cut, struc_zero, p_adj_method)
+
+
+# ─────────────────────────────── MaAsLin3
+
+
+def _python_maaslin3_fallback(
+    count_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    fixed_effects: List[str],
+    random_effects: Optional[List[str]] = None,
+    group_var: Optional[str] = None,
+    normalization: str = 'TSS',
+    transform: str = 'LOG',
+    reference: Optional[str] = None,
+) -> pd.DataFrame:
+    """Python fallback for MaAsLin3 multivariate association analysis.
+
+    Steps:
+        1. Data normalization (TSS/CSS/CLR/NONE).
+        2. Data transformation (LOG/AST/NONE).
+        3. Fit linear model for each feature (statsmodels OLS).
+        4. Extract coefficients, standard errors, p-values.
+        5. Multiple testing correction (Benjamini-Hochberg).
+    """
+    import statsmodels.api as sm
+    from statsmodels.stats.multitest import multipletests
+
+    # Step 1: Normalization
+    if normalization == 'TSS':
+        col_sums = count_df.sum(axis=0)
+        col_sums = col_sums.replace(0, np.nan)
+        data = count_df.div(col_sums, axis=1) * 1000000  # CPM-like
+        data = data.fillna(0)
+    elif normalization == 'CSS':
+        # Cumulative sum scaling (simplified)
+        quantiles = count_df.quantile(q=0.5, axis=0)
+        scaling_factors = quantiles / quantiles.median() if quantiles.median() > 0 else pd.Series(1.0, index=quantiles.index)
+        data = count_df.div(scaling_factors, axis=1)
+        data = data.fillna(0)
+    elif normalization == 'CLR':
+        min_positive = count_df[count_df > 0].min().min()
+        pseudocount = 0.5 * min_positive if pd.notna(min_positive) else 1e-6
+        data = np.log(count_df.replace(0, pseudocount))
+        gmean = data.mean(axis=0)
+        data = data.subtract(gmean, axis=1)
+    else:
+        data = count_df.copy()
+
+    # Step 2: Transformation
+    if transform == 'LOG':
+        data = np.log1p(data)
+    elif transform == 'AST':
+        max_val = data.max().max()
+        if max_val > 0:
+            data = np.arcsin(np.sqrt(data / max_val))
+        else:
+            data = data.copy()
+
+    # Step 3: Fit linear model for each feature
+    valid_samples = data.columns.intersection(metadata_df.index)
+    data = data.loc[:, valid_samples].T  # samples × features
+    meta = metadata_df.loc[valid_samples]
+
+    # Ensure fixed_effects exist in metadata
+    available_effects = [c for c in fixed_effects if c in meta.columns]
+    if not available_effects:
+        return pd.DataFrame({'error': ['No valid fixed effects found in metadata']})
+
+    results = []
+    for feature in data.columns:
+        y = data[feature].fillna(0).values
+
+        # Build design matrix
+        X = meta[available_effects].copy()
+        # Handle categorical variables
+        for col in X.columns:
+            if X[col].dtype == 'object' or X[col].dtype.name == 'category':
+                X = pd.get_dummies(X, columns=[col], drop_first=True)
+
+        X = X.fillna(0)
+        # Drop constant columns
+        X = X.loc[:, X.nunique() > 1]
+        if X.empty:
+            continue
+        X = sm.add_constant(X)
+
+        try:
+            model = sm.OLS(y, X).fit()
+            for param_name in model.params.index:
+                if param_name == 'const':
+                    continue
+                results.append({
+                    'feature': feature,
+                    'metadata': param_name,
+                    'coefficient': float(model.params[param_name]),
+                    'stderr': float(model.bse[param_name]),
+                    'pvalue': float(model.pvalues[param_name]),
+                })
+        except Exception as e:
+            logger.warning(f"MaAsLin3 model failed for {feature}: {e}")
+            continue
+
+    result_df = pd.DataFrame(results)
+    if len(result_df) > 0:
+        # BH correction per metadata variable
+        for meta_var in result_df['metadata'].unique():
+            mask = result_df['metadata'] == meta_var
+            pvals = result_df.loc[mask, 'pvalue'].values
+            if len(pvals) > 0:
+                _, padj, _, _ = multipletests(pvals, method='fdr_bh')
+                result_df.loc[mask, 'padj'] = padj
+        result_df['qvalue'] = result_df['padj']  # simplified
+        result_df = result_df.sort_values('pvalue')
+
+    return result_df
+
+
+def run_maaslin3(
+    count_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    fixed_effects: List[str],
+    random_effects: Optional[List[str]] = None,
+    group_var: Optional[str] = None,
+    normalization: str = 'TSS',
+    transform: str = 'LOG',
+    reference: Optional[str] = None,
+) -> pd.DataFrame:
+    """Run MaAsLin3 multivariate association analysis.
+
+    MaAsLin3 (Multivariate Association with Linear Models 3) is used for
+    multivariate microbiome association analysis.
+
+    Parameters
+    ----------
+    count_df : pd.DataFrame
+        Feature table (features × samples). Can be normalized or raw counts.
+    metadata_df : pd.DataFrame
+        Metadata with sample annotations.
+    fixed_effects : list[str]
+        Metadata columns as fixed effects (predictors).
+    random_effects : list[str] or None
+        Metadata columns as random effects.
+    group_var : str or None
+        Primary grouping variable for visualization.
+    normalization : str
+        Normalization method: 'TSS', 'CSS', 'CLR', 'NONE'.
+    transform : str
+        Transformation method: 'LOG', 'AST' (arcsine square root), 'NONE'.
+    reference : str or None
+        Reference level for categorical variables (used in R version).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: feature, metadata, value, coefficient, stderr, pvalue, padj, qvalue.
+    """
+    if not R_AVAILABLE or not R_PACKAGES.get('MaAsLin3'):
+        logger.warning("MaAsLin3 not available via rpy2, using Python fallback")
+        return _python_maaslin3_fallback(count_df, metadata_df, fixed_effects, random_effects, group_var, normalization, transform, reference)
+
+    try:
+        metadata_copy = metadata_df.copy()
+        common_samples = count_df.columns.intersection(metadata_copy.index)
+        count_sub = count_df[common_samples]
+        meta_sub = metadata_copy.loc[common_samples]
+
+        with localconverter(ro.default_converter + pandas2ri.converter):
+            r_counts = ro.conversion.py2rpy(count_sub)
+            r_meta = ro.conversion.py2rpy(meta_sub)
+            r_fixed = ro.StrVector(fixed_effects)
+            r_random = ro.StrVector(random_effects) if random_effects else ro.NULL
+
+            ro.r('''
+            run_maaslin3 <- function(counts, coldata, fixed_effects, random_effects, group_var, normalization, transform, reference) {
+                library(MaAsLin3)
+                # Create temporary output directory
+                output_dir <- tempdir()
+                # Write input files
+                write.csv(as.data.frame(counts), file.path(output_dir, "features.csv"), row.names=TRUE)
+                write.csv(as.data.frame(coldata), file.path(output_dir, "metadata.csv"), row.names=TRUE)
+                # Run MaAsLin3
+                fit <- maaslin3(
+                    input_data = file.path(output_dir, "features.csv"),
+                    input_metadata = file.path(output_dir, "metadata.csv"),
+                    output = file.path(output_dir, "results"),
+                    fixed_effects = as.character(fixed_effects),
+                    random_effects = if (is.null(random_effects)) NULL else as.character(random_effects),
+                    normalization = normalization,
+                    transform = transform,
+                    reference = reference
+                )
+                res_df <- fit$results
+                res_df <- res_df[, c("feature", "metadata", "value", "coefficient", "stderr", "pvalue", "padj", "qvalue")]
+                return(res_df)
+            }
+            ''')
+
+            r_func = ro.r['run_maaslin3']
+            result_r = r_func(r_counts, r_meta, r_fixed, r_random, group_var or ro.NULL, normalization, transform, reference or ro.NULL)
+            result_df = ro.conversion.rpy2py(result_r)
+
+        result_df = result_df.dropna(subset=['feature'])
+        result_df = result_df.sort_values('pvalue')
+        return result_df
+
+    except Exception as e:
+        logger.error(f"MaAsLin3 R analysis failed: {e}")
+        return _python_maaslin3_fallback(count_df, metadata_df, fixed_effects, random_effects, group_var, normalization, transform, reference)
