@@ -93,9 +93,30 @@ async def create_export(
             export_plot(session_id, str(export_path), request.format, request.parameters)
         
         elif request.export_type == "report":
-            # Export full report
+            # Export full report (PDF)
             export_path = export_dir / f"report.{request.format}"
-            # TODO: Implement full report generation
+            # Gather all analysis results for this session
+            jobs = (
+                db.query(AnalysisJob)
+                .filter(AnalysisJob.session_id == session_id)
+                .filter(AnalysisJob.status == "completed")
+                .order_by(AnalysisJob.created_at)
+                .all()
+            )
+            analysis_results = []
+            for job in jobs:
+                if job.result_data:
+                    analysis_results.append({
+                        "test_method": job.job_type,
+                        "parameters": job.parameters,
+                        **job.result_data,
+                    })
+            from app.services.export_service import generate_comprehensive_report
+            generate_comprehensive_report(
+                session_id=session_id,
+                export_path=str(export_path),
+                analysis_results=analysis_results,
+            )
         
         elif request.export_type == "metadata":
             # Export metadata
@@ -141,6 +162,65 @@ async def create_export(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Export failed: {str(e)}",
+        )
+
+
+@router.post(
+    "/sessions/{session_id}/export/report",
+    status_code=status.HTTP_200_OK,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+async def download_report(
+    session_id: str,
+    db: DBSession = Depends(get_db),
+):
+    """Generate and download a comprehensive PDF report."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found",
+        )
+    
+    try:
+        export_dir = Path(settings.UPLOAD_DIR) / session_id / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / f"report_{session_id}.pdf"
+        
+        jobs = (
+            db.query(AnalysisJob)
+            .filter(AnalysisJob.session_id == session_id)
+            .filter(AnalysisJob.status == "completed")
+            .order_by(AnalysisJob.created_at)
+            .all()
+        )
+        analysis_results = []
+        for job in jobs:
+            if job.result_data:
+                analysis_results.append({
+                    "test_method": job.job_type,
+                    "parameters": job.parameters,
+                    **job.result_data,
+                })
+        
+        from app.services.export_service import generate_comprehensive_report
+        generate_comprehensive_report(
+            session_id=session_id,
+            export_path=str(export_path),
+            analysis_results=analysis_results,
+        )
+        
+        return FileResponse(
+            path=str(export_path),
+            filename=f"Meta2bAnalyst_Report_{session_id}.pdf",
+            media_type="application/pdf",
+        )
+    
+    except Exception as e:
+        logger.error(f"Report generation failed for session {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Report generation failed: {str(e)}",
         )
 
 
