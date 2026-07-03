@@ -749,6 +749,15 @@ class AnalysisEngine:
 
         cv_scores = cross_val_score(rf, X, y_encoded, cv=min(5, len(np.unique(y_encoded))))
 
+        # Confusion matrix
+        from sklearn.metrics import confusion_matrix
+        y_pred = rf.predict(X_test)
+        cm = confusion_matrix(y_test, y_pred, labels=le.classes_)
+        cm_dict = {
+            'labels': le.classes_.tolist(),
+            'matrix': cm.tolist(),
+        }
+
         return {
             'accuracy': accuracy,
             'cv_mean_accuracy': float(cv_scores.mean()),
@@ -758,6 +767,7 @@ class AnalysisEngine:
             'n_samples': len(samples),
             'feature_importance': importance_df.head(50).to_dict(orient='records'),
             'class_labels': le.classes_.tolist(),
+            'confusion_matrix': cm_dict,
         }
 
     # ─────────────────────────────── Plotly Chart Generators
@@ -1029,6 +1039,79 @@ class AnalysisEngine:
             xaxis_title='Samples',
             yaxis_title='Total Reads',
             xaxis={'tickangle': -45},
+        )
+        return fig.to_dict()
+
+    def plotly_rf_feature_importance(self, fi_df: pd.DataFrame, top_n: int = 20) -> dict:
+        """Generate feature importance bar chart as Plotly JSON."""
+        if fi_df.empty or 'feature' not in fi_df.columns or 'importance' not in fi_df.columns:
+            return {'data': [], 'layout': {'title': 'Feature Importance (No data)'}}
+        fi_df = fi_df.sort_values('importance', ascending=True).tail(top_n)
+        colors = fi_df['importance'].apply(lambda x: f'rgba(30, 64, 175, {0.3 + 0.7 * x / fi_df["importance"].max()})')
+        fig = go.Figure(data=go.Bar(
+            x=fi_df['importance'].values,
+            y=fi_df['feature'].values,
+            orientation='h',
+            marker_color=colors.values,
+        ))
+        fig.update_layout(
+            title=f'Top {top_n} Feature Importance (Random Forest)',
+            xaxis_title='Importance',
+            yaxis_title='Feature',
+            margin=dict(l=200),
+        )
+        return fig.to_dict()
+
+    def plotly_confusion_matrix(self, cm_data: dict) -> dict:
+        """Generate confusion matrix heatmap as Plotly JSON."""
+        labels = cm_data.get('labels', [])
+        matrix = cm_data.get('matrix', [])
+        if not labels or not matrix:
+            return {'data': [], 'layout': {'title': 'Confusion Matrix (No data)'}}
+        fig = go.Figure(data=go.Heatmap(
+            z=matrix,
+            x=[str(l) for l in labels],
+            y=[str(l) for l in labels],
+            colorscale='Blues',
+            showscale=True,
+            text=[[str(v) for v in row] for row in matrix],
+            texttemplate='%{text}',
+            textfont={'size': 12},
+        ))
+        fig.update_layout(
+            title='Confusion Matrix',
+            xaxis_title='Predicted',
+            yaxis_title='Actual',
+            xaxis_side='bottom',
+        )
+        return fig.to_dict()
+
+    def plotly_lefse_bar(self, lefse_df: pd.DataFrame, lda_threshold: float = 2.0) -> dict:
+        """Generate LEfSe LDA bar chart as Plotly JSON."""
+        if lefse_df.empty or 'lda_score' not in lefse_df.columns:
+            return {'data': [], 'layout': {'title': 'LEfSe LDA Scores (No data)'}}
+        # Filter by absolute LDA threshold
+        plot_df = lefse_df[lefse_df['lda_score'].abs() >= lda_threshold].copy()
+        if plot_df.empty:
+            plot_df = lefse_df.copy()
+        plot_df = plot_df.sort_values('lda_score', ascending=True)
+        # Determine colors: positive vs negative
+        def get_color(x):
+            return '#dc2626' if x > 0 else '#1e40af'
+        colors = plot_df['lda_score'].apply(get_color)
+        fig = go.Figure(data=go.Bar(
+            x=plot_df['lda_score'].values,
+            y=plot_df['feature'].values,
+            orientation='h',
+            marker_color=colors.values,
+        ))
+        fig.add_vline(x=lda_threshold, line_dash='dash', line_color='gray')
+        fig.add_vline(x=-lda_threshold, line_dash='dash', line_color='gray')
+        fig.update_layout(
+            title=f'LEfSe LDA Scores (|LDA| >= {lda_threshold})',
+            xaxis_title='LDA Score',
+            yaxis_title='Feature',
+            margin=dict(l=200),
         )
         return fig.to_dict()
 
@@ -1313,6 +1396,22 @@ def run_differential_analysis(
             'significant_features': diff_df[diff_df['padj'] < pvalue_threshold].to_dict(orient='records') if 'padj' in diff_df.columns else [],
             'all_features': diff_df.to_dict(orient='records'),
         }
+
+    elif test_method == 'lefse':
+        from app.services.r_analysis import run_lefse
+        lda_threshold = params.get('lda_threshold', 2.0)
+        lefse_df = run_lefse(df, metadata_df, group_column, lda_threshold=lda_threshold)
+        result_data = {
+            'test_method': 'LEfSe',
+            'group_column': group_column,
+            'lda_threshold': lda_threshold,
+            'significant_features': lefse_df[lefse_df['lda_score'].abs() >= lda_threshold].to_dict(orient='records') if 'lda_score' in lefse_df.columns else [],
+            'all_features': lefse_df.to_dict(orient='records'),
+        }
+        if 'lda_score' in lefse_df.columns:
+            plot_data = engine.plotly_lefse_bar(lefse_df, lda_threshold)
+            result_data['plot_data'] = plot_data
+        return result_data
 
     if len(groups) != 2:
         return {'error': f'Differential analysis requires exactly 2 groups, found {len(groups)}'}

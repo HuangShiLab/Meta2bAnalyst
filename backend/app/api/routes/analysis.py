@@ -17,7 +17,7 @@ from app.celery_app import celery_app
 from app.database import get_db
 from app.models import AnalysisJob, DataFile, Session as SessionModel
 from app.schemas import AnalysisRequest, AnalysisResponse, AnalysisResultResponse, ErrorResponse
-from app.services.r_analysis import run_ancombc, run_deseq2, run_edger, run_maaslin3
+from app.services.r_analysis import run_ancombc, run_deseq2, run_edger, run_maaslin3, run_lefse
 from app.services.analysis_engine import (
     AnalysisEngine,
     run_alpha_diversity,
@@ -964,6 +964,20 @@ async def analyze_random_forest(
         db.commit()
 
         result_data = run_random_forest(df, metadata_df, job.parameters)
+
+        # Add feature importance chart
+        engine = AnalysisEngine()
+        if 'feature_importance' in result_data:
+            fi_df = pd.DataFrame(result_data['feature_importance'])
+            plot_data = engine.plotly_rf_feature_importance(fi_df, top_n=20)
+            result_data['plot_data'] = plot_data
+
+        # Add confusion matrix chart (if multi-class)
+        if 'confusion_matrix' in result_data:
+            cm_data = result_data['confusion_matrix']
+            plot_data_cm = engine.plotly_confusion_matrix(cm_data)
+            result_data['confusion_matrix_plot'] = plot_data_cm
+
         _save_result(session_id, job, result_data)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
@@ -980,6 +994,70 @@ async def analyze_random_forest(
     except Exception as e:
         db.rollback()
         logger.error(f'Random Forest analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── LEfSe
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/lefse',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_lefse(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run LEfSe (Linear Discriminant Analysis Effect Size) biomarker discovery."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='lefse',
+            parameters={
+                'group_column': request.group_column,
+                'lda_threshold': request.parameters.get('lda_threshold', 2.0),
+                'test_method': 'lefse',
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_differential_analysis(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'LEfSe analysis failed: {e}')
         raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
 
 
@@ -1294,6 +1372,8 @@ async def run_analysis(
             result_data = run_permanova(df, metadata_df, job.parameters)
         elif job.job_type == 'anosim':
             result_data = run_anosim(df, metadata_df, job.parameters)
+        elif job.job_type == 'lefse':
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
         elif job.job_type == 'random_forest':
             result_data = run_random_forest(df, metadata_df, job.parameters)
         else:
