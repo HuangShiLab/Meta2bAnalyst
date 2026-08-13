@@ -1,0 +1,51 @@
+import { Code2, BookOpen, FlaskConical } from "lucide-react";
+import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
+
+interface HeaderProps {
+  className?: string;
+}
+
+export function Header({ className }: HeaderProps) {
+  return (
+    <header
+      className={cn(
+        "sticky top-0 z-50 w-full border-b border-border bg-white/80 backdrop-blur-sm",
+        className
+      )}
+    >
+      <div className="flex h-16 items-center px-4 lg:px-8">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-7 w-7 text-primary" />
+          <Link
+            to="/"
+            className="text-xl font-bold tracking-tight text-foreground"
+          >
+            Meta2bAnalyst
+          </Link>
+        </div>
+
+        <div className="ml-auto flex items-center gap-4">
+          <a
+            href="https://meta2banalyst.readthedocs.io"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
+          >
+            <BookOpen className="h-4 w-4" />
+            <span className="hidden sm:inline">Docs</span>
+          </a>
+          <a
+            href="https://github.com/meta2banalyst"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
+          >
+            <Code2 className="h-4 w-4" />
+            <span className="hidden sm:inline">GitHub</span>
+          </a>
+        </div>
+      </div>
+    </header>
+  );
+}

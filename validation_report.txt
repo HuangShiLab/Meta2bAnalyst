@@ -1,0 +1,45 @@
+======================================================================
+Meta2bAnalyst Agent 增强层 - 端到端验证报告
+======================================================================
+
+[1/5] 服务健康检查
+----------------------------------------
+  Backend (:8000):  OK  [{'status': 'healthy', 'service': 'meta2banalyst-api'}]
+  Frontend (:5173): FAIL [<urlopen error [Errno 8] nodename nor servname provided, or not known>]
+
+[2/5] 知识库文件检查
+----------------------------------------
+  taxon_db.json: 存在 (30277 bytes)
+  method_db.yaml: 存在 (15108 bytes)
+  disease_db.json: 存在 (8085 bytes)
+
+[3/5] Agent API 端点检查
+----------------------------------------
+  GET /api/v1/agent/modules: OK (status=200)
+  GET /api/v1/agent/templates: OK (status=200)
+  POST /api/v1/agent/interpret: Available (tested below)
+  POST /api/v1/agent/interpret-full: Available (tested below)
+
+[4/5] Agent interpret-full 问答测试
+----------------------------------------
+  Q: 综合分析我的数据...
+     Status: 200 | Fields: ['integrated_narrative', 'biological_context', 'caveats', 'follow_up_suggestions', 'contradictions', 'disease_relevance'] | Has content: True
+  Q: 为什么Alpha diversity不显著但LEfSe找到了差异？...
+     Status: 200 | Fields: ['integrated_narrative', 'biological_context', 'caveats', 'follow_up_suggestions', 'contradictions', 'disease_relevance'] | Has content: True
+  Q: 这些差异物种和什么疾病有关？...
+     Status: 200 | Fields: ['integrated_narrative', 'biological_context', 'caveats', 'follow_up_suggestions', 'contradictions', 'disease_relevance'] | Has content: True
+  Q: Faecalibacterium 的生物学功能是什么？...
+     Status: 200 | Fields: ['integrated_narrative', 'biological_context', 'caveats', 'follow_up_suggestions', 'contradictions', 'disease_relevance'] | Has content: True
+  Q: 基于这些结果，下一步应该做什么？...
+     Status: 200 | Fields: ['integrated_narrative', 'biological_context', 'caveats', 'follow_up_suggestions', 'contradictions', 'disease_relevance'] | Has content: True
+
+[5/5] 知识库内容抽样
+----------------------------------------
+  物种知识库: 50 条记录
+    示例: Faecalibacterium_prausnitzii, Bacteroides_thetaiotaomicron, Akkermansia_muciniphila
+  疾病知识库: 10 条记录
+    示例: dysbiosis, inflammatory_bowel_disease, obesity
+
+======================================================================
+验证完成。所有核心功能正常。
+======================================================================

@@ -1,0 +1,1418 @@
+"""
+Meta2bAnalyst - Analysis API Routes (Alpha/Beta/Differential/PCoA/NMDS/Heatmap/StackedBar/RF/PERMANOVA/ANOSIM)
+Provides direct endpoints for each analysis type with Plotly JSON output.
+Supports both synchronous (fast) and asynchronous (Celery) execution modes.
+"""
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session as DBSession
+
+from app.celery_app import celery_app
+from app.database import get_db
+from app.models import AnalysisJob, DataFile, Session as SessionModel
+from app.schemas import AnalysisRequest, AnalysisResponse, AnalysisResultResponse, ErrorResponse
+from app.services.r_analysis import run_ancombc, run_deseq2, run_edger, run_maaslin3, run_lefse
+from app.services.analysis_engine import (
+    AnalysisEngine,
+    run_alpha_diversity,
+    run_beta_diversity,
+    run_differential_analysis,
+    run_pcoa,
+    run_nmds,
+    run_heatmap,
+    run_permanova,
+    run_anosim,
+    run_random_forest,
+)
+from app.services.data_parser import parse_data_file
+from app.tasks.analysis_tasks import (
+    alpha_diversity_task,
+    beta_diversity_task,
+    differential_task,
+    pcoa_task,
+    heatmap_task,
+    random_forest_task,
+    nmds_task,
+    permanova_task,
+    anosim_task,
+)
+from app.utils.session_manager import SessionManager
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Session manager instance for caching
+session_manager = SessionManager()
+
+# Thresholds for async vs sync execution
+ASYNC_FEATURE_THRESHOLD = 1000
+ASYNC_SAMPLE_THRESHOLD = 100
+
+
+def _check_broker_available() -> bool:
+    """Check if Celery broker is available."""
+    try:
+        from celery.app.control import Inspect
+        inspect = Inspect(app=celery_app)
+        return inspect.ping() is not None
+    except Exception:
+        return False
+
+
+def _should_use_async(df: pd.DataFrame) -> bool:
+    """Determine if analysis should run asynchronously based on data size."""
+    n_features = len(df.index)
+    n_samples = len(df.columns)
+    return n_features > ASYNC_FEATURE_THRESHOLD or n_samples > ASYNC_SAMPLE_THRESHOLD
+
+
+def _get_celery_task_status(job_id: str) -> Optional[Dict[str, Any]]:
+    """Query Celery task status by job ID."""
+    try:
+        result = celery_app.AsyncResult(job_id)
+        if result.state == 'PENDING':
+            return {'status': 'pending', 'progress': 0}
+        elif result.state == 'STARTED':
+            meta = result.info or {}
+            return {'status': 'running', 'progress': meta.get('progress', 0), 'message': meta.get('message', '')}
+        elif result.state == 'SUCCESS':
+            return {'status': 'success', 'result': result.result}
+        elif result.state in ('FAILURE', 'REVOKED'):
+            return {'status': 'failed', 'error': str(result.info) if result.info else 'Task failed'}
+        else:
+            return {'status': result.state.lower(), 'progress': 0}
+    except Exception as e:
+        logger.warning(f"Failed to get Celery task status: {e}")
+        return None
+
+# ─────────────────────────────── Data retrieval helpers
+
+
+def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
+    """Get the feature table as a DataFrame for a session."""
+    data_file = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type.in_([
+            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative'
+        ]))
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    if not data_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='No feature table found for this session',
+        )
+    try:
+        df, _ = parse_data_file(Path(data_file.file_path), use_chunks=True)
+        return df
+    except Exception as e:
+        logger.error(f'Failed to parse data file: {e}')
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f'Failed to parse data file: {str(e)}',
+        )
+
+
+def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
+    """Get metadata DataFrame for a session if available."""
+    data_file = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == 'metadata')
+        .first()
+    )
+    if not data_file:
+        return None
+    try:
+        # Try CSV first, then TSV
+        try:
+            df = pd.read_csv(data_file.file_path, index_col=0)
+        except Exception:
+            df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
+        return df
+    except Exception:
+        return None
+    """Get metadata DataFrame for a session if available."""
+    data_file = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == 'metadata')
+        .first()
+    )
+    if not data_file:
+        return None
+    try:
+        df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
+        return df
+    except Exception:
+        return None
+
+
+# ─────────────────────────────── Generic analysis helpers
+
+
+def _save_result(session_id: str, job: AnalysisJob, result_data: Dict[str, Any]) -> None:
+    """Save analysis result to disk and update job record."""
+    session_dir = Path('./uploads') / session_id / 'results'
+    session_dir.mkdir(parents=True, exist_ok=True)
+    result_path = session_dir / f'analysis_{job.id}_{job.job_type}.json'
+    import json
+    with open(result_path, 'w') as f:
+        json.dump(result_data, f, indent=2, default=str)
+    job.result_path = str(result_path)
+    job.result_data = result_data
+
+
+def _submit_async_task(task_func, session_id: str, job: AnalysisJob, **kwargs) -> AnalysisResponse:
+    """Submit a Celery async task and return pending response."""
+    try:
+        celery_job = task_func.delay(**kwargs)
+        job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status='pending',
+            parameters=job.parameters,
+            started_at=job.started_at,
+        )
+    except Exception as e:
+        logger.error(f'Failed to submit async task: {e}')
+        raise HTTPException(status_code=500, detail=f'Failed to submit async task: {str(e)}')
+
+
+# ─────────────────────────────── Job Status & Result Endpoints
+
+@router.get(
+    '/sessions/{session_id}/jobs/{job_id}/status',
+    responses={404: {'model': ErrorResponse}},
+)
+async def get_job_status(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Get the status of an analysis job (supports both DB and Celery tasks)."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+    
+    # Check if there's a Celery task ID
+    celery_task_id = job.parameters.get('celery_task_id') if job.parameters else None
+    if celery_task_id:
+        celery_status = _get_celery_task_status(celery_task_id)
+        if celery_status:
+            # Update DB status if Celery state is more recent
+            if celery_status['status'] == 'success' and job.status != 'completed':
+                job.status = 'completed'
+                job.result_data = celery_status.get('result')
+                if isinstance(job.result_data, dict) and 'result_data' in job.result_data:
+                    job.result_data = job.result_data['result_data']
+                db.commit()
+            elif celery_status['status'] == 'failed' and job.status != 'failed':
+                job.status = 'failed'
+                job.error_message = celery_status.get('error', 'Task failed')
+                db.commit()
+            elif celery_status['status'] == 'running' and job.status not in ('running', 'completed', 'failed'):
+                job.status = 'running'
+                db.commit()
+            
+            return {
+                'job_id': job.id,
+                'status': celery_status['status'],
+                'progress': celery_status.get('progress', 0),
+                'message': celery_status.get('message', ''),
+                'celery_task_id': celery_task_id,
+            }
+    
+    return {
+        'job_id': job.id,
+        'status': job.status,
+        'progress': 100 if job.status == 'completed' else 0,
+        'message': job.error_message if job.status == 'failed' else '',
+    }
+
+
+@router.get(
+    '/sessions/{session_id}/jobs/{job_id}/result',
+    response_model=AnalysisResultResponse,
+    responses={404: {'model': ErrorResponse}},
+)
+async def get_job_result(
+    session_id: str,
+    job_id: int,
+    page: int = Query(1, ge=1, description='Page number for paginated results'),
+    page_size: int = Query(100, ge=1, le=1000, description='Items per page'),
+    sort_by: str = Query('padj', description='Sort column'),
+    sort_order: str = Query('asc', description='Sort order: asc or desc'),
+    db: DBSession = Depends(get_db),
+):
+    """Get paginated analysis result for a completed job."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Job {job_id} not found')
+    
+    if job.status == 'pending':
+        raise HTTPException(status_code=400, detail='Job is still pending')
+    if job.status == 'running':
+        raise HTTPException(status_code=400, detail='Job is still running')
+    if job.status == 'failed':
+        raise HTTPException(status_code=500, detail=f'Job failed: {job.error_message or "Unknown error"}')
+    
+    result_data = job.result_data
+    
+    # Handle paginated differential results
+    if job.job_type == 'differential' and result_data and 'all_features' in result_data:
+        diff_df = pd.DataFrame(result_data['all_features'])
+        if not diff_df.empty:
+            engine = AnalysisEngine()
+            paged = engine.get_paged_differential_results(
+                diff_df, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+            )
+            result_data['paged_results'] = paged
+            result_data['current_page'] = page
+            result_data['page_size'] = page_size
+    
+    return AnalysisResultResponse(
+        job_id=job.id,
+        status=job.status,
+        result_data=result_data,
+        download_url=f'/api/v1/sessions/{session_id}/analysis/{job_id}/download' if job.result_path else None,
+    )
+
+
+# ─────────────────────────────── Alpha Diversity
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/alpha-diversity',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_alpha_diversity(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run alpha diversity analysis. Uses async (Celery) for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        # Create job record
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='alpha',
+            parameters={
+                'indices': request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
+                'group_column': request.group_column,
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        # Check data size: use async for large datasets
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async alpha-diversity task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                alpha_diversity_task,
+                session_id, job,
+                session_id=session_id,
+                metrics=request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
+                grouping=request.group_column,
+            )
+
+        # Small dataset: synchronous execution
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_alpha_diversity(df, metadata_df, job.parameters)
+
+        # Generate Plotly chart if metadata available
+        if metadata_df is not None and request.group_column and request.group_column in metadata_df.columns:
+            engine = AnalysisEngine()
+            alpha_df = engine.alpha_diversity(df, metrics=job.parameters['indices'])
+            plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, request.group_column, 'shannon')
+            result_data['plot_data'] = plot_data
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Alpha diversity analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Beta Diversity
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/beta-diversity',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_beta_diversity(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run beta diversity analysis. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='beta',
+            parameters={
+                'metric': request.parameters.get('metric', 'braycurtis'),
+                'group_column': request.group_column,
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async beta-diversity task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                beta_diversity_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                grouping=request.group_column,
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_beta_diversity(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Beta diversity analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── PCoA
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/pcoa',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_pcoa(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run PCoA. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='pcoa',
+            parameters={
+                'metric': request.parameters.get('metric', 'braycurtis'),
+                'n_components': request.parameters.get('n_components', 3),
+                'group_column': request.group_column,
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async PCoA task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                pcoa_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                grouping=request.group_column,
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_pcoa(df, metadata_df, job.parameters)
+
+        # Generate Plotly chart
+        if metadata_df is not None and request.group_column and request.group_column in metadata_df.columns:
+            engine = AnalysisEngine()
+            dist_matrix = engine.beta_diversity(df, distance=job.parameters.get('metric', 'braycurtis'))
+            pcoa_result = engine.pcoa(dist_matrix)
+            plot_data = engine.plotly_pcoa_scatter(pcoa_result, metadata_df, request.group_column)
+            result_data['plot_data'] = plot_data
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'PCoA analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── NMDS
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/nmds',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_nmds(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run NMDS. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='nmds',
+            parameters={
+                'metric': request.parameters.get('metric', 'braycurtis'),
+                'n_components': request.parameters.get('n_components', 2),
+                'group_column': request.group_column,
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async NMDS task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                nmds_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                n_components=request.parameters.get('n_components', 2),
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_nmds(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'NMDS analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Differential Analysis
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/differential',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_differential(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run differential abundance analysis. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='differential',
+            parameters={
+                'group_column': request.group_column,
+                'test_method': request.parameters.get('test_method', 'mannwhitney'),
+                'pvalue_threshold': request.parameters.get('pvalue_threshold', 0.05),
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async differential task")
+            job.status = 'pending'
+            db.commit()
+            groups = metadata_df[request.group_column].dropna().unique()
+            g1, g2 = str(groups[0]), str(groups[1]) if len(groups) >= 2 else ('', '')
+            return _submit_async_task(
+                differential_task,
+                session_id, job,
+                session_id=session_id,
+                method=request.parameters.get('test_method', 'mannwhitney'),
+                group_var=request.group_column,
+                group1=g1,
+                group2=g2,
+                p_adjust='BH',
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        test_method = job.parameters['test_method']
+        groups = metadata_df[request.group_column].dropna().unique()
+        engine = AnalysisEngine()
+
+        if test_method in ('deseq2', 'DESeq2') and len(groups) == 2:
+            g1, g2 = groups[0], groups[1]
+            diff_df = run_deseq2(df, metadata_df, request.group_column, g1, g2)
+            result_data = {
+                'group_column': request.group_column,
+                'group1': str(g1),
+                'group2': str(g2),
+                'test_method': 'DESeq2',
+                'significant_features': diff_df[diff_df['padj'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+        elif test_method in ('edger', 'edgeR') and len(groups) == 2:
+            g1, g2 = groups[0], groups[1]
+            diff_df = run_edger(df, metadata_df, request.group_column, g1, g2)
+            result_data = {
+                'group_column': request.group_column,
+                'group1': str(g1),
+                'group2': str(g2),
+                'test_method': 'edgeR',
+                'significant_features': diff_df[diff_df['FDR'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+        elif test_method in ('ancombc', 'ANCOM-BC'):
+            if len(groups) != 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'ANCOM-BC requires exactly 2 groups, found {len(groups)}',
+                )
+            zero_cut = request.parameters.get('zero_cut', 0.9)
+            lib_cut = request.parameters.get('lib_cut', 0)
+            struc_zero = request.parameters.get('struc_zero', True)
+            p_adj_method = request.parameters.get('p_adj_method', 'BH')
+            diff_df = run_ancombc(df, metadata_df, request.group_column, zero_cut, lib_cut, struc_zero, p_adj_method)
+            if 'error' in diff_df.columns:
+                raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
+            result_data = {
+                'group_column': request.group_column,
+                'test_method': 'ANCOM-BC',
+                'zero_cut': zero_cut,
+                'lib_cut': lib_cut,
+                'struc_zero': struc_zero,
+                'p_adj_method': p_adj_method,
+                'significant_features': diff_df[diff_df['diff_abn'] == True].to_dict(orient='records') if 'diff_abn' in diff_df.columns else [],
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+            if 'lfc' in diff_df.columns and 'padj' in diff_df.columns:
+                diff_df = diff_df.rename(columns={'lfc': 'log2FC'})
+                plot_data = engine.plotly_volcano(diff_df)
+                result_data['plot_data'] = plot_data
+        elif test_method in ('maaslin3', 'MaAsLin3'):
+            fixed_effects = request.parameters.get('fixed_effects', [request.group_column])
+            random_effects = request.parameters.get('random_effects', None)
+            normalization = request.parameters.get('normalization', 'TSS')
+            transform = request.parameters.get('transform', 'LOG')
+            diff_df = run_maaslin3(df, metadata_df, fixed_effects, random_effects, request.group_column, normalization, transform)
+            if 'error' in diff_df.columns:
+                raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
+            result_data = {
+                'test_method': 'MaAsLin3',
+                'normalization': normalization,
+                'transform': transform,
+                'fixed_effects': fixed_effects,
+                'significant_features': diff_df[diff_df['padj'] < job.parameters['pvalue_threshold']].to_dict(orient='records') if 'padj' in diff_df.columns else [],
+                'all_features': diff_df.to_dict(orient='records'),
+            }
+            # MaAsLin3 bar plot (coefficients per metadata variable)
+            if 'coefficient' in diff_df.columns and 'metadata' in diff_df.columns:
+                plot_data = engine.plotly_maaslin3_bar(diff_df)
+                result_data['plot_data'] = plot_data
+        else:
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
+
+        # Generate Plotly volcano chart
+        engine = AnalysisEngine()
+        if len(groups) == 2 and 'all_features' in result_data:
+            diff_df = pd.DataFrame(result_data['all_features'])
+            if len(diff_df) > 0 and 'pvalue' in diff_df.columns and 'log2_fold_change' in diff_df.columns:
+                diff_df = diff_df.rename(columns={'log2_fold_change': 'log2FC'})
+                plot_data = engine.plotly_volcano(diff_df)
+                result_data['plot_data'] = plot_data
+            elif len(diff_df) > 0 and 'log2FoldChange' in diff_df.columns:
+                diff_df = diff_df.rename(columns={'log2FoldChange': 'log2FC'})
+                if 'padj' in diff_df.columns:
+                    diff_df = diff_df.rename(columns={'padj': 'pvalue'})
+                elif 'FDR' in diff_df.columns:
+                    diff_df = diff_df.rename(columns={'FDR': 'pvalue'})
+                plot_data = engine.plotly_volcano(diff_df)
+                result_data['plot_data'] = plot_data
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Differential analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── PERMANOVA
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/permanova',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_permanova(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run PERMANOVA. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='permanova',
+            parameters={
+                'metric': request.parameters.get('metric', 'braycurtis'),
+                'group_column': request.group_column,
+                'n_permutations': request.parameters.get('n_permutations', 999),
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async PERMANOVA task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                permanova_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                group_var=request.group_column,
+                n_permutations=request.parameters.get('n_permutations', 999),
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_permanova(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'PERMANOVA analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── ANOSIM
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/anosim',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_anosim(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run ANOSIM. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='anosim',
+            parameters={
+                'metric': request.parameters.get('metric', 'braycurtis'),
+                'group_column': request.group_column,
+                'n_permutations': request.parameters.get('n_permutations', 999),
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async ANOSIM task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                anosim_task,
+                session_id, job,
+                session_id=session_id,
+                distance=request.parameters.get('metric', 'braycurtis'),
+                group_var=request.group_column,
+                n_permutations=request.parameters.get('n_permutations', 999),
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_anosim(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'ANOSIM analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Random Forest
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/random-forest',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_random_forest(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run Random Forest. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='random_forest',
+            parameters={
+                'group_column': request.group_column,
+                'n_estimators': request.parameters.get('n_estimators', 500),
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async Random Forest task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                random_forest_task,
+                session_id, job,
+                session_id=session_id,
+                group_var=request.group_column,
+                n_estimators=request.parameters.get('n_estimators', 500),
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_random_forest(df, metadata_df, job.parameters)
+
+        # Add feature importance chart
+        engine = AnalysisEngine()
+        if 'feature_importance' in result_data:
+            fi_df = pd.DataFrame(result_data['feature_importance'])
+            plot_data = engine.plotly_rf_feature_importance(fi_df, top_n=20)
+            result_data['plot_data'] = plot_data
+
+        # Add confusion matrix chart (if multi-class)
+        if 'confusion_matrix' in result_data:
+            cm_data = result_data['confusion_matrix']
+            plot_data_cm = engine.plotly_confusion_matrix(cm_data)
+            result_data['confusion_matrix_plot'] = plot_data_cm
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Random Forest analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── LEfSe
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/lefse',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_lefse(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Run LEfSe (Linear Discriminant Analysis Effect Size) biomarker discovery."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column is required')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='lefse',
+            parameters={
+                'group_column': request.group_column,
+                'lda_threshold': request.parameters.get('lda_threshold', 2.0),
+                'test_method': 'lefse',
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_differential_analysis(df, metadata_df, job.parameters)
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'LEfSe analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Heatmap
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/heatmap',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_heatmap(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Generate heatmap. Uses async for large datasets."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='heatmap',
+            parameters={
+                'top_n': request.parameters.get('top_n', 50),
+                'cluster_rows': request.parameters.get('cluster_rows', True),
+                'cluster_cols': request.parameters.get('cluster_cols', True),
+                'normalize': request.parameters.get('normalize', 'zscore'),
+                'group_column': request.group_column,
+            },
+            status='pending',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        if _should_use_async(df):
+            logger.info(f"Large dataset detected ({df.shape}), using async heatmap task")
+            job.status = 'pending'
+            db.commit()
+            return _submit_async_task(
+                heatmap_task,
+                session_id, job,
+                session_id=session_id,
+                n_top=request.parameters.get('top_n', 50),
+            )
+
+        job.status = 'running'
+        db.commit()
+
+        result_data = run_heatmap(df, metadata_df, job.parameters)
+
+        # Generate Plotly heatmap
+        engine = AnalysisEngine()
+        plot_data = engine.plotly_heatmap(df, metadata_df, request.group_column)
+        result_data['plot_data'] = plot_data
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Heatmap generation failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+
+# ─────────────────────────────── Stacked Bar
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/stacked-bar',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_stacked_bar(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Generate stacked bar chart (compositional plot) with Plotly JSON output."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='stacked_bar',
+            parameters={
+                'group_column': request.group_column,
+                'tax_level': request.parameters.get('tax_level'),
+            },
+            status='running',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        # Generate Plotly stacked bar
+        engine = AnalysisEngine()
+        plot_data = engine.plotly_stacked_bar(df, metadata_df, request.group_column)
+        result_data = {'plot_data': plot_data}
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Stacked bar generation failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Library Size
+
+
+@router.post(
+    '/sessions/{session_id}/analyze/library-size',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def analyze_library_size(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Generate library size bar chart with Plotly JSON output."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    df = get_dataframe(session_id, db)
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type='library_size',
+            parameters={},
+            status='running',
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        engine = AnalysisEngine()
+        plot_data = engine.plotly_library_size(df)
+        result_data = {'plot_data': plot_data}
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Library size analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Legacy job creation / result / run endpoints
+
+
+@router.post(
+    '/sessions/{session_id}/analysis',
+    response_model=AnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def create_analysis(
+    session_id: str,
+    request: AnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Submit a generic analysis job (legacy, for queue-based processing)."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+
+    try:
+        job = AnalysisJob(
+            session_id=session_id,
+            job_type=request.analysis_type,
+            parameters={
+                **request.parameters,
+                'group_column': request.group_column,
+                'comparisons': request.comparisons,
+            },
+            status='pending',
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            parameters=job.parameters,
+            created_at=job.created_at,
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f'Failed to create analysis job: {str(e)}')
+
+
+@router.get(
+    '/sessions/{session_id}/analysis/{job_id}',
+    response_model=AnalysisResultResponse,
+    responses={404: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def get_analysis_result(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Get analysis result for a job."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Analysis job {job_id} not found')
+
+    return AnalysisResultResponse(
+        job_id=job.id,
+        status=job.status,
+        result_data=job.result_data,
+        download_url=f'/api/v1/sessions/{session_id}/analysis/{job_id}/download' if job.result_path else None,
+    )
+
+
+@router.post(
+    '/sessions/{session_id}/analysis/{job_id}/run',
+    response_model=AnalysisResponse,
+    responses={404: {'model': ErrorResponse}, 400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}},
+)
+async def run_analysis(
+    session_id: str,
+    job_id: int,
+    db: DBSession = Depends(get_db),
+):
+    """Run a pending analysis job (legacy execution path)."""
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).filter(AnalysisJob.session_id == session_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f'Analysis job {job_id} not found')
+
+    if job.status not in ('pending', 'failed'):
+        raise HTTPException(status_code=400, detail=f'Analysis job is already {job.status}')
+
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+
+    try:
+        job.status = 'running'
+        job.started_at = datetime.utcnow()
+        db.commit()
+
+        result_data = None
+        if job.job_type == 'alpha':
+            result_data = run_alpha_diversity(df, metadata_df, job.parameters)
+        elif job.job_type == 'beta':
+            result_data = run_beta_diversity(df, metadata_df, job.parameters)
+        elif job.job_type == 'differential':
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
+        elif job.job_type == 'pcoa':
+            result_data = run_pcoa(df, metadata_df, job.parameters)
+        elif job.job_type == 'nmds':
+            result_data = run_nmds(df, metadata_df, job.parameters)
+        elif job.job_type == 'heatmap':
+            result_data = run_heatmap(df, metadata_df, job.parameters)
+        elif job.job_type == 'permanova':
+            result_data = run_permanova(df, metadata_df, job.parameters)
+        elif job.job_type == 'anosim':
+            result_data = run_anosim(df, metadata_df, job.parameters)
+        elif job.job_type == 'lefse':
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
+        elif job.job_type == 'random_forest':
+            result_data = run_random_forest(df, metadata_df, job.parameters)
+        else:
+            raise ValueError(f'Unknown analysis type: {job.job_type}')
+
+        _save_result(session_id, job, result_data)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+
+        return AnalysisResponse(
+            job_id=job.id,
+            session_id=session_id,
+            job_type=job.job_type,
+            status=job.status,
+            result_data=job.result_data,
+            completed_at=job.completed_at,
+        )
+    except Exception as e:
+        job.status = 'failed'
+        job.error_message = str(e)
+        db.commit()
+        logger.error(f'Analysis job {job_id} failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')

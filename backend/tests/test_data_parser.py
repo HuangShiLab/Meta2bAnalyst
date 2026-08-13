@@ -148,6 +148,24 @@ class TestFileFormatDetection:
         assert detect_file_format(Path(path)) == "strain"
         Path(path).unlink()
 
+    def test_detect_metaphlan(self):
+        with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:
+            f.write("clade_name\tSample1\tSample2\n")
+            f.write("k__Bacteria\t100.0\t100.0\n")
+            f.write("k__Bacteria|p__Firmicutes\t80.0\t75.0\n")
+            path = f.name
+        assert detect_file_format(Path(path)) == "metaphlan"
+        Path(path).unlink()
+
+    def test_detect_humann3(self):
+        with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:
+            f.write("# Pathway\tSample1\tSample2\n")
+            f.write("UNMAPPED\t100.0\t200.0\n")
+            f.write("GLYCOLYSIS\t50.0\t60.0\n")
+            path = f.name
+        assert detect_file_format(Path(path)) == "humann3"
+        Path(path).unlink()
+
 
 class TestParseDataFile:
     """Test the generic parse_data_file function."""
@@ -161,3 +179,39 @@ class TestParseDataFile:
         df, fmt = parse_data_file(Path(temp_tsv_file))
         assert fmt == "tsv"
         assert df.shape == sample_feature_table.shape
+
+    def test_parse_metaphlan(self):
+        with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:
+            f.write("clade_name\tSample1\tSample2\n")
+            f.write("k__Bacteria\t100.0\t100.0\n")
+            f.write("k__Bacteria|p__Firmicutes\t80.0\t75.0\n")
+            path = f.name
+        df, fmt = parse_data_file(Path(path))
+        assert fmt == "metaphlan"
+        assert df.shape == (2, 2)
+        assert list(df.columns) == ["Sample1", "Sample2"]
+        assert "k__Bacteria" in df.index
+        Path(path).unlink()
+
+    def test_parse_humann3(self):
+        with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:
+            f.write("# Pathway\tSample1\tSample2\n")
+            f.write("UNMAPPED\t100.0\t200.0\n")
+            f.write("GLYCOLYSIS\t50.0\t60.0\n")
+            path = f.name
+        df, fmt = parse_data_file(Path(path))
+        assert fmt == "humann3"
+        assert df.shape == (2, 2)
+        assert list(df.columns) == ["Sample1", "Sample2"]
+        assert "UNMAPPED" in df.index
+        Path(path).unlink()
+
+    def test_parse_microbiome_label_auto_detects_metaphlan(self):
+        with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False, mode="w") as f:
+            f.write("clade_name\tSample1\tSample2\n")
+            f.write("k__Bacteria\t100.0\t100.0\n")
+            path = f.name
+        df, fmt = parse_data_file(Path(path), file_type="microbiome")
+        assert fmt == "metaphlan"
+        assert df.shape == (1, 2)
+        Path(path).unlink()

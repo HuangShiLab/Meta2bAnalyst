@@ -4,6 +4,8 @@ Implements Alpha/Beta diversity, differential abundance, PCoA, NMDS, heatmap,
 random forest, PERMANOVA, ANOSIM, and Plotly figure generation.
 """
 import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -614,7 +616,7 @@ class AnalysisEngine:
             'df_between': int(df_between),
             'df_within': int(df_within),
             'n_permutations': n_permutations,
-            'significant': pvalue < 0.05,
+            'significant': bool(pvalue < 0.05),
         }
 
     # ─────────────────────────────── ANOSIM
@@ -686,7 +688,7 @@ class AnalysisEngine:
             'n_permutations': n_permutations,
             'r_within': float(r_within),
             'r_between': float(r_between),
-            'significant': pvalue < 0.05,
+            'significant': bool(pvalue < 0.05),
         }
 
     # ─────────────────────────────── Random Forest
@@ -1168,6 +1170,21 @@ def run_alpha_diversity(
     """Run alpha diversity analysis and return structured results."""
     params = parameters or {}
     indices = params.get('indices', ['shannon', 'simpson', 'observed', 'chao1', 'evenness'])
+    
+    # Auto-detect orientation: if more rows than typical features, likely samples x features
+    # Alpha diversity expects features x samples (features as rows)
+    # Heuristic: if index looks like sample IDs (strings like S1, S2) and columns look like taxa,
+    # we need to transpose
+    if len(df) > 0 and len(df.columns) > 0:
+        # If row names look like sample IDs and column names look like taxa, transpose
+        first_col = str(df.columns[0])
+        first_idx = str(df.index[0])
+        # Sample IDs often start with S, followed by numbers
+        idx_like_sample = bool(re.match(r'^[Ss]\d+$', first_idx))
+        col_like_taxa = '|' in first_col or '__' in first_col or first_col[0].isupper()
+        if idx_like_sample or (not col_like_taxa and len(df) < len(df.columns)):
+            df = df.T
+    
     engine = AnalysisEngine()
     alpha_df = engine.alpha_diversity(df, metrics=indices)
 
@@ -1212,7 +1229,7 @@ def run_alpha_diversity(
                             'test': 'Mann-Whitney U',
                             'statistic': float(stat),
                             'pvalue': float(pvalue),
-                            'significant': pvalue < 0.05,
+                            'significant': bool(pvalue < 0.05),
                         }
                     except Exception as e:
                         logger.warning(f"Statistical test failed: {e}")
@@ -1232,7 +1249,7 @@ def run_alpha_diversity(
                             'test': 'ANOVA (F-test)',
                             'statistic': float(stat),
                             'pvalue': float(pvalue),
-                            'significant': pvalue < 0.05,
+                            'significant': bool(pvalue < 0.05),
                         }
                     except Exception as e:
                         logger.warning(f"ANOVA failed: {e}")
@@ -1250,6 +1267,14 @@ def run_beta_diversity(
     """Run beta diversity analysis and return structured results."""
     params = parameters or {}
     metric = params.get('metric', 'braycurtis')
+    
+    # Auto-detect orientation (same heuristic as alpha diversity)
+    if len(df) > 0 and len(df.columns) > 0:
+        first_idx = str(df.index[0])
+        idx_like_sample = bool(re.match(r'^[Ss]\d+$', first_idx))
+        if idx_like_sample:
+            df = df.T
+    
     engine = AnalysisEngine()
     dist_matrix = engine.beta_diversity(df, distance=metric)
 
@@ -1293,7 +1318,7 @@ def run_pcoa(
 
     results = {
         'metric': metric,
-        'coordinates': pcoa_result['coordinates'].to_dict(orient='index'),
+        'coordinates': pcoa_result['samples'].to_dict(orient='index'),
         'eigenvalues': pcoa_result['eigenvalues'],
         'variance_explained': pcoa_result['variance_explained'],
     }
@@ -1302,7 +1327,7 @@ def run_pcoa(
     if metadata_df is not None and group_column and group_column in metadata_df.columns:
         results['group_metadata'] = {
             str(s): str(metadata_df.loc[s, group_column])
-            for s in pcoa_result['coordinates'].index
+            for s in pcoa_result['samples'].index
             if s in metadata_df.index
         }
 
@@ -1565,3 +1590,68 @@ def run_heatmap(
         }
 
     return results
+
+
+def run_network_analysis(df, metadata_df=None, parameters=None):
+    from app.services.network_analysis import run_network_analysis as _run
+    return _run(df, **(parameters or {}))
+
+
+def run_correlation_analysis(df, metadata_df=None, parameters=None):
+    from app.services.correlation_analysis import run_correlation_analysis as _run
+    return _run(df, metadata_df, parameters)
+
+
+def run_pathway_analysis(df, metadata_df=None, parameters=None):
+    from app.services.functional_analysis import run_pathway_analysis as _run
+    return _run(df, diff_result_data=None, parameters=parameters)
+
+
+def run_functional_prediction(df, metadata_df=None, parameters=None):
+    from app.services.functional_prediction import run_functional_prediction as _run
+    return _run(df, metadata_df, parameters)
+
+
+def run_phylogenetic_analysis(df, metadata_df=None, parameters=None):
+    from app.services.phylogenetic_analysis import run_phylogenetic_analysis as _run
+    return _run(df, metadata_df, parameters)
+
+
+def run_hierarchical_clustering(df, metadata_df=None, parameters=None):
+    from app.services.hierarchical_clustering import run_hierarchical_clustering as _run
+    return _run(df, metadata_df, parameters)
+
+def run_cross_omics_analysis(df1, df2=None, metadata_df=None, parameters=None):
+    from app.services.cross_omics import run_cross_omics_analysis as _run
+    return _run(df1, df2, metadata_df, parameters)
+
+def run_advanced_dimred(df, metadata_df=None, parameters=None):
+    from app.services.advanced_dimred import run_advanced_dimred as _run
+    return _run(df, metadata_df, parameters)
+
+def run_source_tracking_analysis(df, metadata_df=None, parameters=None):
+    from app.services.source_tracking import run_source_tracking_analysis as _run
+    return _run(df, metadata_df, parameters)
+
+
+def run_metabolomics_analysis(df, metadata_df=None, parameters=None):
+    from app.services.metabolomics_analysis import run_metabolomics_analysis as _run
+    return _run(df, metadata_df, parameters)
+
+
+def run_sparse_cca_analysis(microbiome_df, metabolome_df=None, metadata_df=None, parameters=None):
+    from app.services.sparse_cca import run_sparse_cca_analysis as _run
+    return _run(microbiome_df, metabolome_df, metadata_df, parameters)
+
+
+def run_rda_analysis(microbiome_df, metabolome_df=None, metadata_df=None, parameters=None):
+    from app.services.rda_analysis import run_rda_analysis as _run
+    return _run(microbiome_df, metabolome_df, metadata_df, parameters)
+
+
+def run_o2pls_analysis(microbiome_df, metabolome_df=None, metadata_df=None, parameters=None):
+    from app.services.o2pls_analysis import run_o2pls_analysis as _run
+    return _run(microbiome_df, metabolome_df, metadata_df, parameters)
+
+    from app.services.source_tracking import run_source_tracking_analysis as _run
+    return _run(df, metadata_df, parameters)

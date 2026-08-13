@@ -75,6 +75,81 @@ class DataParser:
             logger.error(f"Failed chunked parse of CSV/TSV file {file_path}: {e}")
             raise ValueError(f"Failed chunked parse: {e}") from e
 
+    def parse_metaphlan(self, file_path: str) -> pd.DataFrame:
+        """Parse MetaPhlAn merged abundance table.
+
+        Expected format:
+            - First column: clade_name (taxonomy path like k__Bacteria|p__Firmicutes|...)
+            - Subsequent columns: sample relative abundances (0-100)
+
+        Returns:
+            DataFrame with taxonomy clades as index and samples as columns.
+        """
+        try:
+            # Read first line to check header
+            with open(file_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+
+            df = pd.read_csv(
+                file_path,
+                sep='	',
+                index_col=0,
+                header=0,
+                engine='python',
+            )
+
+            # Rename index to remove leading '#'
+            df.index.name = 'clade_name'
+
+            # Convert to numeric
+            df = df.apply(pd.to_numeric, errors='coerce')
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+            logger.info(
+                f"Parsed MetaPhlAn file {file_path}: shape={df.shape}, "
+                f"clades={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse MetaPhlAn file {file_path}: {e}")
+            raise ValueError(f"Failed to parse MetaPhlAn file: {e}") from e
+
+    def parse_humann3(self, file_path: str) -> pd.DataFrame:
+        """Parse HUMAnN3 gene family or pathway abundance table.
+
+        Expected format:
+            - First column: feature name (UniRef90_xxx or pathway name)
+            - Subsequent columns: sample abundances (RPK or CPM)
+            - May contain stratified rows (feature|g__Genus.s__Species)
+
+        Returns:
+            DataFrame with features as index and samples as columns.
+        """
+        try:
+            df = pd.read_csv(
+                file_path,
+                sep='	',
+                index_col=0,
+                header=0,
+                comment='#',
+                engine='python',
+            )
+
+            # Convert to numeric
+            df = df.apply(pd.to_numeric, errors='coerce')
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+            logger.info(
+                f"Parsed HUMAnN3 file {file_path}: shape={df.shape}, "
+                f"features={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to parse HUMAnN3 file {file_path}: {e}")
+            raise ValueError(f"Failed to parse HUMAnN3 file: {e}") from e
+
     def parse_csv_tsv(self, file_path: str, sep: str = ',') -> pd.DataFrame:
         """Parse CSV/TSV feature table.
 
@@ -100,16 +175,35 @@ class DataParser:
 
             # Check if first line starts with #NAME
             if first_line.startswith('#NAME'):
-                # Skip the comment line, use second line as header
-                df = pd.read_csv(
-                    file_path,
-                    sep=sep,
-                    index_col=0,
-                    header=0,
-                    skiprows=1,
-                    comment='#',
-                    engine='python',
-                )
+                # Remove #NAME prefix and treat first line as header row.
+                # The format is: #NAME,S01,S02,... — after stripping #NAME we get the sample IDs.
+                # We'll rewrite a temporary cleaned file so pandas can parse correctly.
+                import tempfile, os as _os
+                fd, tmp_path = tempfile.mkstemp(suffix='.csv', text=True)
+                try:
+                    with _os.fdopen(fd, 'w', encoding='utf-8') as fw:
+                        # Write header row (strip #NAME from first line)
+                        header_line = first_line.replace('#NAME,', '', 1)
+                        if header_line.startswith('#NAME'):
+                            header_line = header_line.replace('#NAME', '', 1).lstrip(',')
+                        fw.write(header_line + '\n')
+                        # Copy remaining lines
+                        with open(file_path, 'r', encoding='utf-8') as fr:
+                            next(fr)  # skip original first line
+                            for line in fr:
+                                fw.write(line)
+                    df = pd.read_csv(
+                        tmp_path,
+                        sep=sep,
+                        index_col=0,
+                        header=0,
+                        engine='python',
+                    )
+                finally:
+                    try:
+                        _os.unlink(tmp_path)
+                    except Exception:
+                        pass
             else:
                 df = pd.read_csv(
                     file_path,
@@ -363,6 +457,87 @@ class DataParser:
             logger.error(f"Failed to parse metadata file {file_path}: {e}")
             raise ValueError(f"Failed to parse metadata file: {e}") from e
 
+    def parse_metaphlan(self, file_path: str) -> pd.DataFrame:
+        """Parse MetaPhlAn merged abundance table.
+
+        Expected format (TSV):
+            - Header row: clade_name\tSample1\tSample2\t...
+            - Rows: taxonomic clades (e.g. k__Bacteria|p__Firmicutes|...)
+            - Values: relative abundances (sum to ~100 per sample)
+
+        Returns:
+            DataFrame with clades as index and samples as columns.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+
+            # MetaPhlAn tables sometimes use #SampleID as the first header cell
+            if first_line.startswith('#SampleID') or first_line.startswith('#clade_name'):
+                df = pd.read_csv(
+                    file_path,
+                    sep='\t',
+                    index_col=0,
+                    header=0,
+                    engine='python',
+                )
+            else:
+                df = pd.read_csv(
+                    file_path,
+                    sep='\t',
+                    index_col=0,
+                    header=0,
+                                        engine='python',
+                )
+
+            df = df.apply(pd.to_numeric, errors='coerce')
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+            logger.info(
+                f"Parsed MetaPhlAn file {file_path}: shape={df.shape}, "
+                f"clades={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+        except Exception as e:
+            logger.error(f"Failed to parse MetaPhlAn file {file_path}: {e}")
+            raise ValueError(f"Failed to parse MetaPhlAn file: {e}") from e
+
+    def parse_humann3(self, file_path: str) -> pd.DataFrame:
+        """Parse HUMAnN3 pathway or gene-family abundance table.
+
+        Expected format (TSV):
+            - Header row: # Pathway\tSample1\tSample2\t...  OR
+                         # Gene Family\tSample1\tSample2\t...
+            - Rows: pathway / gene-family names
+            - Values: abundance (RPK, CPM, etc.)
+
+        Returns:
+            DataFrame with pathways/gene-families as index and samples as columns.
+        """
+        try:
+            df = pd.read_csv(
+                file_path,
+                sep='\t',
+                index_col=0,
+                header=0,
+                comment=None,  # HUMAnN3 header starts with '# ' but we want to keep it
+                engine='python',
+            )
+            # The first cell is '# Pathway' or '# Gene Family'; pandas keeps it as index name.
+            # Strip leading '# ' from the index name for cleanliness.
+            if df.index.name and df.index.name.startswith('# '):
+                df.index.name = df.index.name[2:]
+
+            df = df.apply(pd.to_numeric, errors='coerce')
+            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+            logger.info(
+                f"Parsed HUMAnN3 file {file_path}: shape={df.shape}, "
+                f"features={len(df.index)}, samples={len(df.columns)}"
+            )
+            return df
+        except Exception as e:
+            logger.error(f"Failed to parse HUMAnN3 file {file_path}: {e}")
+            raise ValueError(f"Failed to parse HUMAnN3 file: {e}") from e
+
     def parse_2brad_m(
         self,
         species_path: str,
@@ -601,10 +776,19 @@ def detect_file_format(file_path: Path) -> str:
         # Check if it's a 2bRAD or Strain2bScan file by reading first line
         with open(file_path, 'r', encoding='utf-8') as f:
             first_line = f.readline().strip()
-        if 'strain' in first_line.lower() or 'ani' in first_line.lower():
+        lower_first = first_line.lower()
+        if 'strain' in lower_first or 'ani' in lower_first:
             return 'strain'
-        if 'tag' in first_line.lower():
+        if 'tag' in lower_first:
             return 'tag2bmap'
+        if lower_first.startswith('#clade_name') or lower_first.startswith('clade_name') or lower_first.startswith('#sampleid\tclade_name'):
+            return 'metaphlan'
+        if lower_first.startswith('# pathway') or lower_first.startswith('# gene family'):
+            return 'humann3'
+        if 'k__' in first_line or 'unclassified' in lower_first:
+            return 'metaphlan'
+        if 'unmapped' in lower_first or 'unintegrated' in lower_first:
+            return 'humann3'
         return 'tsv'
     elif ext in ('.h5', '.hdf5'):
         return 'biom_hdf5'
@@ -676,11 +860,22 @@ def parse_data_file(
         Tuple of (DataFrame, detected_format).
     """
     detected_format = file_type or detect_file_format(file_path)
+    # 'microbiome' / 'metabolome' are semantic upload labels, not parser formats.
+    # Auto-detect the actual file format so HUMAnN3 / MetaPhlAn headers are handled.
+    if detected_format in ('microbiome', 'metabolome'):
+        detected_format = detect_file_format(file_path)
     logger.info(f"Parsing file {file_path} as format: {detected_format}")
 
     parser = DataParser()
 
-    if detected_format in ('tsv', 'txt'):
+    if detected_format == 'metadata':
+        # Metadata files keep categorical variables as-is (do not coerce numeric).
+        df = parser.parse_metadata(str(file_path))
+    elif detected_format == 'metaphlan':
+        df = parser.parse_metaphlan(str(file_path))
+    elif detected_format == 'humann3':
+        df = parser.parse_humann3(str(file_path))
+    elif detected_format in ('tsv', 'txt'):
         if use_chunks:
             df = parser.parse_csv_tsv_chunked(str(file_path), sep='\t')
         else:

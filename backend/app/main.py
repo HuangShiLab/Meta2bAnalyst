@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import analysis, data, export, sessions, strain, upload
+from app.api.routes import agent, analysis, data, export, multisite, sessions, strain, upload
 from app.config import settings
 from app.database import Base, engine
 
@@ -31,39 +31,39 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    # Startup
-    logger.info("Starting up Meta2bAnalyst backend...")
-    # Ensure upload directory exists
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    # Create database tables
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created.")
+    logger.info("Meta2bAnalyst API starting up...")
+    # Create tables if they don't exist
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified.")
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
     yield
-    # Shutdown
-    logger.info("Shutting down Meta2bAnalyst backend...")
+    logger.info("Meta2bAnalyst API shutting down...")
 
 
+# Create FastAPI app
 app = FastAPI(
     title="Meta2bAnalyst API",
-    description="Scientific data analysis platform backend for microbiome data",
-    version="0.1.0",
+    description="Microbiome and Multi-omics Analysis Platform",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
-# CORS configuration
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Exception handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"Validation error: {exc.errors()}")
+    """Handle validation errors."""
+    logger.error(f"Validation error: {exc.errors()}")
     return JSONResponse(
         status_code=422,
         content={
@@ -73,27 +73,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "Internal server error",
-            "message": str(exc) if settings.DEBUG else "An unexpected error occurred",
-        },
-    )
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "message": "Meta2bAnalyst API",
+        "version": "0.2.0",
+        "docs": "/docs",
+    }
 
 
-# Health check endpoint
-@app.get("/health", tags=["health"])
+@app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "database": "connected",
-    }
+    return {"status": "healthy", "service": "meta2banalyst-api"}
 
 
 # API v1 router
@@ -101,6 +94,8 @@ app.include_router(sessions.router, prefix="/api/v1", tags=["sessions"])
 app.include_router(upload.router, prefix="/api/v1", tags=["upload"])
 app.include_router(data.router, prefix="/api/v1", tags=["data"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
+app.include_router(agent.router, prefix="/api/v1", tags=["agent"])
+app.include_router(multisite.router, prefix="/api/v1", tags=["multisite"])
 app.include_router(strain.router, prefix="/api/v1", tags=["strain"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
 

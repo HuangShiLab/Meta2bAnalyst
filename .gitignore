@@ -65,3 +65,61 @@ htmlcov/
 
 # Celery
 celerybeat-schedule
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+dist-ssr/
+*.local
+
+# Test / temporary generated files
+*.pdf
+!backend/app/services/report_templates/*.pdf
+*.pid
+backend.pid
+analysis_results*.json
+demo_results.json
+test_payload.json
+*.tsbuildinfo
+
+# Data files (examples can be kept, but large output files ignored)
+*.tsv
+!backend/examples/*.tsv
+!backend/app/knowledge/**/*.tsv
+*.biom
+
+# Temporary scripts
+add_*.py
+check_*.py
+fix_*.py
+run_*.py
+test_*.py
+build_test_payload.py
+generate_*.py
+expand_kb.py
+translate_ui.py
+start_backend.*
+
+# Report outputs
+report_images/
+report_output/
+sample_data/
+
+# Plan files
+plan.md
+PROJECT_CONTEXT.md
+KIMI_CODE_PROMPT.md
+AGENT_INTELLIGENCE_REPORT.md
+GAP_ANALYSIS.md
+
+# Poster files
+poster_*.md
+poster_*.png
+poster_*.svg
+
+# Frontend git backup
+frontend_git_backup/

@@ -203,12 +203,34 @@ async def download_report(
                     **job.result_data,
                 })
         
+        # Gather preprocessing info from data files
+        data_files = db.query(DataFile).filter(DataFile.session_id == session_id).all()
+        preprocessing_info = {}
+        for df in data_files:
+            ft = df.file_type
+            if ft == 'filtered_feature_table':
+                preprocessing_info['filtering'] = 'Applied (filtered_feature_table)'
+            elif ft == 'normalized_tss':
+                preprocessing_info['normalization'] = 'TSS (Total Sum Scaling)'
+            elif ft == 'normalized_rarefaction':
+                preprocessing_info['normalization'] = 'Rarefaction'
+            elif ft == 'normalized_clr':
+                preprocessing_info['normalization'] = 'CLR (Centered Log-Ratio)'
+            elif ft == 'normalized_css':
+                preprocessing_info['normalization'] = 'CSS (Cumulative Sum Scaling)'
+        
         from app.services.export_service import generate_comprehensive_report
-        generate_comprehensive_report(
-            session_id=session_id,
-            export_path=str(export_path),
-            analysis_results=analysis_results,
-        )
+        try:
+            generate_comprehensive_report(
+                session_id=session_id,
+                export_path=str(export_path),
+                analysis_results=analysis_results,
+                preprocessing_info=preprocessing_info,
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Report generation traceback:\n{traceback.format_exc()}")
+            raise
         
         return FileResponse(
             path=str(export_path),

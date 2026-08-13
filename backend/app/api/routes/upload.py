@@ -77,7 +77,7 @@ async def upload_chunk(
     upload_id: str = Form(..., description="Unique upload identifier (UUID)"),
     chunk_index: int = Form(..., ge=0, description="Chunk index starting from 0"),
     total_chunks: int = Form(..., ge=1, description="Total number of chunks"),
-    file_type: str = Form(..., description="File type: feature_table, biom, shared, taxonomy, metadata, strain"),
+    file_type: str = Form(..., description="File type: feature_table, biom, shared, taxonomy, metadata, strain, microbiome, metabolome, metaphlan, humann3"),
     original_filename: str = Form(..., description="Original filename"),
     db: DBSession = Depends(get_db),
 ):
@@ -219,7 +219,7 @@ async def complete_chunk_upload(
         row_count = len(df)
         column_count = len(df.columns)
         
-        if upload_state["file_type"] in ("feature_table", "biom", "shared"):
+        if upload_state["file_type"] in ("feature_table", "biom", "shared", "microbiome", "metabolome"):
             sample_names = list(df.columns)
             feature_names = list(df.index)
             sample_count = len(df.columns)
@@ -310,7 +310,7 @@ async def get_upload_progress(upload_id: str, session_id: str):
 )
 async def upload_file(
     session_id: str,
-    file_type: str = Form(..., description="File type: feature_table, biom, shared, taxonomy, metadata, strain"),
+    file_type: str = Form(..., description="File type: feature_table, biom, shared, taxonomy, metadata, strain, microbiome, metabolome, metaphlan, humann3"),
     file: UploadFile = File(...),
     db: DBSession = Depends(get_db),
 ):
@@ -360,7 +360,7 @@ async def upload_file(
             column_count = len(df.columns)
             
             # For feature tables, rows=features, columns=samples
-            if file_type in ("feature_table", "biom", "shared"):
+            if file_type in ("feature_table", "biom", "shared", "microbiome", "metabolome", "metaphlan", "humann3"):
                 sample_names = list(df.columns)
                 feature_names = list(df.index)
                 sample_count = len(df.columns)

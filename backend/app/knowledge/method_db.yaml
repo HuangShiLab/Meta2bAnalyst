@@ -1,0 +1,386 @@
+alpha_diversity:
+  category: diversity
+  assumptions:
+    - "Feature table has been normalized (rarefied or CSS/TSS)"
+    - "Group variable is discrete with >= 2 levels"
+    - "Samples are independent (no repeated measures)"
+  cautions:
+    - "Shannon index is sensitive to sequencing depth unless rarefied"
+    - "Simpson index may saturate quickly in low-diversity samples"
+    - "With n < 20 per group, non-parametric tests (Wilcoxon/Mann-Whitney) are preferred over t-tests"
+    - "P-values near 0.05 should be interpreted cautiously; consider effect size (Cohen's d)"
+  follow_up:
+    - "If significant, run beta-diversity to confirm compositional shifts"
+    - "If not significant, compositional or functional differences may still exist"
+    - "Consider rarefaction curves to verify sampling depth adequacy"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: seconds
+
+beta_diversity:
+  category: diversity
+  assumptions:
+    - "Feature table has been normalized"
+    - "Appropriate distance metric selected for data type (Bray-Curtis for composition, Jaccard for presence/absence)"
+  cautions:
+    - "Bray-Curtis is sensitive to rarefaction depth; CSS or TSS normalization recommended"
+    - "Weighted UniFrac requires a phylogenetic tree"
+    - "Zero-inflation can inflate Jaccard distances"
+    - "Large sample sizes (>100) may yield significant p-values with small effect sizes"
+  follow_up:
+    - "Visualize with PCoA or NMDS"
+    - "Test group differences with PERMANOVA"
+    - "Check PERMDISP for homogeneity of dispersion"
+  prerequisites:
+    - "feature_table"
+    - "optional: phylogenetic_tree"
+  typical_runtime: seconds
+
+permanova:
+  category: multivariate
+  assumptions:
+    - "Distance matrix is already computed"
+    - "Grouping variable is categorical"
+    - "Multivariate homogeneity of dispersions (PERMDISP should be checked)"
+  cautions:
+    - "Sensitive to differences in multivariate dispersion; always pair with PERMDISP"
+    - "R² < 0.05 suggests small effect size even if p is significant"
+    - "Does not identify which features drive the difference"
+    - "With unbalanced groups, pseudo-F can be inflated"
+  follow_up:
+    - "If significant, run differential abundance (LEfSe / ANCOM / ALDEx2)"
+    - "Run pairwise PERMANOVA for >2 groups"
+    - "Check PERMDISP to confirm dispersion homogeneity"
+  prerequisites:
+    - "distance_matrix"
+    - "sample_metadata"
+  typical_runtime: seconds
+
+lefse:
+  category: differential
+  assumptions:
+    - "Relative abundance or count table with taxonomy annotations"
+    - "Group variable has >= 2 levels"
+    - "Classes are biologically meaningful"
+  cautions:
+    - "LDA score threshold (default 2.0) is arbitrary; consider 3.0 for stricter filtering"
+    - "Does not control FDR; p-values are from Kruskal-Wallis"
+    - "Abundance-dependent: rare taxa may be missed even if biologically important"
+    - "Multi-class analysis can produce misleading biomarkers if groups are highly imbalanced"
+  follow_up:
+    - "Validate top hits with qPCR or targeted sequencing"
+    - "Investigate whether significant taxa belong to functional guilds"
+    - "Consider ANCOM or ALDEx2 for conservative validation"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+    - "taxonomy_table"
+  typical_runtime: minutes
+
+ancom:
+  category: differential
+  assumptions:
+    - "Compositional data (all features sum to a constant)"
+    - "Feature table has been pre-filtered (remove low-prevalence taxa)"
+    - "No zero values in features being tested (add pseudocount if needed)"
+  cautions:
+    - "Very conservative; may miss true positives (high false negative rate)"
+    - "Requires adequate sample size (n >= 10 per group recommended)"
+    - "Sensitive to the number of features; pre-filter to <100 features"
+    - "W statistic cutoff (0.7) should be adjusted based on study goals"
+  follow_up:
+    - "Compare with ALDEx2 or DESeq2 results for consensus"
+    - "Investigate functional role of ANCOM-significant taxa"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: minutes
+
+deseq2:
+  category: differential
+  assumptions:
+    - "Raw count data (not normalized)"
+    - "At least 3 replicates per condition"
+    - "Data follows negative binomial distribution"
+  cautions:
+    - "Not designed for compositional data; can produce anti-conservative p-values with small samples"
+    - "Shrunken LFC should be reported alongside raw LFC"
+    - "Outlier samples can strongly influence results"
+    - "For microbiome data, consider DESeq2 only with caution; ALDEx2 or ANCOM preferred"
+  follow_up:
+    - "Validate with independent method (ALDEx2 / ANCOM)"
+    - "Check raw counts of significant features for robustness"
+  prerequisites:
+    - "raw_count_table"
+    - "sample_metadata"
+  typical_runtime: minutes
+
+aldex2:
+  category: differential
+  assumptions:
+    - "Compositional data (features sum to constant)"
+    - "At least 2 samples per group (but n >= 5 recommended)"
+    - "Data is sparse (many zeros)"
+  cautions:
+    - "Conservative; wide confidence intervals with small samples"
+    - "Effect size (effect) should be reported alongside p-values"
+    - "Welch's t-test is default; Wilcoxon available for non-normal data"
+    - "Benjamini-Hochberg correction applied automatically"
+  follow_up:
+    - "Examine effect sizes; features with large effect but p > 0.05 may still be biologically relevant"
+    - "Compare with ANCOM for consensus features"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: minutes
+
+maaslin2:
+  category: differential
+  assumptions:
+    - "Feature table (relative abundance or counts)"
+    - "Metadata with fixed and/or random effects"
+    - "Log-transform or arcsin-square-root transform recommended"
+  cautions:
+    - "Assumes linear relationship after transformation"
+    - "Random effects require sufficient sample size for convergence"
+    - "Highly correlated covariates can cause multicollinearity"
+    - "For microbiome, use TSS normalization + LOG transform"
+  follow_up:
+    - "Visualize significant associations with boxplots or scatterplots"
+    - "Check residuals for model fit diagnostics"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: minutes
+
+pcoa:
+  category: ordination
+  assumptions:
+    - "Distance matrix is already computed"
+    - "Metric scaling is appropriate for the distance measure"
+  cautions:
+    - "Can produce misleading results if negative eigenvalues are large (use Cailliez correction)"
+    - "Variance explained can be low (<30%) for complex communities"
+    - "2D plots may oversimplify high-dimensional relationships"
+    - "Outliers can dominate the first few axes"
+  follow_up:
+    - "Examine eigenvalue scree plot to determine meaningful dimensions"
+    - "Overlay metadata as vectors (RDA) or ellipses for group structure"
+    - "Consider NMDS if PCoA stress is high"
+  prerequisites:
+    - "distance_matrix"
+  typical_runtime: seconds
+
+nmds:
+  category: ordination
+  assumptions:
+    - "Distance matrix is rank-appropriate"
+    - "2-3 dimensions are sufficient to capture structure (check stress)"
+  cautions:
+    - "Stress < 0.05 is excellent; 0.05-0.1 good; > 0.2 unreliable"
+    - "Non-metric: distances are rank-ordered, not preserved absolutely"
+    - "Multiple random starts recommended to avoid local minima"
+    - "Computationally expensive for >500 samples"
+  follow_up:
+    - "Report stress value in manuscript"
+    - "Compare with PCoA for consistency"
+  prerequisites:
+    - "distance_matrix"
+  typical_runtime: seconds to minutes
+
+rarefaction:
+  category: preprocessing
+  assumptions:
+    - "Raw count data (not normalized)"
+    - "Samples have varying sequencing depths"
+  cautions:
+    - "Discards valid data from deeply sequenced samples"
+    - "Does not address compositional bias"
+    - "Iterative subsampling introduces stochasticity; use >= 10 iterations"
+    - "Not recommended for shotgun metagenomics (use CSS/TMM instead)"
+  follow_up:
+    - "If curves plateau, sampling depth is adequate"
+    - "If curves rise steeply, additional sequencing may reveal new taxa"
+    - "Use CSS, TMM, or GMPR normalization as alternatives"
+  prerequisites:
+    - "raw_feature_table"
+  typical_runtime: minutes
+
+random_forest:
+  category: machine_learning
+  assumptions:
+    - "Feature matrix and target labels"
+    - "Sufficient samples to split into train/test (typically 70/30)"
+  cautions:
+    - "Can overfit with high-dimensional microbiome data"
+    - "Feature importance is biased toward correlated features"
+    - "Class imbalance reduces predictive performance"
+    - "Should be validated with nested cross-validation or independent test set"
+  follow_up:
+    - "Report AUC, precision, recall, and confusion matrix"
+    - "Validate top predictive features with differential abundance tests"
+    - "Compare with other classifiers (SVM, logistic regression)"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: minutes
+
+correlation:
+  category: association
+  assumptions:
+    - "Two numeric matrices (features vs features, or features vs metadata)"
+    - "Appropriate correlation method for data distribution"
+  cautions:
+    - "Pearson assumes linearity and normality; Spearman is non-parametric"
+    - "Spurious correlations in compositional data (use SparCC or proportionality)"
+    - "Multiple testing correction essential (FDR or Bonferroni)"
+    - "Correlation != causation"
+  follow_up:
+    - "Validate top correlations in independent cohort"
+    - "Construct co-occurrence networks from significant correlations"
+  prerequisites:
+    - "feature_table"
+    - "metadata_or_second_feature_table"
+  typical_runtime: seconds
+
+network:
+  category: association
+  assumptions:
+    - "SparCC or proportionality matrix for compositional data"
+    - "Adequate sample size (n > 50 recommended for reliable correlations)"
+  cautions:
+    - "Network topology is sensitive to correlation threshold"
+    - "Sparse data yields unstable networks"
+    - "Hub nodes may be artifacts of high abundance rather than true keystone species"
+    - "Cross-sectional networks cannot infer causality or directionality"
+  follow_up:
+    - "Compare network topology between conditions (differential network)"
+    - "Identify keystone species by centrality metrics"
+    - "Validate key edges with experimental manipulation"
+  prerequisites:
+    - "correlation_matrix"
+  typical_runtime: minutes
+
+volcano_plot:
+  category: visualisation
+  assumptions:
+    - "Differential abundance results with fold-change and p-values"
+    - "Multiple-testing corrected p-values (FDR) available"
+  cautions:
+    - "Volcano plots are descriptive, not statistical tests"
+    - "Choice of fold-change and p-value thresholds affects interpretation"
+    - "Points at extremes may have high variance due to low counts"
+  follow_up:
+    - "Annotate top features with biological context"
+    - "Export list of significant features for pathway analysis"
+  prerequisites:
+    - "differential_results_table"
+  typical_runtime: seconds
+
+taxonomy_bar:
+  category: visualisation
+  assumptions:
+    - "Feature table with taxonomy annotations"
+    - "Relative abundance or count data"
+  cautions:
+    - "Stacked bars can obscure low-abundance taxa"
+    - "Color palette should be colorblind-friendly"
+    - "Sample ordering affects visual interpretation"
+    - "Rare taxa grouped as 'Others' may contain biologically relevant species"
+  follow_up:
+    - "Generate separate plots per group for clarity"
+    - "Consider heatmaps for >50 samples"
+    - "Examine 'Others' category for hidden patterns"
+  prerequisites:
+    - "feature_table_with_taxonomy"
+  typical_runtime: seconds
+
+core_microbiome:
+  category: characterisation
+  assumptions:
+    - "Feature table (relative abundance)"
+    - "Prevalence and abundance thresholds chosen a priori"
+  cautions:
+    - "Threshold choice is arbitrary; sensitivity analysis recommended"
+    - "Rare taxa may be missed even if functionally important"
+    - "Core microbiome varies by population, diet, and geography"
+    - "Presence/absence calling is sensitive to detection limits"
+  follow_up:
+    - "Compare core taxa across populations or conditions"
+    - "Investigate functional redundancy within core"
+    - "Test whether core membership predicts host phenotype"
+  prerequisites:
+    - "feature_table"
+  typical_runtime: seconds
+
+functional_profiling:
+  category: functional
+  assumptions:
+    - "Shotgun metagenomic data or 16S-predicted functions (PICRUSt2)"
+    - "Gene family or pathway abundance table"
+  cautions:
+    - "PICRUSt2 predictions are based on reference genomes; accuracy varies by environment"
+    - "HUMAnN3 requires adequate read depth for reliable profiling"
+    - "Pathway coverage (genes present / genes in pathway) should be reported"
+    - "Functional redundancy limits interpretation of taxonomic shifts"
+  follow_up:
+    - "Validate key pathways with metatranscriptomics or metabolomics"
+    - "Map pathways to known host phenotypes"
+  prerequisites:
+    - "gene_family_table_or_pathway_table"
+  typical_runtime: minutes to hours
+
+songbird:
+  category: differential
+  assumptions:
+    - "Compositional count data"
+    - "Metadata with fixed effects of interest"
+    - "Sufficient samples for multinomial regression convergence"
+  cautions:
+    - "Requires careful hyperparameter tuning (epochs, differential prior)"
+    - "Convergence diagnostics (log-loss plateau) must be checked"
+    - "Rank-based results can be harder to interpret than log-fold-change"
+    - "Computationally intensive for large feature tables"
+  follow_up:
+    - "Visualize differentials with Qurro or custom plots"
+    - "Compare ranks with ALDEx2 or ANCOM"
+    - "Investigate top-ranked features for biological relevance"
+  prerequisites:
+    - "feature_table"
+    - "sample_metadata"
+  typical_runtime: minutes to hours
+
+procrustes:
+  category: integration
+  assumptions:
+    - "Two distance matrices or ordinations from different omics layers"
+    - "Same samples in both matrices (matched)"
+  cautions:
+    - "Significant Procrustes m² indicates concordance, not causality"
+    - "Sensitive to outliers"
+    - "Requires permutation test for significance"
+  follow_up:
+    - "Identify which samples drive concordance/discordance"
+    - "Follow with sparse CCA or MOFA+ for feature-level integration"
+  prerequisites:
+    - "distance_matrix_1"
+    - "distance_matrix_2"
+  typical_runtime: seconds
+
+mofa:
+  category: integration
+  assumptions:
+    - "Multi-omic feature tables with matched samples"
+    - "Feature tables have been preprocessed and normalized"
+  cautions:
+    - "Factor interpretation is subjective; requires domain knowledge"
+    - "Sparse data can lead to unstable factor loadings"
+    - "Number of factors must be chosen carefully"
+  follow_up:
+    - "Correlate factors with metadata for biological interpretation"
+    - "Investigate top-loading features per factor"
+  prerequisites:
+    - "feature_tables_multi_omics"
+    - "sample_metadata"
+  typical_runtime: minutes to hours

@@ -148,7 +148,8 @@ class AnalysisRequest(BaseModel):
         allowed = {
             "alpha", "beta", "differential", "pcoa", "nmds", "heatmap",
             "taxonomy_bar", "venn", "upset", "network", "correlation",
-            "lefse", "ancom", "deseq2", "aldex2", "maaslin2",
+            "lefse", "ancom", "deseq2", "aldex2", "maaslin2", "random_forest",
+            "permanova", "anosim",
         }
         if v not in allowed:
             raise ValueError(f"analysis_type must be one of {allowed}")

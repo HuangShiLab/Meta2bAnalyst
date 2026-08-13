@@ -9,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from pydantic import BaseModel
+import pandas as pd
+
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session as DBSession
@@ -29,8 +32,26 @@ from app.services.analysis_engine import (
     run_permanova,
     run_anosim,
     run_random_forest,
+    run_network_analysis,
+    run_correlation_analysis,
+    run_pathway_analysis,
+    run_functional_prediction,
+    run_phylogenetic_analysis,
+    run_hierarchical_clustering,run_advanced_dimred,run_source_tracking_analysis,run_cross_omics_analysis,
+    run_metabolomics_analysis,
+    run_sparse_cca_analysis,
+    run_rda_analysis,
+    run_o2pls_analysis,
 )
 from app.services.data_parser import parse_data_file
+from app.services.rarefaction import run_rarefaction
+from app.services.taxonomy_bar import run_taxonomy_bar, run_core_microbiome
+from app.services.mofa import run_mofa_plus
+from app.services.aldex2 import run_aldex2
+from app.services.songbird import run_songbird
+from app.services.enterotype import run_enterotype
+from app.services.wgcna import run_wgcna
+from app.services.diablo import run_diablo
 from app.tasks.analysis_tasks import (
     alpha_diversity_task,
     beta_diversity_task,
@@ -100,7 +121,8 @@ def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
         .filter(DataFile.file_type.in_([
-            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative'
+            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative',
+            'microbiome', 'metabolome'
         ]))
         .order_by(DataFile.id.desc())
         .first()
@@ -132,10 +154,75 @@ def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
     if not data_file:
         return None
     try:
-        df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
+        # Multi-omics metadata is almost always tab-separated; try that first,
+        # then fall back to comma-separated.
+        try:
+            df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
+        except Exception:
+            df = pd.read_csv(data_file.file_path, index_col=0)
         return df
     except Exception:
         return None
+
+
+def get_dataframe_by_name(session_id: str, db: DBSession, name_pattern: str) -> Optional[pd.DataFrame]:
+    """Get a feature table by original filename pattern (case-insensitive)."""
+    data_file = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type.in_([
+            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative',
+            'microbiome', 'metabolome'
+        ]))
+        .filter(DataFile.original_name.ilike(f'%{name_pattern}%'))
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    if not data_file:
+        return None
+    try:
+        df, _ = parse_data_file(Path(data_file.file_path), use_chunks=True)
+        return df
+    except Exception as e:
+        logger.error(f'Failed to parse data file {data_file.original_name}: {e}')
+        return None
+
+
+def get_dataframe_by_type(session_id: str, db: DBSession, file_type: str) -> Optional[pd.DataFrame]:
+    """Get a DataFrame by exact file_type."""
+    data_file = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == file_type)
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    if not data_file:
+        return None
+    try:
+        df, _ = parse_data_file(Path(data_file.file_path), file_type=file_type, use_chunks=True)
+        return df
+    except Exception as e:
+        logger.error(f'Failed to parse data file {data_file.file_path}: {e}')
+        return None
+
+
+def get_microbiome_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
+    """Load the microbiome feature table for a session."""
+    df = get_dataframe_by_type(session_id, db, 'microbiome')
+    if df is None:
+        df = get_dataframe_by_type(session_id, db, 'metaphlan')
+    if df is None:
+        df = get_dataframe(session_id, db)
+    return df
+
+
+def get_metabolome_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
+    """Load the metabolome feature table for a session."""
+    df = get_dataframe_by_type(session_id, db, 'metabolome')
+    if df is None:
+        df = get_dataframe_by_type(session_id, db, 'humann3')
+    return df
 
 
 # ─────────────────────────────── Generic analysis helpers
@@ -1376,6 +1463,20 @@ async def run_analysis(
             result_data = run_differential_analysis(df, metadata_df, job.parameters)
         elif job.job_type == 'random_forest':
             result_data = run_random_forest(df, metadata_df, job.parameters)
+        elif job.job_type == 'network':
+            result_data = run_network_analysis(df, metadata_df, job.parameters)
+        elif job.job_type == 'correlation':
+            result_data = run_correlation_analysis(df, metadata_df, job.parameters)
+        elif job.job_type == 'pathway':
+            result_data = run_pathway_analysis(df, parameters=job.parameters)
+        elif job.job_type == 'metabolomics':
+            result_data = run_metabolomics_analysis(df, metadata_df, job.parameters)
+        elif job.job_type == 'sparse_cca':
+            result_data = run_sparse_cca_analysis(df, None, metadata_df, job.parameters)
+        elif job.job_type == 'rda':
+            result_data = run_rda_analysis(df, None, metadata_df, job.parameters)
+        elif job.job_type == 'o2pls':
+            result_data = run_o2pls_analysis(df, None, metadata_df, job.parameters)
         else:
             raise ValueError(f'Unknown analysis type: {job.job_type}')
 
@@ -1397,4 +1498,1001 @@ async def run_analysis(
         job.error_message = str(e)
         db.commit()
         logger.error(f'Analysis job {job_id} failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+# ─────────────────────────────── Network Analysis
+
+class NetworkAnalysisRequest(BaseModel):
+    method: str = 'sparcc'
+    threshold: float = 0.3
+    pvalue_threshold: float = 0.05
+    n_permutations: int = 100
+    top_n_features: int = 150
+
+
+@router.post('/sessions/{session_id}/analyze/network', response_model=AnalysisResponse)
+def network_analysis(
+    session_id: str,
+    request: NetworkAnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='network',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_network_analysis(df, parameters=request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Correlation Analysis
+
+class CorrelationAnalysisRequest(BaseModel):
+    target: str = 'feature'
+    method: str = 'spearman'
+    threshold: float = 0.3
+    pvalue_threshold: float = 0.05
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/correlation', response_model=AnalysisResponse)
+def correlation_analysis(
+    session_id: str,
+    request: CorrelationAnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='correlation',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_correlation_analysis(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Pathway / Functional Analysis
+
+class PathwayAnalysisRequest(BaseModel):
+    method: str = 'hypergeometric'
+    pvalue_threshold: float = 0.05
+    min_count: int = 10
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/pathway', response_model=AnalysisResponse)
+def pathway_analysis(
+    session_id: str,
+    request: PathwayAnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='pathway',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_pathway_analysis(df, parameters=request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Functional Prediction (PICRUSt2 / Tax4Fun)
+
+class FunctionalPredictionRequest(BaseModel):
+    method: str = 'picrust2'
+    normalization: str = 'copy_number'
+    ko_normalization: str = 'relabund'
+    aggregation: str = 'sum'
+    group_column: Optional[str] = None
+    diff_test: str = 'wilcoxon'
+    top_n_ko: int = 50
+    top_n_pathway: int = 20
+    do_differential: bool = True
+
+
+@router.post('/sessions/{session_id}/analyze/functional-prediction', response_model=AnalysisResponse)
+def functional_prediction(
+    session_id: str,
+    request: FunctionalPredictionRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='functional_prediction',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_functional_prediction(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Phylogenetic Analysis (UniFrac + Faith's PD + NMDS)
+
+class PhylogeneticAnalysisRequest(BaseModel):
+    weighted: bool = True
+    group_column: Optional[str] = None
+    n_permutations: int = 999
+    nmds_components: int = 2
+
+
+@router.post('/sessions/{session_id}/analyze/phylogenetic', response_model=AnalysisResponse)
+def phylogenetic_analysis(
+    session_id: str,
+    request: PhylogeneticAnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='phylogenetic',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_phylogenetic_analysis(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Hierarchical Clustering + Heat Tree
+
+class HierarchicalClusteringRequest(BaseModel):
+    cluster_axis: str = 'both'
+    distance_metric: str = 'braycurtis'
+    linkage_method: str = 'ward'
+    n_clusters: int = 3
+    top_n_features: int = 50
+    group_column: Optional[str] = None
+    compute_silhouette: bool = True
+
+
+@router.post('/sessions/{session_id}/analyze/hierarchical-clustering', response_model=AnalysisResponse)
+def hierarchical_clustering(
+    session_id: str,
+    request: HierarchicalClusteringRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='hierarchical_clustering',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_hierarchical_clustering(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Metabolomics Analysis (PCA / Alpha / Markers)
+
+class MetabolomicsRequest(BaseModel):
+    analysis_type: str = 'pca'
+    group_column: Optional[str] = 'Visit'
+    reference_group: str = 'T4'
+    n_components: int = 10
+    transformation: str = 'zscore'
+    test_method: str = 'welch'
+    pvalue_threshold: float = 0.05
+    fc_threshold: float = 1.5
+
+
+@router.post('/sessions/{session_id}/analyze/metabolomics', response_model=AnalysisResponse)
+def metabolomics_analysis(
+    session_id: str,
+    request: MetabolomicsRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Single-omics metabolomics analysis endpoint used by the MultiOmics page."""
+    metabolome_df = get_metabolome_df(session_id, db)
+    if metabolome_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='No metabolome data found for this session',
+        )
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='metabolomics',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_metabolomics_analysis(
+        metabolome_df.T,
+        metadata_df,
+        request.model_dump(),
+    )
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Cross-omics Analysis (Procrustes + Mantel)
+
+class CrossOmicsRequest(BaseModel):
+    analysis_type: str = 'both'  # 'procrustes', 'mantel', or 'both'
+    procrustes_method: str = 'pcoa'
+    mantel_metric: str = 'braycurtis'
+    mantel_method: str = 'pearson'
+    n_permutations: int = 999
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/cross-omics', response_model=AnalysisResponse)
+def cross_omics_analysis(
+    session_id: str,
+    request: CrossOmicsRequest,
+    db: DBSession = Depends(get_db),
+):
+    microbiome_df = get_microbiome_df(session_id, db)
+    metabolome_df = get_metabolome_df(session_id, db)
+    if microbiome_df is None or metabolome_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Cross-omics analysis requires both microbiome and metabolome data for this session',
+        )
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='cross_omics',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_cross_omics_analysis(
+        microbiome_df,
+        metabolome_df,
+        metadata_df,
+        request.model_dump(),
+    )
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Advanced Dimensionality Reduction (t-SNE / UMAP / MaAsLin3)
+
+class AdvancedDimredRequest(BaseModel):
+    method: str = 'both'
+    tsne_perplexity: float = 30.0
+    tsne_learning_rate: float = 200.0
+    umap_n_neighbors: int = 15
+    umap_min_dist: float = 0.1
+    group_column: Optional[str] = None
+    run_maaslin: bool = True
+    fixed_effects: list = []
+    random_effects: Optional[list] = None
+    min_abundance: float = 0.0
+    min_prevalence: float = 0.0
+
+
+@router.post('/sessions/{session_id}/analyze/advanced-dimred', response_model=AnalysisResponse)
+def advanced_dimred(
+    session_id: str,
+    request: AdvancedDimredRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='advanced_dimred',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_advanced_dimred(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Source Tracking (FEAST-style)
+
+class SourceTrackingRequest(BaseModel):
+    sink_samples: list = []
+    source_samples: list = []
+    source_column: str = 'source_type'
+    method: str = 'nnls'
+
+
+@router.post('/sessions/{session_id}/analyze/source-tracking', response_model=AnalysisResponse)
+def source_tracking(
+    session_id: str,
+    request: SourceTrackingRequest,
+    db: DBSession = Depends(get_db),
+):
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='source_tracking',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_source_tracking_analysis(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Metabolomics Analysis
+
+class MetabolomicsAnalysisRequest(BaseModel):
+    analysis_type: str = 'all'  # 'pca', 'alpha_diversity', 'marker_discovery', 'all'
+    group_column: Optional[str] = None
+    reference_group: str = 'T4'  # Day 0 / baseline for marker discovery
+    n_components: int = 10
+    transformation: str = 'zscore'
+    test_method: str = 'welch'
+    pvalue_threshold: float = 0.05
+    fc_threshold: float = 1.5
+
+
+@router.post('/sessions/{session_id}/analyze/metabolomics', response_model=AnalysisResponse)
+def metabolomics_analysis(
+    session_id: str,
+    request: MetabolomicsAnalysisRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Metabolomics statistical analysis: PCA, alpha diversity, marker discovery."""
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='metabolomics',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    result_data = run_metabolomics_analysis(df, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── Sparse CCA
+
+class SparseCCARequest(BaseModel):
+    n_components: int = 2
+    sparsity_x: float = 0.3
+    sparsity_y: float = 0.3
+    n_permutations: int = 999
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/sparse-cca', response_model=AnalysisResponse)
+def sparse_cca_analysis(
+    session_id: str,
+    request: SparseCCARequest,
+    db: DBSession = Depends(get_db),
+):
+    """Sparse Canonical Correlation Analysis for microbiome × metabolome integration."""
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    # For sparse CCA, we need both microbiome and metabolome data.
+    # In a real setup, these would be two separate files; here we reuse the
+    # same feature table as microbiome and transpose a second table if available.
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='sparse_cca',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    microbiome_df = get_microbiome_df(session_id, db)
+    metabolome_df = get_metabolome_df(session_id, db)
+    if microbiome_df is None or metabolome_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Sparse CCA requires both microbiome and metabolome data for this session',
+        )
+    result_data = run_sparse_cca_analysis(microbiome_df.T, metabolome_df.T, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── RDA (Redundancy Analysis)
+
+class RDARequest(BaseModel):
+    n_components: int = 2
+    test_permutation: bool = True
+    n_permutations: int = 999
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/rda', response_model=AnalysisResponse)
+def rda_analysis(
+    session_id: str,
+    request: RDARequest,
+    db: DBSession = Depends(get_db),
+):
+    """Redundancy Analysis: model metabolome as function of microbiome."""
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='rda',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    microbiome_df = get_microbiome_df(session_id, db)
+    metabolome_df = get_metabolome_df(session_id, db)
+    if microbiome_df is None or metabolome_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='RDA requires both microbiome and metabolome data for this session',
+        )
+    result_data = run_rda_analysis(microbiome_df.T, metabolome_df.T, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ─────────────────────────────── O2PLS
+
+class O2PLSRequest(BaseModel):
+    n_joint: int = 2
+    n_ortho_x: int = 1
+    n_ortho_y: int = 1
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/o2pls', response_model=AnalysisResponse)
+def o2pls_analysis(
+    session_id: str,
+    request: O2PLSRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Two-way Orthogonal PLS for multi-omics integration."""
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='o2pls',
+        parameters=request.model_dump(),
+        status='pending',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    microbiome_df = get_microbiome_df(session_id, db)
+    metabolome_df = get_metabolome_df(session_id, db)
+    if microbiome_df is None or metabolome_df is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='O2PLS requires both microbiome and metabolome data for this session',
+        )
+    result_data = run_o2pls_analysis(microbiome_df.T, metabolome_df.T, metadata_df, request.model_dump())
+    _save_result(session_id, job, result_data)
+    job.status = 'completed'
+    job.completed_at = datetime.utcnow()
+    db.commit()
+    return AnalysisResponse(
+        job_id=job.id,
+        session_id=session_id,
+        job_type=job.job_type,
+        status=job.status,
+        result_data=job.result_data,
+        completed_at=job.completed_at,
+    )
+
+
+# ───────────────────────────────────────────────────────────────
+# P0: Rarefaction, Taxonomy Bar, Core Microbiome
+# ───────────────────────────────────────────────────────────────
+
+class RarefactionRequest(BaseModel):
+    group_column: Optional[str] = None
+    metrics: Optional[list] = None
+    max_depth: Optional[int] = None
+    steps: int = 20
+    iterations: int = 10
+
+
+@router.post('/sessions/{session_id}/analyze/rarefaction', response_model=AnalysisResponse)
+async def analyze_rarefaction(session_id: str, request: RarefactionRequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='rarefaction',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_rarefaction(df, metadata_df, group_column=request.group_column, metrics=request.metrics, max_depth=request.max_depth, steps=request.steps, iterations=request.iterations)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+class TaxonomyBarRequest(BaseModel):
+    group_column: Optional[str] = None
+    tax_level: str = 'genus'
+    top_n: int = 15
+
+
+@router.post('/sessions/{session_id}/analyze/taxonomy-bar', response_model=AnalysisResponse)
+async def analyze_taxonomy_bar(session_id: str, request: TaxonomyBarRequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='taxonomy_bar',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_taxonomy_bar(df, metadata_df, group_column=request.group_column, tax_level=request.tax_level, top_n=request.top_n)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+class CoreMicrobiomeRequest(BaseModel):
+    group_column: Optional[str] = None
+    prevalence_threshold: float = 0.5
+    abundance_threshold: float = 0.01
+
+
+@router.post('/sessions/{session_id}/analyze/core-microbiome', response_model=AnalysisResponse)
+async def analyze_core_microbiome(session_id: str, request: CoreMicrobiomeRequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='core_microbiome',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_core_microbiome(df, metadata_df, group_column=request.group_column, prevalence_threshold=request.prevalence_threshold, abundance_threshold=request.abundance_threshold)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+class MOFARequest(BaseModel):
+    n_factors: int = 5
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/mofa', response_model=AnalysisResponse)
+async def analyze_mofa(session_id: str, request: MOFARequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    mb_df = get_microbiome_df(session_id, db)
+    met_df = get_metabolome_df(session_id, db)
+    if mb_df is None or met_df is None:
+        raise HTTPException(status_code=400, detail='Both microbiome and metabolome data required for MOFA+')
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='mofa',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_mofa_plus(mb_df, met_df, metadata_df, n_factors=request.n_factors, group_column=request.group_column)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'MOFA+ analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+class ALDEx2Request(BaseModel):
+    group_column: str
+    test_method: str = 'welch'
+
+
+@router.post('/sessions/{session_id}/analyze/aldex2', response_model=AnalysisResponse)
+async def analyze_aldex2(session_id: str, request: ALDEx2Request, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column required')
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='aldex2',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_aldex2(df, metadata_df, group_column=request.group_column, test_method=request.test_method)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'ALDEx2 analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+class SongbirdRequest(BaseModel):
+    group_column: str
+    epochs: int = 1000
+
+
+@router.post('/sessions/{session_id}/analyze/songbird', response_model=AnalysisResponse)
+async def analyze_songbird(session_id: str, request: SongbirdRequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column required')
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='songbird',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_songbird(df, metadata_df, group_column=request.group_column, epochs=request.epochs)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Songbird analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+class EnterotypeRequest(BaseModel):
+    n_clusters: int = 3
+    distance_metric: str = 'jaccard'
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/enterotype', response_model=AnalysisResponse)
+async def analyze_enterotype(session_id: str, request: EnterotypeRequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='enterotype',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_enterotype(df, metadata_df, n_clusters=request.n_clusters, distance_metric=request.distance_metric)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Enterotype analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+class WGCNARequest(BaseModel):
+    power: int = 6
+    min_module_size: int = 10
+    merge_cut_height: float = 0.25
+    group_column: Optional[str] = None
+
+
+@router.post('/sessions/{session_id}/analyze/wgcna', response_model=AnalysisResponse)
+async def analyze_wgcna(session_id: str, request: WGCNARequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    df = get_dataframe(session_id, db)
+    metadata_df = get_metadata_df(session_id, db)
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='wgcna',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_wgcna(df, metadata_df, power=request.power, min_module_size=request.min_module_size, merge_cut_height=request.merge_cut_height)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'WGCNA analysis failed: {e}')
+        raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')
+
+
+class DIABLORequest(BaseModel):
+    n_components: int = 2
+    group_column: str
+
+
+@router.post('/sessions/{session_id}/analyze/diablo', response_model=AnalysisResponse)
+async def analyze_diablo(session_id: str, request: DIABLORequest, db: DBSession = Depends(get_db)):
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
+    mb_df = get_microbiome_df(session_id, db)
+    met_df = get_metabolome_df(session_id, db)
+    if mb_df is None or met_df is None:
+        raise HTTPException(status_code=400, detail='Both microbiome and metabolome data required for DIABLO')
+    metadata_df = get_metadata_df(session_id, db)
+    if metadata_df is None or request.group_column not in metadata_df.columns:
+        raise HTTPException(status_code=400, detail='Metadata with valid group_column required')
+    job = AnalysisJob(
+        session_id=session_id,
+        job_type='diablo',
+        parameters=request.model_dump(),
+        status='running',
+        started_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    try:
+        result = run_diablo(mb_df, met_df, metadata_df, group_column=request.group_column, n_components=request.n_components)
+        _save_result(session_id, job, result)
+        job.status = 'completed'
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except Exception as e:
+        db.rollback()
+        logger.error(f'DIABLO analysis failed: {e}')
         raise HTTPException(status_code=500, detail=f'Analysis failed: {str(e)}')

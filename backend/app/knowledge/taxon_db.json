@@ -1,0 +1,1329 @@
+{
+  "Faecalibacterium_prausnitzii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "anti_inflammatory",
+      "gut_barrier_support"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "depleted",
+      "ulcerative_colitis": "depleted",
+      "obesity": "mixed",
+      "type_2_diabetes": "depleted",
+      "colorectal_cancer": "depleted"
+    },
+    "health_markers": [
+      "gut_barrier_integrity",
+      "immune_regulation",
+      "mucosal_health"
+    ],
+    "notes": "One of the most abundant and important commensal bacteria in the human gut. Butyrate producer."
+  },
+  "Bacteroides_thetaiotaomicron": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "gut_barrier_regulation",
+      "xenobiotic_metabolism"
+    ],
+    "disease_associations": {
+      "obesity": "mixed",
+      "type_2_diabetes": "mixed",
+      "antibiotic_associated_diarrhea": "depleted"
+    },
+    "health_markers": [
+      "carbohydrate_metabolism",
+      "mucus_layer_regulation"
+    ],
+    "notes": "Model organism for gut microbiome research. Specialist in complex polysaccharide breakdown."
+  },
+  "Akkermansia_muciniphila": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "propionate"
+    ],
+    "known_functions": [
+      "mucin_degradation",
+      "gut_barrier_enhancement",
+      "metabolic_health"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "type_2_diabetes": "depleted",
+      "metabolic_syndrome": "depleted",
+      "inflammatory_bowel_disease": "depleted",
+      "atherosclerosis": "depleted"
+    },
+    "health_markers": [
+      "metabolic_health",
+      "gut_barrier_integrity",
+      "anti_inflammation"
+    ],
+    "notes": "Degrades mucin and stimulates mucus production. Strong inverse correlation with metabolic disease."
+  },
+  "Bifidobacterium_longum": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "lactate"
+    ],
+    "known_functions": [
+      "probiotic",
+      "pathogen_inhibition",
+      "immune_modulation",
+      "HMO_utilization"
+    ],
+    "disease_associations": {
+      "antibiotic_associated_diarrhea": "beneficial",
+      "irritable_bowel_syndrome": "beneficial",
+      "necrotizing_enterocolitis": "protective",
+      "atopic_dermatitis": "protective"
+    },
+    "health_markers": [
+      "immune_regulation",
+      "pathogen_defense",
+      "infant_gut_health"
+    ],
+    "notes": "Common probiotic strain. Important for infant gut colonization via human milk oligosaccharide metabolism."
+  },
+  "Roseburia_intestinalis": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "starch_degradation",
+      "anti_inflammatory"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "depleted",
+      "ulcerative_colitis": "depleted",
+      "type_2_diabetes": "depleted",
+      "constipation": "depleted"
+    },
+    "health_markers": [
+      "colonocyte_fuel",
+      "gut_motility",
+      "metabolic_health"
+    ],
+    "notes": "Major butyrate producer. Ferments dietary starch and fibers."
+  },
+  "Eubacterium_rectale": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "fiber_fermentation",
+      "anti_inflammatory"
+    ],
+    "disease_associations": {
+      "ulcerative_colitis": "depleted",
+      "colorectal_cancer": "depleted",
+      "constipation": "depleted"
+    },
+    "health_markers": [
+      "colon_health",
+      "SCFA_status"
+    ],
+    "notes": "Closely related to Roseburia. Important butyrate producer from dietary fiber."
+  },
+  "Prevotella_copri": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "succinate",
+      "acetate"
+    ],
+    "known_functions": [
+      "complex_carbohydrate_degradation",
+      "xylanase_activity"
+    ],
+    "disease_associations": {
+      "rheumatoid_arthritis": "associated",
+      "insulin_resistance": "associated",
+      "HIV_infection": "depleted"
+    },
+    "health_markers": [
+      "diet_responder",
+      "carbohydrate_metabolism"
+    ],
+    "notes": "Associated with high-fiber diets. Controversial: linked to both health benefits and autoimmune disease."
+  },
+  "Ruminococcus_bromii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "formate",
+      "acetate"
+    ],
+    "known_functions": [
+      "resistant_starch_degradation",
+      "cross_feeding"
+    ],
+    "disease_associations": {
+      "ulcerative_colitis": "depleted",
+      "constipation": "depleted"
+    },
+    "health_markers": [
+      "fiber_fermentation",
+      "butyrate_precursor"
+    ],
+    "notes": "Keystone species for resistant starch degradation. Cross-feeds other butyrate producers."
+  },
+  "Lactobacillus_rhamnosus_GG": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "probiotic",
+      "pathogen_inhibition",
+      "immune_modulation",
+      "barrier_function"
+    ],
+    "disease_associations": {
+      "antibiotic_associated_diarrhea": "protective",
+      "irritable_bowel_syndrome": "beneficial",
+      "atopic_dermatitis": "protective",
+      "respiratory_infections": "protective"
+    },
+    "health_markers": [
+      "immune_regulation",
+      "gut_barrier",
+      "pathogen_defense"
+    ],
+    "notes": "Most studied probiotic strain (LGG). Survives stomach acid, adheres to intestinal mucosa."
+  },
+  "Clostridioides_difficile": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "toxins"
+    ],
+    "known_functions": [
+      "pathogen",
+      "spore_formation",
+      "toxin_production"
+    ],
+    "disease_associations": {
+      "C_difficile_infection": "causative",
+      "antibiotic_associated_diarrhea": "causative",
+      "pseudomembranous_colitis": "causative"
+    },
+    "health_markers": [
+      "infection_risk",
+      "antibiotic_disruption"
+    ],
+    "notes": "Opportunistic pathogen. Major cause of nosocomial diarrhea after antibiotic treatment."
+  },
+  "Escherichia_coli": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "acetate",
+      "formate",
+      "lactate"
+    ],
+    "known_functions": [
+      "commensal",
+      "opportunistic_pathogen",
+      "vitamin_K_synthesis"
+    ],
+    "disease_associations": {
+      "urinary_tract_infection": "pathogenic_strains",
+      "sepsis": "pathogenic_strains",
+      "inflammatory_bowel_disease": "adherent_invasive",
+      "travelers_diarrhea": "enterotoxigenic"
+    },
+    "health_markers": [
+      "gut_integrity_indicator",
+      "dysbiosis_marker"
+    ],
+    "notes": "Most abundant facultative anaerobe. Usually commensal but pathogenic strains cause significant disease."
+  },
+  "Bacteroides_fragilis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_utilization",
+      "immune_system_development",
+      "polysaccharide_A"
+    ],
+    "disease_associations": {
+      "intra_abdominal_infections": "opportunistic",
+      "bacteremia": "opportunistic",
+      "autism_spectrum_disorder": "associated"
+    },
+    "health_markers": [
+      "immune_tolerization",
+      "gut_homeostasis"
+    ],
+    "notes": "Enterotoxigenic strains (ETBF) associated with diarrhea and colorectal cancer. PSA-expressing strains promote immune tolerance."
+  },
+  "Streptococcus_salivarius": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "oral_commensal",
+      "pathogen_inhibition",
+      "probiotic_candidate"
+    ],
+    "disease_associations": {
+      "streptococcal_pharyngitis": "protective",
+      "otitis_media": "protective"
+    },
+    "health_markers": [
+      "oral_health",
+      "upper_respiratory_defense"
+    ],
+    "notes": "Early oral and gut colonizer. Some strains produce bacteriocins that inhibit pathogenic streptococci."
+  },
+  "Enterococcus_faecium": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "commensal",
+      "opportunistic_pathogen",
+      "vancomycin_resistance"
+    ],
+    "disease_associations": {
+      "nosocomial_infections": "VRE_strains",
+      "urinary_tract_infection": "pathogenic",
+      "bacteremia": "pathogenic"
+    },
+    "health_markers": [
+      "antibiotic_resistance",
+      "hospital_acquired_infection"
+    ],
+    "notes": "Common gut commensal but vancomycin-resistant strains (VRE) are significant nosocomial pathogens."
+  },
+  "Blautia_producta": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "lactic_acid_utilization"
+    ],
+    "disease_associations": {
+      "obesity": "mixed",
+      "type_2_diabetes": "mixed"
+    },
+    "health_markers": [
+      "metabolic_flexibility"
+    ],
+    "notes": "Previously classified as Ruminococcus. Important for lactate cross-feeding."
+  },
+  "Coprococcus_comes": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "sugar_fermentation"
+    ],
+    "disease_associations": {
+      "depression": "depleted",
+      "Crohn_disease": "depleted",
+      "ulcerative_colitis": "depleted"
+    },
+    "health_markers": [
+      "mental_health",
+      "gut_brain_axis"
+    ],
+    "notes": "Depleted in depression. Possible butyrate-mediated gut-brain axis involvement."
+  },
+  "Dialister_invisus": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "propionate",
+      "succinate"
+    ],
+    "known_functions": [
+      "amino_acid_fermentation",
+      "SCFA_production"
+    ],
+    "disease_associations": {
+      "periodontitis": "associated",
+      "oral_dysbiosis": "associated"
+    },
+    "health_markers": [
+      "oral_gut_connection"
+    ],
+    "notes": "Found in both oral cavity and gut. Associated with periodontal disease."
+  },
+  "Parabacteroides_distasonis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "bile_acid_modification",
+      "anti_obesity"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "type_2_diabetes": "depleted",
+      "non_alcoholic_fatty_liver_disease": "depleted"
+    },
+    "health_markers": [
+      "metabolic_health",
+      "liver_health"
+    ],
+    "notes": "Produces succinate and modifies bile acids. Anti-obesity effects demonstrated in mouse models."
+  },
+  "Anaerostipes_hadrus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "lactate_utilization"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "type_2_diabetes": "depleted"
+    },
+    "health_markers": [
+      "metabolic_health",
+      "SCFA_status"
+    ],
+    "notes": "Butyrate producer via lactate cross-feeding. Consistently depleted in metabolic disease."
+  },
+  "Barnesiella_intestinihominis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "pathogen_resistance"
+    ],
+    "disease_associations": {
+      "vancomycin_resistant_Enterococcus": "protective",
+      "C_difficile_infection": "protective"
+    },
+    "health_markers": [
+      "colonization_resistance",
+      "pathogen_defense"
+    ],
+    "notes": "Key species for colonization resistance against VRE and C. difficile."
+  },
+  "Oscillibacter_sp": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "cholesterol_metabolism"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "cardiovascular_disease": "protective"
+    },
+    "health_markers": [
+      "cholesterol_homeostasis",
+      "metabolic_health"
+    ],
+    "notes": "Genus-level classification. Some species metabolize cholesterol."
+  },
+  "Subdoligranulum_variabile": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "butyrate_specialist"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "depleted",
+      "ulcerative_colitis": "depleted"
+    },
+    "health_markers": [
+      "colon_health",
+      "IBD_status"
+    ],
+    "notes": "Close relative of Faecalibacterium. Dedicated butyrate producer."
+  },
+  "Phascolarctobacterium_succinatutens": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "propionate",
+      "succinate"
+    ],
+    "known_functions": [
+      "succinate_utilization",
+      "propionate_production"
+    ],
+    "disease_associations": {
+      "type_2_diabetes": "mixed"
+    },
+    "health_markers": [
+      "succinate_metabolism",
+      "SCFA_diversity"
+    ],
+    "notes": "Specialist in succinate-to-propionate conversion. Important for SCFA diversity."
+  },
+  "Veillonella_sp": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "propionate",
+      "succinate"
+    ],
+    "known_functions": [
+      "lactate_utilization",
+      "SCFA_production",
+      "oral_commensal"
+    ],
+    "disease_associations": {
+      "inflammatory_bowel_disease": "associated",
+      "pneumonia": "associated"
+    },
+    "health_markers": [
+      "oral_health",
+      "lactate_clearance"
+    ],
+    "notes": "Found in gut, oral cavity, and lungs. Converts lactate to propionate."
+  },
+  "Collinsella_aerofaciens": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate",
+      "formate"
+    ],
+    "known_functions": [
+      "bile_acid_deconjugation",
+      "cholesterol_metabolism"
+    ],
+    "disease_associations": {
+      "rheumatoid_arthritis": "associated",
+      "type_2_diabetes": "associated",
+      "atherosclerosis": "associated"
+    },
+    "health_markers": [
+      "bile_acid_profile",
+      "cardiometabolic_risk"
+    ],
+    "notes": "Deconjugates bile acids. Associated with rheumatoid arthritis in some studies."
+  },
+  "Desulfovibrio_sp": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "hydrogen_sulfide"
+    ],
+    "known_functions": [
+      "sulfate_reduction",
+      "hydrogen_sulfide_production"
+    ],
+    "disease_associations": {
+      "autism_spectrum_disorder": "associated",
+      "ulcerative_colitis": "associated",
+      "colorectal_cancer": "associated"
+    },
+    "health_markers": [
+      "gut_inflammation",
+      "genotoxic_risk"
+    ],
+    "notes": "H2S producer. Implicated in gut inflammation and DNA damage."
+  },
+  "Hungatella_hathewayi": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "spore_formation"
+    ],
+    "disease_associations": {
+      "bacteremia": "associated",
+      "C_difficile_infection": "associated"
+    },
+    "health_markers": [
+      "infection_risk"
+    ],
+    "notes": "Clostridium-related genus. Emerging pathogen in immunocompromised patients."
+  },
+  "Klebsiella_pneumoniae": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "acetate",
+      "succinate",
+      "lactate"
+    ],
+    "known_functions": [
+      "opportunistic_pathogen",
+      "capsule_production",
+      "carbapenem_resistance"
+    ],
+    "disease_associations": {
+      "pneumonia": "pathogenic",
+      "urinary_tract_infection": "pathogenic",
+      "sepsis": "pathogenic",
+      "liver_abscess": "pathogenic",
+      "necrotizing_enterocolitis": "pathogenic"
+    },
+    "health_markers": [
+      "infection_risk",
+      "antibiotic_resistance",
+      "gut_dysbiosis"
+    ],
+    "notes": "Major hospital-acquired pathogen. Extended-spectrum beta-lactamase (ESBL) and carbapenem-resistant strains are critical threats."
+  },
+  "Lactobacillus_reuteri": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate",
+      "reuterin"
+    ],
+    "known_functions": [
+      "probiotic",
+      "antimicrobial_compound_production",
+      "immune_modulation",
+      "oxalate_degradation"
+    ],
+    "disease_associations": {
+      "necrotizing_enterocolitis": "protective",
+      "Helicobacter_pylori_infection": "suppresses",
+      "vaginal_dysbiosis": "restores"
+    },
+    "health_markers": [
+      "infant_gut_health",
+      "vaginal_microbiome",
+      "antimicrobial_defense"
+    ],
+    "notes": "Produces reuterin, a broad-spectrum antimicrobial. Important for infant gut and vaginal health."
+  },
+  "Bifidobacterium_adolescentis": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "lactate"
+    ],
+    "known_functions": [
+      "oligosaccharide_fermentation",
+      "immune_modulation",
+      "pathogen_inhibition"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "inflammatory_bowel_disease": "depleted",
+      "celiac_disease": "depleted"
+    },
+    "health_markers": [
+      "dietary_fiber_response",
+      "gut_health"
+    ],
+    "notes": "Adult-type bifidobacterium. Declines with age and Western diet."
+  },
+  "Megamonas_funiformis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "succinate",
+      "acetate"
+    ],
+    "known_functions": [
+      "sugar_fermentation",
+      "succinate_production"
+    ],
+    "disease_associations": {
+      "type_2_diabetes": "associated"
+    },
+    "health_markers": [
+      "carbohydrate_metabolism"
+    ],
+    "notes": "Succinate producer. Elevated in some metabolic disease cohorts."
+  },
+  "Fusobacterium_nucleatum": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "propionate"
+    ],
+    "known_functions": [
+      "oral_pathogen",
+      "invasive_adherence",
+      "immune_evasion"
+    ],
+    "disease_associations": {
+      "colorectal_cancer": "enriched",
+      "periodontal_disease": "pathogenic",
+      "preterm_birth": "associated",
+      "inflammatory_bowel_disease": "associated"
+    },
+    "health_markers": [
+      "cancer_risk",
+      "oral_health",
+      "invasive_potential"
+    ],
+    "notes": "Oral commensal turned pathobiont. Strongly enriched in colorectal cancer. Promotes tumor progression via immune modulation."
+  },
+  "Campylobacter_jejuni": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "microaerophilic",
+    "main_products": [],
+    "known_functions": [
+      "enteropathogen",
+      "flagellar_motility",
+      "toxin_production"
+    ],
+    "disease_associations": {
+      "gastroenteritis": "causative",
+      "Guillain_Barre_syndrome": "trigger",
+      "reactive_arthritis": "trigger"
+    },
+    "health_markers": [
+      "foodborne_illness",
+      "post_infectious_sequelae"
+    ],
+    "notes": "Leading cause of bacterial gastroenteritis worldwide. Can trigger autoimmune neuropathies."
+  },
+  "Helicobacter_pylori": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "microaerophilic",
+    "main_products": [
+      "ammonia",
+      "urease"
+    ],
+    "known_functions": [
+      "gastric_pathogen",
+      "urease_production",
+      "immune_evasion"
+    ],
+    "disease_associations": {
+      "gastric_ulcer": "causative",
+      "gastric_cancer": "carcinogen",
+      "gastric_mucosa_associed_lymphoid_tissue_lymphoma": "causative"
+    },
+    "health_markers": [
+      "gastric_cancer_risk",
+      "peptic_ulcer_disease"
+    ],
+    "notes": "WHO Class I carcinogen. Colonizes gastric mucosa. Urease neutralizes stomach acid."
+  },
+  "Streptococcus_thermophilus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "dairy_fermentation",
+      "probiotic",
+      "lactose_digestion"
+    ],
+    "disease_associations": {
+      "lactose_intolerance": "beneficial"
+    },
+    "health_markers": [
+      "dairy_tolerance",
+      "gut_transient"
+    ],
+    "notes": "Widely used in yogurt production. Transient colonizer. Helps lactose digestion."
+  },
+  "Enterococcus_faecalis": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "commensal",
+      "opportunistic_pathogen",
+      "biofilm_formation"
+    ],
+    "disease_associations": {
+      "urinary_tract_infection": "pathogenic",
+      "endocarditis": "pathogenic",
+      "bacteremia": "pathogenic",
+      "root_canal_infection": "pathogenic"
+    },
+    "health_markers": [
+      "biofilm_risk",
+      "multidrug_resistance"
+    ],
+    "notes": "More virulent than E. faecium. Produces cytolysin. Common cause of nosocomial infections."
+  },
+  "Turicibacter_sanguinis": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "commensal",
+      "bile_acid_metabolism"
+    ],
+    "disease_associations": {
+      "obesity": "mixed"
+    },
+    "health_markers": [
+      "bile_acid_homeostasis"
+    ],
+    "notes": "Small abundant rod. Associated with host bile acid metabolism."
+  },
+  "Ruminococcus_gnavus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "formate",
+      "acetate"
+    ],
+    "known_functions": [
+      "mucin_degradation",
+      "polysaccharide_fermentation"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "enriched",
+      "ulcerative_colitis": "enriched",
+      "cystic_fibrosis": "enriched"
+    },
+    "health_markers": [
+      "IBD_activity",
+      "mucin_degrader"
+    ],
+    "notes": "Mucin degrader. Enriched in IBD. Produces inflammatory polysaccharides."
+  },
+  "Methanobrevibacter_smithii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "methane"
+    ],
+    "known_functions": [
+      "methanogenesis",
+      "hydrogen_scavenging",
+      "archaeal_commensal"
+    ],
+    "disease_associations": {
+      "constipation": "enriched",
+      "obesity": "mixed",
+      "irritable_bowel_syndrome": "associated"
+    },
+    "health_markers": [
+      "methane_production",
+      "gut_motility"
+    ],
+    "notes": "Dominant human gut archaeon. Scavenges H2 to produce methane. Associated with constipation-predominant IBS."
+  },
+  "Christensenella_minuta": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "formate"
+    ],
+    "known_functions": [
+      "heritable_commensal",
+      "metabolic_regulation"
+    ],
+    "disease_associations": {
+      "obesity": "protective",
+      "lean_phenotype": "associated"
+    },
+    "health_markers": [
+      "host_genetics",
+      "metabolic_health"
+    ],
+    "notes": "Highly heritable. One of the most genetically associated gut microbes. Correlates with lean BMI."
+  },
+  "Bacteroides_ovatus": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "cross_feeding"
+    ],
+    "disease_associations": {
+      "antibiotic_associated_diarrhea": "depleted"
+    },
+    "health_markers": [
+      "carbohydrate_metabolism",
+      "community_stability"
+    ],
+    "notes": "Generalist polysaccharide degrader. Important for community stability and cross-feeding."
+  },
+  "Bacteroides_uniformis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "gut_barrier_regulation",
+      "anti_obesity"
+    ],
+    "disease_associations": {
+      "obesity": "depleted",
+      "type_2_diabetes": "depleted"
+    },
+    "health_markers": [
+      "metabolic_health",
+      "gut_barrier"
+    ],
+    "notes": "Anti-obesity effects. Enhances gut barrier function and GLP-1 secretion."
+  },
+  "Eubacterium_hallii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "propionate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "lactate_utilization",
+      "insulin_metabolism"
+    ],
+    "disease_associations": {
+      "type_2_diabetes": "depleted",
+      "insulin_resistance": "depleted"
+    },
+    "health_markers": [
+      "insulin_sensitivity",
+      "SCFA_diversity"
+    ],
+    "notes": "Metabolizes linoleic acid into beneficial conjugates. Important for insulin sensitivity."
+  },
+  "Coprococcus_catus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "sugar_fermentation"
+    ],
+    "disease_associations": {
+      "depression": "depleted",
+      "bipolar_disorder": "depleted"
+    },
+    "health_markers": [
+      "mental_health",
+      "gut_brain_axis"
+    ],
+    "notes": "Depleted in depression. Potential DOPAC producer (dopamine metabolite)."
+  },
+  "Lactobacillus_acidophilus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate"
+    ],
+    "known_functions": [
+      "probiotic",
+      "pathogen_inhibition",
+      "lactase_production",
+      "immune_modulation"
+    ],
+    "disease_associations": {
+      "antibiotic_associated_diarrhea": "protective",
+      "vaginal_dysbiosis": "restores",
+      "travelers_diarrhea": "protective"
+    },
+    "health_markers": [
+      "vaginal_health",
+      "gut_health",
+      "lactose_tolerance"
+    ],
+    "notes": "Classic probiotic. Dominant vaginal Lactobacillus in healthy women."
+  },
+  "Staphylococcus_aureus": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "lactate",
+      "toxins"
+    ],
+    "known_functions": [
+      "opportunistic_pathogen",
+      "toxin_production",
+      "biofilm_formation"
+    ],
+    "disease_associations": {
+      "skin_infections": "causative",
+      "pneumonia": "causative",
+      "bacteremia": "causative",
+      "toxic_shock_syndrome": "causative",
+      "food_poisoning": "causative"
+    },
+    "health_markers": [
+      "MRSA_status",
+      "colonization_risk"
+    ],
+    "notes": "Major human pathogen. MRSA strains are resistant to methicillin. Common skin and nasal colonizer."
+  },
+  "Pseudomonas_aeruginosa": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "aerobic",
+    "main_products": [
+      "pyocyanin",
+      "rhamnolipids"
+    ],
+    "known_functions": [
+      "opportunistic_pathogen",
+      "biofilm_formation",
+      "multidrug_resistance"
+    ],
+    "disease_associations": {
+      "cystic_fibrosis": "chronic_infection",
+      "nosocomial_pneumonia": "causative",
+      "burn_wound_infection": "causative",
+      "keratitis": "causative"
+    },
+    "health_markers": [
+      "biofilm_risk",
+      "antibiotic_resistance",
+      "immunocompromise_risk"
+    ],
+    "notes": "Critical nosocomial pathogen. Intrinsic multidrug resistance. Forms recalcitrant biofilms."
+  },
+  "Salmonella_enterica": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "hydrogen_sulfide"
+    ],
+    "known_functions": [
+      "enteropathogen",
+      "invasion",
+      "systemic_dissemination"
+    ],
+    "disease_associations": {
+      "salmonellosis": "causative",
+      "typhoid_fever": "causative",
+      "gastroenteritis": "causative",
+      "bacteremia": "causative"
+    },
+    "health_markers": [
+      "foodborne_illness",
+      "systemic_infection"
+    ],
+    "notes": "Major foodborne pathogen. Typhoidal serovars cause systemic disease; non-typhoidal cause gastroenteritis."
+  },
+  "Shigella_sonnei": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "shiga_toxin"
+    ],
+    "known_functions": [
+      "enteropathogen",
+      "invasion",
+      "inflammatory_diarrhea"
+    ],
+    "disease_associations": {
+      "shigellosis": "causative",
+      "bacillary_dysentery": "causative",
+      "hemolytic_uremic_syndrome": "trigger"
+    },
+    "health_markers": [
+      "foodborne_illness",
+      "waterborne_illness"
+    ],
+    "notes": "Low infectious dose. Invades colonic epithelium causing dysentery. Shiga toxin can cause HUS."
+  },
+  "Vibrio_cholerae": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "facultative_anaerobe",
+    "main_products": [
+      "cholera_toxin"
+    ],
+    "known_functions": [
+      "enteropathogen",
+      "cholera_toxin",
+      "hyperinfectivity"
+    ],
+    "disease_associations": {
+      "cholera": "causative"
+    },
+    "health_markers": [
+      "waterborne_outbreak",
+      "massive_diarrhea"
+    ],
+    "notes": "Causes cholera. Cholera toxin triggers massive watery diarrhea (rice-water stools). Endemic in areas with poor sanitation."
+  },
+  "Alistipes_putredinis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "amino_acid_fermentation",
+      "bile_acid_transformation",
+      "anti_inflammatory"
+    ],
+    "disease_associations": {
+      "colorectal_cancer": "depleted",
+      "appendicitis": "depleted"
+    },
+    "health_markers": [
+      "colon_health",
+      "protein_metabolism"
+    ],
+    "notes": "Bile acid 7alpha-dehydroxylating bacterium. Converts primary to secondary bile acids."
+  },
+  "Bacteroides_caccae": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "mucin_utilization",
+      "cross_feeding"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "depleted",
+      "obesity": "mixed"
+    },
+    "health_markers": [
+      "carbohydrate_metabolism",
+      "community_stability"
+    ],
+    "notes": "Abundant gut commensal. Degrades complex carbohydrates and mucin oligosaccharides."
+  },
+  "Eggerthella_lenta": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "formate"
+    ],
+    "known_functions": [
+      "cardiac_glycoside_metabolism",
+      "bile_acid_modification",
+      "drug_metabolism"
+    ],
+    "disease_associations": {
+      "inflammatory_bowel_disease": "associated",
+      "bacteremia": "associated"
+    },
+    "health_markers": [
+      "drug_metabolism",
+      "bile_acid_profile"
+    ],
+    "notes": "Metabolizes cardiac glycosides (digoxin). Bile acid 7alpha-dehydroxylator. Opportunistic pathogen in immunocompromised."
+  },
+  "Flavonifractor_plautii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "flavonoid_metabolism",
+      "anti_inflammatory"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "depleted",
+      "ulcerative_colitis": "depleted"
+    },
+    "health_markers": [
+      "colon_health",
+      "polyphenol_metabolism"
+    ],
+    "notes": "Butyrate producer that metabolizes dietary flavonoids. Anti-inflammatory effects via SCFA signaling."
+  },
+  "Gordonibacter_pamelaeae": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "formate"
+    ],
+    "known_functions": [
+      "polyphenol_metabolism",
+      "flavonoid_conversion",
+      "anti_oxidant"
+    ],
+    "disease_associations": {
+      "colorectal_cancer": "depleted"
+    },
+    "health_markers": [
+      "polyphenol_bioavailability",
+      "antioxidant_capacity"
+    ],
+    "notes": "Converts dietary ellagitannins to urolithins. Linked to colon cancer protection."
+  },
+  "Intestinibacter_bartlettii": {
+    "gram_stain": "Gram-positive",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "spore_formation",
+      "bile_acid_resistance"
+    ],
+    "disease_associations": {
+      "Crohn_disease": "mixed",
+      "antibiotic_associated_diarrhea": "associated"
+    },
+    "health_markers": [
+      "colon_health",
+      "spore_former"
+    ],
+    "notes": "Spore-forming butyrate producer. Resistant to bile acids. Common after antibiotic treatment."
+  },
+  "Odoribacter_splanchnicus": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "polysaccharide_degradation",
+      "bile_acid_transformation",
+      "anti_inflammatory"
+    ],
+    "disease_associations": {
+      "colorectal_cancer": "depleted",
+      "ulcerative_colitis": "depleted"
+    },
+    "health_markers": [
+      "colon_health",
+      "bile_acid_metabolism"
+    ],
+    "notes": "Bile acid-transforming bacterium. Depleted in CRC and IBD. Anti-inflammatory via secondary bile acids."
+  },
+  "Paraprevotella_clara": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "anaerobic",
+    "main_products": [
+      "succinate",
+      "acetate"
+    ],
+    "known_functions": [
+      "xylan_degradation",
+      "complex_carbohydrate_utilization"
+    ],
+    "disease_associations": {
+      "obesity": "mixed"
+    },
+    "health_markers": [
+      "fiber_response",
+      "carbohydrate_metabolism"
+    ],
+    "notes": "Xylan-degrading specialist. Responds to high-fiber diets. Prevotella-related genus."
+  },
+  "Pseudobutyrivibrio_ruminis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "butyrate",
+      "formate"
+    ],
+    "known_functions": [
+      "SCFA_production",
+      "hemicellulose_degradation",
+      "cross_feeding"
+    ],
+    "disease_associations": {
+      "obesity": "depleted"
+    },
+    "health_markers": [
+      "fiber_fermentation",
+      "SCFA_status"
+    ],
+    "notes": "Butyrate producer from hemicellulose. Important for fiber fermentation in the colon."
+  },
+  "Sutterella_wadsworthensis": {
+    "gram_stain": "Gram-negative",
+    "oxygen": "strictly_anaerobic",
+    "main_products": [
+      "acetate",
+      "succinate"
+    ],
+    "known_functions": [
+      "mucin_degradation",
+      "immune_modulation",
+      "autism_associated"
+    ],
+    "disease_associations": {
+      "autism_spectrum_disorder": "enriched",
+      "Crohn_disease": "associated"
+    },
+    "health_markers": [
+      "gut_brain_axis",
+      "mucin_degrader"
+    ],
+    "notes": "Proteobacteria family. Enriched in autism and some IBD cohorts. Mucin degrader."
+  }
+}

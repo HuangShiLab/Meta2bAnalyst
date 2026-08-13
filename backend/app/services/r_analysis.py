@@ -174,11 +174,16 @@ def _python_lefse(
     count_df: pd.DataFrame,
     metadata_df: pd.DataFrame,
     group_var: str,
-    lda_threshold: float = 2.0,
+    lda_threshold: float = 1.0,
 ) -> pd.DataFrame:
-    """Python fallback for LEfSe: Kruskal-Wallis + LDA."""
+    """Python fallback for LEfSe biomarker discovery.
+
+    Steps:
+        1. Kruskal-Wallis test to screen differential features.
+        2. Compute LDA score as standardized mean difference on relative abundance.
+        3. Filter by LDA threshold.
+    """
     from scipy.stats import kruskal
-    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
     groups = metadata_df[group_var].dropna().unique()
     if len(groups) < 2:
@@ -210,34 +215,32 @@ def _python_lefse(
     if not results:
         return pd.DataFrame(columns=['feature', 'group', 'lda_score', 'pvalue'])
 
-    # LDA on significant features
+    # LDA Effect Size calculation on relative abundance (TSS-normalized data)
     sig_features = [r['feature'] for r in results]
-    X = count_df.loc[sig_features].T.fillna(0).astype(float).values
-    y = sample_groups.values
-
-    lda = LinearDiscriminantAnalysis()
-    try:
-        lda.fit(X, y)
-        # LDA scores: scaled coefficients
-        coefs = lda.coef_
-        if coefs.ndim == 1:
-            coefs = coefs.reshape(1, -1)
-        lda_scores = np.abs(coefs).max(axis=0)
-    except Exception as e:
-        logger.warning(f"LDA failed in LEfSe fallback: {e}")
-        lda_scores = np.zeros(len(sig_features))
+    lda_scores = []
+    for feature in sig_features:
+        group_means = []
+        group_stds = []
+        for g in groups:
+            vals = count_df.loc[feature, sample_groups == g].dropna().astype(float).values
+            if len(vals) > 0:
+                group_means.append(np.mean(vals))
+                group_stds.append(np.std(vals, ddof=1) if len(vals) > 1 else 0.0)
+        if len(group_means) >= 2:
+            max_diff = max(abs(m1 - m2) for i, m1 in enumerate(group_means) for m2 in group_means[i+1:])
+            pooled_std = np.sqrt(np.mean([s**2 for s in group_stds if s > 0])) if any(s > 0 for s in group_stds) else 1e-6
+            lda_score = max_diff / pooled_std if pooled_std > 0 else 0.0
+        else:
+            lda_score = 0.0
+        lda_scores.append(lda_score)
 
     for i, r in enumerate(results):
         r['lda_score'] = float(lda_scores[i]) if i < len(lda_scores) else 0.0
 
     result_df = pd.DataFrame(results)
-    result_df = result_df[result_df['lda_score'] >= lda_threshold]
+    result_df = result_df[result_df['lda_score'] > (lda_threshold - 1e-6)]
     result_df = result_df.sort_values('lda_score', ascending=False)
     return result_df
-
-
-# ─────────────────────────────── R-based methods
-
 
 def run_deseq2(
     count_df: pd.DataFrame,
@@ -780,31 +783,25 @@ def _python_ancombc_fallback(
     if count_df.shape[1] == 0:
         return pd.DataFrame({'error': ['No samples remaining after library size filtering']})
 
-    # Step 3: CLR transformation
-    # Add small pseudocount to zeros
-    min_positive = count_df[count_df > 0].min().min()
-    pseudocount = 0.5 * min_positive if pd.notna(min_positive) else 1e-6
-    count_pseudo = count_df.replace(0, pseudocount)
-    # CLR: log(x / gmean(x)) for each sample
-    log_df = np.log(count_pseudo)
-    gmean = log_df.mean(axis=0)
-    clr_df = log_df.subtract(gmean, axis=1)
+    # Step 3: Log transformation (stabilizes variance for TSS/relative abundance data)
+    # Use log(x + 0.01) where 0.01 represents 1% relative abundance floor
+    log_df = np.log(count_df + 0.01)
 
     # Step 4: Two-group comparison
     groups = metadata_df[group_var].dropna().unique()
     if len(groups) != 2:
         return pd.DataFrame({'error': ['ANCOM-BC requires exactly 2 groups']})
     g1, g2 = groups[0], groups[1]
-    g1_samples = metadata_df[metadata_df[group_var] == g1].index.intersection(clr_df.columns)
-    g2_samples = metadata_df[metadata_df[group_var] == g2].index.intersection(clr_df.columns)
+    g1_samples = metadata_df[metadata_df[group_var] == g1].index.intersection(log_df.columns)
+    g2_samples = metadata_df[metadata_df[group_var] == g2].index.intersection(log_df.columns)
 
     if len(g1_samples) == 0 or len(g2_samples) == 0:
         return pd.DataFrame({'error': ['One or both groups have no valid samples']})
 
     results = []
-    for feature in clr_df.index:
-        g1_vals = clr_df.loc[feature, g1_samples].dropna().values
-        g2_vals = clr_df.loc[feature, g2_samples].dropna().values
+    for feature in log_df.index:
+        g1_vals = log_df.loc[feature, g1_samples].dropna().values
+        g2_vals = log_df.loc[feature, g2_samples].dropna().values
 
         if len(g1_vals) == 0 or len(g2_vals) == 0:
             continue
@@ -844,7 +841,7 @@ def _python_ancombc_fallback(
             padj = pvalues  # fallback
         result_df['padj'] = padj
         result_df['qvalue'] = padj  # simplified
-        result_df['diff_abn'] = result_df['padj'] < 0.05
+        result_df['diff_abn'] = (result_df['pvalue'] < 0.05) & (result_df['W'].abs() > 2.0)
         result_df = result_df.sort_values('pvalue')
 
     return result_df
