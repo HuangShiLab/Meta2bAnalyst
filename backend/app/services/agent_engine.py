@@ -1473,15 +1473,17 @@ class AgentEngine:
         all_results: Dict[str, Any],
         metadata_summary: Optional[Dict[str, Any]] = None,
         question: Optional[str] = None,
+        use_llm: bool = True,
     ) -> Dict[str, Any]:
         """
         Cross-analysis integrated interpretation using knowledge base.
-        Optional LLM enhancement for narrative quality.
+        Optional LLM enhancement for narrative quality (use_llm switch).
         """
         interp = self.enhanced_interpreter.interpret_full(
             all_results=all_results,
             metadata_summary=metadata_summary,
             question=question,
+            use_llm=use_llm,
         )
         return {
             "integrated_narrative": interp.integrated_narrative,

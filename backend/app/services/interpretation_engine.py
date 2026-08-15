@@ -61,6 +61,7 @@ class EnhancedInterpreter:
         all_results: Dict[str, Dict[str, Any]],
         metadata_summary: Optional[Dict[str, Any]] = None,
         question: Optional[str] = None,
+        use_llm: bool = True,
     ) -> IntegratedInterpretation:
         """
         Produce a fully integrated interpretation from all session results.
@@ -73,6 +74,9 @@ class EnhancedInterpreter:
             Session-level metadata.
         question : str, optional
             User's specific question (passed to LLM for targeted rewriting).
+        use_llm : bool
+            Allow the LLM narrative-rewrite pass when a key is configured.
+            False returns the deterministic KB-only interpretation.
 
         Returns
         -------
@@ -97,22 +101,23 @@ class EnhancedInterpreter:
         interp.follow_up_suggestions = self._suggest_follow_up(all_results)
 
         # 6. Optional LLM enhancement
-        llm = get_llm_client()
-        if llm.available:
-            enhanced = llm.enhance_narrative(
-                integrated_narrative=interp.integrated_narrative,
-                biological_context=interp.biological_context,
-                caveats=interp.caveats,
-                follow_up=interp.follow_up_suggestions,
-                contradictions=interp.contradictions,
-                disease_relevance=interp.disease_relevance,
-                question=question,
-            )
-            if enhanced.get("llm_used"):
-                interp.integrated_narrative = enhanced["enhanced_narrative"]
-                interp.llm_enhanced = True
-                interp.llm_model = enhanced.get("model")
-                logger.info(f"LLM enhancement applied using {enhanced.get('model')}")
+        if use_llm:
+            llm = get_llm_client()
+            if llm.available:
+                enhanced = llm.enhance_narrative(
+                    integrated_narrative=interp.integrated_narrative,
+                    biological_context=interp.biological_context,
+                    caveats=interp.caveats,
+                    follow_up=interp.follow_up_suggestions,
+                    contradictions=interp.contradictions,
+                    disease_relevance=interp.disease_relevance,
+                    question=question,
+                )
+                if enhanced.get("llm_used"):
+                    interp.integrated_narrative = enhanced["enhanced_narrative"]
+                    interp.llm_enhanced = True
+                    interp.llm_model = enhanced.get("model")
+                    logger.info(f"LLM enhancement applied using {enhanced.get('model')}")
 
         return interp
 

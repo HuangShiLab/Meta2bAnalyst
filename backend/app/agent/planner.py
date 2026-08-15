@@ -959,19 +959,26 @@ class AnalysisPlanner:
         """
         Generate an execution plan from user query.
 
-        Args:
-            query: Natural language description of the desired analysis
-            context: Optional context (e.g., available data types, previous analyses)
-
-        Returns:
-            ExecutionPlan: Structured DAG of analysis steps
+        Rule-based planning is the primary engine: it is deterministic,
+        offline, and encodes the platform's analysis best practices. The LLM
+        is a *fallback* -- consulted only when the rule engine cannot make
+        sense of the query at all (``clarification_needed``). Any LLM plan is
+        validated against the module registry before it is returned; if
+        validation or the API call fails, the rule-based result stands.
         """
         logger.info(f"Planning analysis for query: {query[:100]}...")
 
-        if self.use_llm and self.openai_api_key:
-            return await self._llm_plan(query, context)
-        else:
-            return self._rule_plan(query, context)
+        rule_plan = self._rule_plan(query, context)
+
+        if self.use_llm and rule_plan.clarification_needed:
+            llm_plan = await self._llm_plan(query, context)
+            if llm_plan is not None:
+                llm_plan.notes.append(
+                    "Rule engine could not map this query; plan was generated "
+                    "by the LLM planner and validated against the module registry."
+                )
+                return llm_plan
+        return rule_plan
 
     def _data_aware_plan(self, query: str, context: Dict[str, Any]) -> Optional[ExecutionPlan]:
         """Recommend a pipeline from the uploaded files alone.
@@ -1077,54 +1084,91 @@ class AnalysisPlanner:
         logger.info(f"Rule-based plan generated: {len(plan.steps)} steps")
         return plan
 
-    async def _llm_plan(self, query: str, context: Optional[Dict[str, Any]] = None) -> ExecutionPlan:
-        """LLM-based planning (requires OpenAI API key)."""
-        try:
-            import openai
-            openai.api_key = self.openai_api_key
+    async def _llm_plan(self, query: str, context: Optional[Dict[str, Any]] = None) -> Optional[ExecutionPlan]:
+        """LLM-based planning via the Kimi gateway (app.services.llm_client).
 
-            # Build module descriptions for the prompt
-            module_descriptions = []
-            for name, spec in MODULE_REGISTRY.items():
-                module_descriptions.append(
-                    f"- {name}: {spec.description} [category: {spec.category}]"
-                )
+        Returns None on any failure or registry-validation error so the
+        caller can keep the rule-based result. Never raises.
+        """
+        from app.services.llm_client import get_llm_client
 
-            system_prompt = f"""You are a bioinformatics analysis planner. Given a user's request, 
-output a JSON execution plan using ONLY these available modules:
+        client = get_llm_client()
+        if not client.available:
+            return None
+
+        module_descriptions = []
+        for name, spec in MODULE_REGISTRY.items():
+            module_descriptions.append(
+                f"- {name}: {spec.description} [category: {spec.category}]"
+            )
+
+        system_prompt = f"""You are a bioinformatics analysis planner for a microbiome/metabolome
+platform. Given a user's request, output a JSON execution plan using ONLY these modules:
 
 {chr(10).join(module_descriptions)}
 
 Rules:
-1. microbiome_marker MUST use transformation="clr" and test_method="mannwhitney"
-2. metabolome_marker MUST use transformation="log1p" and test_method="welch"
-3. data_validator must be the first step
-4. Procrustes requires microbiome_pcoa and metabolome_pca to complete first
-5. Output valid JSON with "steps" array, each with "module", "params", "depends_on", "id"
+1. data_validator must be the first step, with id "step1_validate"
+2. Every step: {{"id": "stepN_<module>", "module": "<one of the modules above>",
+   "params": {{}}, "depends_on": ["<ids of prerequisite steps>"]}}
+3. microbiome_marker MUST use transformation="clr" and test_method="mannwhitney"
+4. metabolome_marker MUST use transformation="log1p" and test_method="welch"
+5. Only use module names from the list above. No invented modules.
+6. Output ONLY the JSON object: {{"steps": [...]}} - no markdown, no commentary.
 """
-
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query},
-                ],
-                temperature=0.2,
-            )
-
-            plan_json = json.loads(response.choices[0].message.content)
-            steps = [PlanStep(**s) for s in plan_json["steps"]]
-
+        try:
+            content = client.chat(system_prompt, query, max_tokens=8000, timeout=120)
+            if not content:
+                return None
+            text = content.strip()
+            if text.startswith("```"):  # strip code fences if the model adds them
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            plan_json = json.loads(text)
+            steps = self._validate_llm_steps(plan_json.get("steps") or [])
+            if not steps:
+                return None
             return ExecutionPlan(
                 query=query,
                 steps=steps,
-                estimated_time="~LLM-generated",
-                notes=["Generated by LLM planner"],
+                estimated_time=_estimate_time(len(steps)),
+                notes=["Generated by LLM planner (kimi-for-coding)"],
             )
-
         except Exception as e:
-            logger.warning(f"LLM planning failed: {e}, falling back to rule-based")
-            return self._rule_plan(query, context)
+            logger.warning(f"LLM planning failed: {e}; keeping rule-based result")
+            return None
+
+    @staticmethod
+    def _validate_llm_steps(raw_steps: List[Dict[str, Any]]) -> List[PlanStep]:
+        """Keep only steps whose module exists in the registry; fix order so
+        data_validator comes first; drop dangling dependencies."""
+        steps: List[PlanStep] = []
+        seen_ids = set()
+        for i, s in enumerate(raw_steps, 1):
+            module = str(s.get("module") or "")
+            if module not in MODULE_REGISTRY:
+                logger.warning(f"LLM proposed unknown module '{module}' - dropped")
+                continue
+            step_id = str(s.get("id") or f"step{i}_{module}")
+            while step_id in seen_ids:
+                step_id += "_x"
+            seen_ids.add(step_id)
+            spec = get_module_spec(module)
+            steps.append(PlanStep(
+                id=step_id,
+                module=module,
+                params=s.get("params") or {},
+                depends_on=[d for d in (s.get("depends_on") or []) if isinstance(d, str)],
+                description=spec.description if spec else "",
+            ))
+        # data_validator must lead
+        steps.sort(key=lambda s: 0 if s.module == "data_validator" else 1)
+        _prune_dangling_dependencies(steps)
+        # A validator-only plan is not a plan.
+        if not [s for s in steps if s.module != "data_validator"]:
+            return []
+        return steps
 
 
 # Singleton instance
@@ -1132,8 +1176,17 @@ _default_planner: Optional[AnalysisPlanner] = None
 
 
 def get_planner(use_llm: bool = False, api_key: Optional[str] = None) -> AnalysisPlanner:
-    """Get or create the default planner instance."""
+    """Get or create the default planner instance.
+
+    The singleton used to freeze ``use_llm`` from whichever request created
+    it first, so a later ``use_llm=true`` request silently got a rule-only
+    planner (and vice versa). The flag now follows each call.
+    """
     global _default_planner
     if _default_planner is None:
         _default_planner = AnalysisPlanner(use_llm=use_llm, openai_api_key=api_key)
+    else:
+        _default_planner.use_llm = use_llm
+        if api_key:
+            _default_planner.openai_api_key = api_key
     return _default_planner

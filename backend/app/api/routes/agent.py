@@ -57,6 +57,7 @@ class PlanRequest(BaseModel):
     query: str = Field(..., description="Natural language description of desired analysis")
     session_id: Optional[str] = Field(None, description="Session ID for data context")
     use_llm: bool = Field(False, description="Use LLM-based planner (requires API key)")
+    explain: bool = Field(False, description="Include a natural-language explanation of the planned workflow")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
 
 
@@ -67,6 +68,8 @@ class PlanResponse(BaseModel):
     steps: list
     estimated_time: str
     notes: list
+    clarification_needed: bool = False
+    explanation: Optional[Dict[str, Any]] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -295,6 +298,11 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
 
         plan = await planner.plan(request.query, context)
 
+        explanation = None
+        if request.explain:
+            from app.services.workflow_explainer import explain_plan
+            explanation = explain_plan(plan)
+
         return PlanResponse(
             query=plan.query,
             n_steps=len(plan.steps),
@@ -310,6 +318,8 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
             ],
             estimated_time=plan.estimated_time,
             notes=plan.notes,
+            clarification_needed=plan.clarification_needed,
+            explanation=explanation,
         )
 
     except Exception as e:
@@ -818,6 +828,7 @@ class InterpretFullRequest(BaseModel):
     results: Dict[str, Any] = Field(..., description="Dictionary of all analysis results keyed by analysis name")
     metadata_summary: Optional[Dict[str, Any]] = Field(default=None, description="Optional session metadata (n_samples, groups, etc.)")
     question: Optional[str] = Field(default=None, description="User specific question for targeted interpretation")
+    use_llm: bool = Field(default=True, description="Allow the LLM narrative rewrite when an API key is configured; false returns the deterministic KB-only interpretation")
 
 
 class InterpretFullResponse(BaseModel):
@@ -860,6 +871,7 @@ async def interpret_full(request: InterpretFullRequest):
             all_results=request.results,
             metadata_summary=request.metadata_summary,
             question=request.question,
+            use_llm=request.use_llm,
         )
         return InterpretFullResponse(**result)
     except Exception as e:

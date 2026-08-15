@@ -55,6 +55,44 @@ class KimiLLMClient:
     def available(self) -> bool:
         return self._available
 
+    def chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 6000,
+        timeout: int = 60,
+    ) -> Optional[str]:
+        """Generic chat completion. Returns the assistant message content,
+        or None on any failure (caller decides the fallback)."""
+        if not self.available:
+            return None
+        import urllib.request
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            # kimi-for-coding is a reasoning model: it rejects any
+            # temperature other than 1 and its reasoning tokens count
+            # against max_tokens, so omit temperature and keep headroom.
+            "max_tokens": max_tokens,
+        }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            response = json.loads(r.read().decode())
+        return response["choices"][0]["message"]["content"]
+
     def enhance_narrative(
         self,
         integrated_narrative: str,
@@ -113,37 +151,14 @@ class KimiLLMClient:
         user_prompt = "\n\n".join(sections)
 
         try:
-            import urllib.request
-            payload = {
+            content = self.chat(system_prompt, user_prompt, max_tokens=6000)
+            if content is None:
+                return {"enhanced_narrative": integrated_narrative, "llm_used": False}
+            return {
+                "enhanced_narrative": content,
+                "llm_used": True,
                 "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                # kimi-for-coding is a reasoning model: it rejects any
-                # temperature other than 1 and its reasoning tokens count
-                # against max_tokens, so omit temperature and keep headroom.
-                "max_tokens": 6000,
             }
-            if self.temperature is not None:
-                payload["temperature"] = self.temperature
-            req = urllib.request.Request(
-                f"{self.base_url}/chat/completions",
-                data=json.dumps(payload).encode(),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as r:
-                response = json.loads(r.read().decode())
-                content = response["choices"][0]["message"]["content"]
-                return {
-                    "enhanced_narrative": content,
-                    "llm_used": True,
-                    "model": self.model,
-                }
         except Exception as e:
             logger.warning(f"LLM enhancement failed: {e}. Falling back to KB-only.")
             return {"enhanced_narrative": integrated_narrative, "llm_used": False, "error": str(e)}
