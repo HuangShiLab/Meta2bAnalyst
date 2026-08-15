@@ -43,6 +43,9 @@ plotly>=5.18.0
 kaleido>=0.2.1
 # PDF report generation (app/services/export_service.py).
 reportlab>=4.0.0
+# PDF text extraction for literature mining + plan-from-paper
+# (scripts/literature_mine.py, app/services/paper_to_plan.py).
+pypdf>=4.0.0
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 python-json-logger>=2.0.0
