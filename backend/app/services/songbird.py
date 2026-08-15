@@ -148,11 +148,19 @@ def _fit_sklearn_multinomial(
     logloss = log_loss(y, y_prob)
     
     # Extract coefficients
-    # shape: (n_classes, n_features)
+    # shape: (n_classes, n_features) for true multinomial fits
     coefs = model.coef_
     intercepts = model.intercept_
-    
+
     classes = model.classes_
+
+    # sklearn fits binary problems as a single log-odds vector (coef_ has one
+    # row) regardless of multi_class. Expand to the per-class layout the
+    # result table expects: with +/- w/2 the class log-ratio equals sklearn's
+    # binary log-odds w.x, so coefficient *differences* stay interpretable.
+    if len(classes) == 2 and coefs.shape[0] == 1:
+        coefs = np.vstack([-coefs / 2.0, coefs / 2.0])
+        intercepts = np.concatenate([-intercepts / 2.0, intercepts / 2.0])
     
     # Approximate p-values using Wald test (coef / std_err)
     # Standard error approximated via Fisher information
