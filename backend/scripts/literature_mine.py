@@ -186,6 +186,11 @@ def mine_paper(pdf_path: Path, client_cfg: Dict[str, str], max_chars: int) -> Di
     except (TimeoutError, OSError) as e:
         logger.warning("%s: %s - retrying with half the context", pdf_path.name, e)
         raw = chat_json(client_cfg, _prompt(max_chars // 2))
+    except json.JSONDecodeError:
+        # Reasoning tokens can exhaust max_tokens and leave content empty;
+        # retry with a larger budget and an explicit JSON reminder.
+        logger.warning("%s: non-JSON response - retrying with larger budget", pdf_path.name)
+        raw = chat_json(client_cfg, _prompt(max_chars // 2) + "\n\nReturn ONLY the JSON object.", max_tokens=16000)
 
     associations = []
     for a in raw.get("associations") or []:
