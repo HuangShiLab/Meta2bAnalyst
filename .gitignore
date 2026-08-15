@@ -92,17 +92,17 @@ test_payload.json
 !backend/app/knowledge/**/*.tsv
 *.biom
 
-# Temporary scripts
-add_*.py
-check_*.py
-fix_*.py
-run_*.py
-test_*.py
-build_test_payload.py
-generate_*.py
-expand_kb.py
-translate_ui.py
-start_backend.*
+# Temporary scripts (repo root only - do NOT ignore backend/tests/)
+/add_*.py
+/check_*.py
+/fix_*.py
+/run_*.py
+/test_*.py
+/build_test_payload.py
+/generate_*.py
+/expand_kb.py
+/translate_ui.py
+/start_backend.*
 
 # Report outputs
 report_images/
