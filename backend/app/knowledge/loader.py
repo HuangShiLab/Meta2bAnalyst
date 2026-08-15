@@ -75,7 +75,10 @@ class KnowledgeBase:
                 main_products TEXT,      -- JSON list
                 known_functions TEXT,    -- JSON list
                 health_markers TEXT,     -- JSON list
-                notes TEXT
+                notes TEXT,
+                disease_evidence TEXT,   -- JSON map condition -> [evidence]
+                rank TEXT,
+                auto_generated INTEGER
             )
             """
         )
@@ -93,8 +96,9 @@ class KnowledgeBase:
             self._db.execute(
                 """
                 INSERT INTO taxon (name, gram_stain, oxygen, main_products,
-                                   known_functions, health_markers, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   known_functions, health_markers, notes,
+                                   disease_evidence, rank, auto_generated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -104,6 +108,9 @@ class KnowledgeBase:
                     json.dumps(info.get("known_functions", [])),
                     json.dumps(info.get("health_markers", [])),
                     info.get("notes"),
+                    json.dumps(info.get("disease_evidence", {})),
+                    info.get("rank"),
+                    1 if info.get("auto_generated") else 0,
                 ),
             )
             for disease, association in info.get("disease_associations", {}).items():
@@ -222,6 +229,40 @@ class KnowledgeBase:
             "health_markers": json.loads(row["health_markers"]),
             "notes": row["notes"],
             "disease_associations": associations,
+            "disease_evidence": json.loads(row["disease_evidence"] or "{}"),
+            "rank": row["rank"],
+            "auto_generated": bool(row["auto_generated"]),
+        }
+
+    # ── Keyword search ────────────────────────────────────────────
+
+    def search(self, keyword: str, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+        """Keyword search across taxa and diseases.
+
+        Matches (case-insensitive substring) against taxon name,
+        known_functions, main_products, health_markers, notes, and against
+        disease name + description. Returns ``{"taxa": [...], "diseases": [...]}``
+        each capped at ``limit`` entries.
+        """
+        kw = f"%{str(keyword).strip()}%"
+        if kw == "%%":
+            return {"taxa": [], "diseases": []}
+        taxon_rows = self._query(
+            """
+            SELECT * FROM taxon
+            WHERE name LIKE ? OR known_functions LIKE ? OR main_products LIKE ?
+               OR health_markers LIKE ? OR notes LIKE ?
+            LIMIT ?
+            """,
+            (kw, kw, kw, kw, kw, limit),
+        )
+        disease_rows = self._query(
+            "SELECT * FROM disease WHERE name LIKE ? OR description LIKE ? LIMIT ?",
+            (kw, kw, limit),
+        )
+        return {
+            "taxa": [self._row_to_taxon(r) for r in taxon_rows],
+            "diseases": [self._row_to_disease(r) for r in disease_rows],
         }
 
     # ── Method ──────────────────────────────────────────────────────
@@ -298,15 +339,17 @@ class KnowledgeBase:
                 indicators TEXT,      -- JSON list
                 key_genera TEXT,      -- JSON list
                 functional_shift TEXT, -- JSON list
-                description TEXT
+                description TEXT,
+                literature_evidence TEXT  -- JSON map taxon -> [evidence]
             )
             """
         )
         for name, info in data.items():
             self._db.execute(
                 """
-                INSERT INTO disease (name, indicators, key_genera, functional_shift, description)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO disease (name, indicators, key_genera, functional_shift,
+                                     description, literature_evidence)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -314,22 +357,27 @@ class KnowledgeBase:
                     json.dumps(info.get("key_genera", [])),
                     json.dumps(info.get("functional_shift", [])),
                     info.get("description"),
+                    json.dumps(info.get("literature_evidence", {})),
                 ),
             )
         self._db.commit()
 
-    def lookup_disease(self, name: str) -> Optional[Dict[str, Any]]:
-        rows = self._query("SELECT * FROM disease WHERE name = ?", (name,))
-        if not rows:
-            return None
-        row = rows[0]
+    @staticmethod
+    def _row_to_disease(row: sqlite3.Row) -> Dict[str, Any]:
         return {
             "name": row["name"],
             "indicators": json.loads(row["indicators"]),
             "key_genera": json.loads(row["key_genera"]),
             "functional_shift": json.loads(row["functional_shift"]),
             "description": row["description"],
+            "literature_evidence": json.loads(row["literature_evidence"] or "{}"),
         }
+
+    def lookup_disease(self, name: str) -> Optional[Dict[str, Any]]:
+        rows = self._query("SELECT * FROM disease WHERE name = ?", (name,))
+        if not rows:
+            return None
+        return self._row_to_disease(rows[0])
 
 
 # ── Module-level convenience functions ─────────────────────────────
@@ -362,6 +410,11 @@ def lookup_method(name: str) -> Optional[Dict[str, Any]]:
 
 def lookup_disease(name: str) -> Optional[Dict[str, Any]]:
     return get_knowledge_base().lookup_disease(name)
+
+
+def search_knowledge(keyword: str, limit: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+    """Keyword search across taxa and diseases; returns {"taxa": [...], "diseases": [...]}."""
+    return get_knowledge_base().search(keyword, limit=limit)
 
 
 def get_all_diseases() -> List[str]:

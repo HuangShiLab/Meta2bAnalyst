@@ -233,6 +233,28 @@ async def get_module_detail(module_name: str):
     }
 
 
+@router.get("/knowledge/search", response_model=Dict[str, Any])
+async def search_knowledge_base(q: str, limit: int = 20):
+    """Keyword search across the taxon and disease knowledge bases.
+
+    Matches against taxon names, known functions, products, health markers,
+    notes, and disease names/descriptions. Returns up to ``limit`` taxa and
+    ``limit`` diseases.
+    """
+    if not q or not q.strip():
+        raise HTTPException(status_code=422, detail="Query parameter 'q' must be non-empty")
+    limit = max(1, min(limit, 100))
+    from app.knowledge.loader import search_knowledge
+    results = search_knowledge(q.strip(), limit=limit)
+    return {
+        "query": q.strip(),
+        "taxa": results["taxa"],
+        "diseases": results["diseases"],
+        "n_taxa": len(results["taxa"]),
+        "n_diseases": len(results["diseases"]),
+    }
+
+
 # ───────────────────────────────────────────────────────────────
 # PLANNING
 # ───────────────────────────────────────────────────────────────
