@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from app.database import get_db
 from sqlalchemy.orm import Session as DBSession
 from fastapi.responses import StreamingResponse
@@ -169,6 +169,7 @@ class WritePaperRequest(BaseModel):
     )
     results_summary: Dict[str, Any] = Field(..., description="Study descriptors and key findings")
     context: Optional[Dict[str, Any]] = Field(default=None, description="Additional narrative context")
+    use_llm: bool = Field(default=False, description="Rewrite the rule-based draft into publication prose with the LLM (preserves all facts and [placeholders])")
 
 
 class WritePaperResponse(BaseModel):
@@ -184,6 +185,7 @@ class FullPaperRequest(BaseModel):
     """L5 – Request full manuscript draft."""
     results_summary: Dict[str, Any] = Field(..., description="Study metadata and findings")
     context: Optional[Dict[str, Any]] = Field(default=None, description="Additional context")
+    use_llm: bool = Field(default=False, description="LLM-polish every section (slower; one call per section)")
 
 
 class FullPaperResponse(BaseModel):
@@ -325,6 +327,70 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Planning failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Planning failed: {str(e)}")
+
+
+@router.post("/plan-from-paper", response_model=Dict[str, Any])
+async def plan_from_paper(
+    file: Optional[UploadFile] = File(None),
+    paper_text: Optional[str] = Form(None),
+):
+    """Reproduce a paper's analysis workflow as a confirmed-before-execute plan.
+
+    Accepts a PDF upload (methods text is extracted) or pasted text. Returns
+    the proposed plan plus a natural-language explanation; the client must
+    show it and only call /agent/execute after the user confirms.
+    """
+    from app.services.paper_to_plan import extract_pdf_text, plan_from_text
+    from app.services.workflow_explainer import explain_plan
+
+    source = None
+    if file is not None:
+        raw = await file.read()
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=422, detail="Only PDF uploads are supported")
+        if raw[:4] != b"%PDF":
+            raise HTTPException(status_code=422,
+                                detail="Uploaded file is not a valid PDF (HTML error page?)")
+        try:
+            text = extract_pdf_text(raw)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Could not extract PDF text: {e}")
+        source = {"type": "pdf", "filename": file.filename, "chars": len(text)}
+    elif paper_text and paper_text.strip():
+        text = paper_text.strip()
+        source = {"type": "text", "chars": len(text)}
+    else:
+        raise HTTPException(status_code=422,
+                            detail="Provide either a PDF file or paper_text")
+
+    try:
+        result = plan_from_text(text)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"plan-from-paper failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"LLM analysis failed: {e}")
+
+    plan = result["plan"]
+    return {
+        "plan": {
+            "query": plan.query,
+            "n_steps": len(plan.steps),
+            "steps": [
+                {"id": s.id, "module": s.module, "params": s.params,
+                 "depends_on": s.depends_on, "description": s.description}
+                for s in plan.steps
+            ],
+            "estimated_time": plan.estimated_time,
+            "notes": plan.notes,
+        },
+        "explanation": explain_plan(plan),
+        "analyses_found": result["analyses_found"],
+        "unmatched_analyses": result["unmatched_analyses"],
+        "source": source,
+        "confirmed": False,
+        "next_step": "Review the plan; POST /agent/execute with this plan to run it.",
+    }
 
 
 # ───────────────────────────────────────────────────────────────
@@ -778,6 +844,7 @@ async def write_paper_section(request: WritePaperRequest):
             section_type=request.section_type,
             results_summary=request.results_summary,
             context=request.context,
+            use_llm=request.use_llm,
         )
         return WritePaperResponse(**result)
     except Exception as e:
@@ -813,6 +880,7 @@ async def write_full_paper(request: FullPaperRequest):
         result = engine.write_full_paper(
             results_summary=request.results_summary,
             context=request.context,
+            use_llm=request.use_llm,
         )
         return FullPaperResponse(**result)
     except Exception as e:

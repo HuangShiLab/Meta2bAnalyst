@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { useSessionStore } from "@/stores/sessionStore";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { AgentChat } from "@/components/shared/AgentChat";
@@ -43,6 +44,26 @@ interface ChatMessage {
   events?: ExecutionEvent[];
   plotData?: PlotlyFigure;
   stats?: Record<string, unknown>;
+  /** Plan is shown but not executed until the user confirms. */
+  pendingConfirmation?: boolean;
+  /** Analyses found in an uploaded paper that have no platform module. */
+  unmatchedAnalyses?: string[];
+}
+
+interface PlanExplanationStep {
+  order: number;
+  id: string;
+  module: string;
+  what: string;
+  parameters: string;
+  inputs: string;
+}
+
+interface PlanExplanation {
+  overview: string;
+  n_steps: number;
+  clarification_needed: boolean;
+  steps: PlanExplanationStep[];
 }
 
 interface ExecutionPlan {
@@ -50,6 +71,8 @@ interface ExecutionPlan {
   steps: { id: string; module: string; description: string; params?: Record<string, any> }[];
   estimated_time: string;
   notes: string[];
+  clarification_needed?: boolean;
+  explanation?: PlanExplanation | null;
 }
 
 interface ExecutionEvent {
@@ -202,8 +225,10 @@ export function Agent() {
   ]);
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [useLlm, setUseLlm] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const paperInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -221,54 +246,11 @@ export function Agent() {
     };
   }, []);
 
-  const sendMessage = useCallback(
-    async (query: string) => {
-      if (!query.trim() || isRunning || !sessionId) return;
-
-      const userMsg: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        content: query,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      setInput("");
-      setIsRunning(true);
-
+  const executePlan = useCallback(
+    async (planData: ExecutionPlan, agentMsgId: string) => {
       abortRef.current = new AbortController();
-
       try {
-        // Step 1: Get plan
-        const planRes = await fetch("/api/v1/agent/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, session_id: sessionId, use_llm: false }),
-          signal: abortRef.current.signal,
-        });
-
-        if (!planRes.ok) {
-          const err = await planRes.json();
-          throw new Error(err.detail || "Planning failed");
-        }
-
-        const planData: ExecutionPlan = await planRes.json();
-
-        const agentMsgId = `agent-${Date.now()}`;
-        const agentMsg: ChatMessage = {
-          id: agentMsgId,
-          role: "agent",
-          content:
-            `I'll execute **${planData.n_steps} steps** (${planData.estimated_time}):\n\n` +
-            planData.steps
-              .map((s, i) => `${i + 1}. **${s.module}**${s.description ? ` — ${s.description}` : ""}`)
-              .join("\n"),
-          timestamp: new Date(),
-          plan: planData,
-          events: [],
-        };
-        setMessages((prev) => [...prev, agentMsg]);
-
-        // Step 2: Execute with POST-based SSE
+        // Execute with POST-based SSE
         const execRes = await fetch("/api/v1/agent/execute", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -345,7 +327,143 @@ export function Agent() {
         abortRef.current = null;
       }
     },
-    [isRunning, sessionId]
+    [sessionId]
+  );
+
+  /** Attach a proposed plan to the chat and wait for explicit confirmation. */
+  const proposePlan = useCallback((planData: ExecutionPlan, extra?: Partial<ChatMessage>) => {
+    const agentMsg: ChatMessage = {
+      id: `agent-${Date.now()}`,
+      role: "agent",
+      content:
+        planData.clarification_needed
+          ? `⚠️ ${planData.notes[0] || "I could not determine which analysis you want."}\n\n` +
+            (planData.notes[1] || "Please rephrase with a specific goal.")
+          : `Proposed plan: **${planData.n_steps} steps** (${planData.estimated_time}). ` +
+            `Review the steps below, then confirm to run:`,
+      timestamp: new Date(),
+      plan: planData.clarification_needed ? undefined : planData,
+      pendingConfirmation: !planData.clarification_needed,
+      events: [],
+      ...extra,
+    };
+    setMessages((prev) => [...prev, agentMsg]);
+    setIsRunning(false);
+  }, []);
+
+  const confirmPlan = useCallback(
+    (msgId: string) => {
+      const msg = messages.find((m) => m.id === msgId);
+      if (!msg?.plan || isRunning) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, pendingConfirmation: false, content: m.content.replace("Review the steps below, then confirm to run:", "Executing:") }
+            : m
+        )
+      );
+      setIsRunning(true);
+      executePlan(msg.plan, msgId);
+    },
+    [messages, isRunning, executePlan]
+  );
+
+  const cancelPlan = useCallback((msgId: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId
+          ? { ...m, pendingConfirmation: false, plan: undefined, content: m.content + "\n\n🚫 Cancelled — plan was not executed." }
+          : m
+      )
+    );
+  }, []);
+
+  const sendMessage = useCallback(
+    async (query: string) => {
+      if (!query.trim() || isRunning || !sessionId) return;
+
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: query,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+      setIsRunning(true);
+
+      abortRef.current = new AbortController();
+
+      try {
+        // Step 1: Get plan (with explanation so the user can review it)
+        const planRes = await fetch("/api/v1/agent/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, session_id: sessionId, use_llm: useLlm, explain: true }),
+          signal: abortRef.current.signal,
+        });
+
+        if (!planRes.ok) {
+          const err = await planRes.json();
+          throw new Error(err.detail || "Planning failed");
+        }
+
+        const planData: ExecutionPlan = await planRes.json();
+
+        // Step 2: propose and wait for the user to confirm before executing
+        proposePlan(planData);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        const errorMsg = err instanceof Error ? err.message : "Planning failed";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `error-${Date.now()}`,
+            role: "system",
+            content: `❌ Error: ${errorMsg}`,
+            timestamp: new Date(),
+          },
+        ]);
+        setIsRunning(false);
+      }
+    },
+    [isRunning, sessionId, useLlm, proposePlan]
+  );
+
+  /** Upload a paper PDF; the backend reconstructs its analysis workflow as a
+   *  proposed plan the user can confirm. */
+  const handlePaperUpload = useCallback(
+    async (file: File) => {
+      if (isRunning || !sessionId) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: `user-${Date.now()}`, role: "user", content: `📄 Reproduce analysis from paper: ${file.name}`, timestamp: new Date() },
+      ]);
+      setIsRunning(true);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/v1/agent/plan-from-paper", { method: "POST", body: form });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Paper analysis failed");
+        }
+        const data = await res.json();
+        const planData: ExecutionPlan = {
+          ...data.plan,
+          explanation: data.explanation,
+        };
+        proposePlan(planData, { unmatchedAnalyses: data.unmatched_analyses || [] });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Paper analysis failed";
+        setMessages((prev) => [
+          ...prev,
+          { id: `error-${Date.now()}`, role: "system", content: `❌ Error: ${errorMsg}`, timestamp: new Date() },
+        ]);
+        setIsRunning(false);
+      }
+    },
+    [isRunning, sessionId, proposePlan]
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -383,6 +501,32 @@ export function Agent() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <Switch checked={useLlm} onCheckedChange={setUseLlm} />
+              LLM assist
+            </label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={isNoSession || isRunning}
+              onClick={() => paperInputRef.current?.click()}
+              title="Upload a paper PDF; its analysis workflow is reconstructed as a plan you can confirm"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Plan from paper
+            </Button>
+            <input
+              ref={paperInputRef}
+              type="file"
+              accept=".pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handlePaperUpload(f);
+                e.target.value = "";
+              }}
+            />
             <Button
               variant={mode === "execute" ? "default" : "outline"}
               size="sm"
@@ -445,30 +589,89 @@ export function Agent() {
                 {/* Execution Progress */}
                 {msg.plan && (
                   <div className="mt-3 space-y-2">
-                    <Progress value={getProgress(msg)} className="h-2" />
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.plan.steps.map((step) => {
-                        const event = msg.events?.find((e) => e.step_id === step.id);
-                        const isComplete = event?.event_type === "step_complete";
-                        const isError = event?.event_type === "step_error";
-                        return (
-                          <Badge
-                            key={step.id}
-                            variant={isComplete ? "default" : isError ? "destructive" : "outline"}
-                            className={cn(
-                              "text-xs",
-                              isComplete && MODULE_COLORS[step.module]
-                                ? `${MODULE_COLORS[step.module]} text-white border-0`
-                                : ""
-                            )}
-                          >
-                            {isComplete && <CheckCircle2 className="mr-1 h-3 w-3" />}
-                            {isError && <XCircle className="mr-1 h-3 w-3" />}
-                            {step.module}
-                          </Badge>
-                        );
-                      })}
-                    </div>
+                    {msg.pendingConfirmation ? (
+                      <div className="space-y-2">
+                        {msg.plan.explanation && (
+                          <p className="text-xs text-muted-foreground italic">
+                            {msg.plan.explanation.overview}
+                          </p>
+                        )}
+                        <div className="space-y-1.5">
+                          {(msg.plan.explanation?.steps ||
+                            msg.plan.steps.map((s, i) => ({
+                              order: i + 1,
+                              id: s.id,
+                              module: s.module,
+                              what: s.description || "",
+                              parameters: s.params ? JSON.stringify(s.params) : "default parameters",
+                              inputs: "",
+                            } as PlanExplanationStep))
+                          ).map((step) => (
+                            <div key={step.id} className="rounded-md border border-border bg-white/60 px-2.5 py-1.5">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-[10px] shrink-0">
+                                  {step.order}
+                                </Badge>
+                                <span className="text-xs font-semibold">{step.module}</span>
+                                <Badge variant="secondary" className="text-[10px] ml-auto">
+                                  {step.parameters}
+                                </Badge>
+                              </div>
+                              {step.what && (
+                                <p className="mt-1 text-[11px] text-slate-600 leading-snug">{step.what}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {msg.unmatchedAnalyses && msg.unmatchedAnalyses.length > 0 && (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 p-2">
+                            <p className="text-[11px] font-semibold text-amber-800">
+                              In the paper but not available on this platform:
+                            </p>
+                            <ul className="mt-0.5 list-disc pl-4 text-[11px] text-amber-700">
+                              {msg.unmatchedAnalyses.map((a, i) => <li key={i}>{a}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        <div className="flex gap-2 pt-1">
+                          <Button size="sm" className="gap-1.5" onClick={() => confirmPlan(msg.id)}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Confirm & Run
+                          </Button>
+                          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => cancelPlan(msg.id)}>
+                            <XCircle className="h-3.5 w-3.5" />
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <Progress value={getProgress(msg)} className="h-2" />
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.plan.steps.map((step) => {
+                            const event = msg.events?.find((e) => e.step_id === step.id);
+                            const isComplete = event?.event_type === "step_complete";
+                            const isError = event?.event_type === "step_error";
+                            return (
+                              <Badge
+                                key={step.id}
+                                variant={isComplete ? "default" : isError ? "destructive" : "outline"}
+                                className={cn(
+                                  "text-xs",
+                                  isComplete && MODULE_COLORS[step.module]
+                                    ? `${MODULE_COLORS[step.module]} text-white border-0`
+                                    : ""
+                                )}
+                              >
+                                {isComplete && <CheckCircle2 className="mr-1 h-3 w-3" />}
+                                {isError && <XCircle className="mr-1 h-3 w-3" />}
+                                {step.module}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 

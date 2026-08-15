@@ -1034,6 +1034,7 @@ class PaperWriter:
         section_type: str,
         results_summary: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
+        use_llm: bool = False,
     ) -> PaperSection:
         """
         Generate a single manuscript section.
@@ -1048,10 +1049,60 @@ class PaperWriter:
             key_findings, etc.).
         context : dict, optional
             Additional narrative context (study_name, journal_target, etc.).
+        use_llm : bool
+            When True and an LLM key is configured, the rule-based draft is
+            rewritten into publication-grade prose. The LLM is instructed to
+            preserve every fact, statistic, and [BRACKETED PLACEHOLDER]; the
+            rewritten text replaces the draft only on success.
         """
         ctx = context or {}
         handler = getattr(self, f"_write_{section_type.lower()}", self._write_generic)
-        return handler(results_summary, ctx)
+        section = handler(results_summary, ctx)
+        if use_llm:
+            section = self._llm_polish(section, results_summary, ctx)
+        return section
+
+    @staticmethod
+    def _llm_polish(section: PaperSection, rs: Dict[str, Any], ctx: Dict[str, Any]) -> PaperSection:
+        """Rewrite a rule-drafted section with the LLM. Falls back to the
+        original draft on any failure -- the rule text is always valid."""
+        from app.services.llm_client import get_llm_client
+
+        client = get_llm_client()
+        if not client.available:
+            return section
+        system_prompt = (
+            "You are a senior scientific writer for microbiome journals. "
+            "Rewrite the draft manuscript section below into polished, "
+            "publication-grade prose.\n"
+            "Hard rules:\n"
+            "1. Preserve EVERY factual claim, number, statistic, and taxon name exactly.\n"
+            "2. Preserve every [BRACKETED PLACEHOLDER] verbatim -- they mark facts "
+            "the platform cannot observe; do not invent values for them.\n"
+            "3. Do not add citations, results, or claims not present in the draft.\n"
+            "4. Improve flow, transitions, and academic tone. Markdown is allowed.\n"
+            "5. Respond in the same language as the draft."
+        )
+        user_prompt = (
+            f"## SECTION: {section.title}\n\n{section.content}\n\n"
+            f"## STUDY CONTEXT (for tone only, do not introduce new facts)\n"
+            f"title: {rs.get('title', ctx.get('study_name', ''))}\n"
+            f"journal target: {ctx.get('journal_target', 'general microbiome journal')}"
+        )
+        try:
+            content = client.chat(system_prompt, user_prompt, max_tokens=8000, timeout=180)
+        except Exception as e:
+            logger.warning(f"LLM section polish failed: {e}; keeping rule draft")
+            return section
+        if not content or len(content) < len(section.content) * 0.5:
+            return section
+        return PaperSection(
+            section_type=section.section_type,
+            title=section.title,
+            content=content.strip(),
+            word_count=len(content.split()),
+            keywords=section.keywords,
+        )
 
     def write_full_paper(
         self,
@@ -1505,6 +1556,7 @@ class AgentEngine:
         section_type: str,
         results_summary: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
+        use_llm: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate a publication-ready manuscript section.
@@ -1513,6 +1565,7 @@ class AgentEngine:
             section_type=section_type,
             results_summary=results_summary,
             context=context,
+            use_llm=use_llm,
         )
         return {
             "section_type": section.section_type,
@@ -1526,11 +1579,14 @@ class AgentEngine:
         self,
         results_summary: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
+        use_llm: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate all standard manuscript sections at once.
         """
-        sections = self.paper_writer.write_full_paper(results_summary, context)
+        sections = {}
+        for st in ("abstract", "introduction", "methods", "results", "discussion", "conclusions"):
+            sections[st] = self.paper_writer.write_section(st, results_summary, context, use_llm=use_llm)
         return {
             "title": results_summary.get("title", context.get("study_name", "Untitled") if context else "Untitled"),
             "sections": {
