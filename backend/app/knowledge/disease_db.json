@@ -1,374 +1,572 @@
 {
-  "dysbiosis": {
-    "indicators": [
-      "alpha_diversity_decreased",
-      "Firmicutes_Bacteroidetes_ratio_increased",
-      "beneficial_species_depleted",
-      "pathobionts_enriched",
-      "SCFA_producers_reduced"
-    ],
-    "key_genera": [
-      "Faecalibacterium",
-      "Akkermansia",
-      "Roseburia",
-      "Bacteroides",
-      "Prevotella",
-      "Ruminococcus",
-      "Escherichia",
-      "Fusobacterium",
-      "Desulfovibrio"
-    ],
-    "functional_shift": [
-      "SCFA_decrease",
-      "LPS_increase",
-      "bile_acid_dysregulation",
-      "mucin_degradation_increase",
-      "proteolytic_activity_increase"
-    ],
-    "description": "Dysbiosis refers to an imbalanced microbial community structure associated with disease. Typically characterized by reduced diversity, loss of beneficial SCFA producers, and expansion of facultative anaerobes or pathobionts."
-  },
-  "inflammatory_bowel_disease": {
-    "indicators": [
-      "Faecalibacterium_prausnitzii_depleted",
-      "Roseburia_intestinalis_depleted",
-      "Ruminococcus_gnavus_enriched",
-      "Enterobacteriaceae_expansion",
-      "alpha_diversity_decreased"
-    ],
-    "key_genera": [
-      "Faecalibacterium",
-      "Roseburia",
-      "Ruminococcus",
-      "Escherichia",
-      "Klebsiella",
-      "Fusobacterium",
-      "Desulfovibrio"
-    ],
-    "functional_shift": [
-      "butyrate_production_decreased",
-      "hydrogen_sulfide_increased",
-      "mucin_degradation_increased",
-      "proteolytic_activity_increased",
-      "primary_bile_acid_accumulation"
-    ],
-    "description": "IBD (Crohn's disease and ulcerative colitis) is consistently associated with depletion of butyrate producers (Faecalibacterium, Roseburia) and expansion of mucin-degrading or pro-inflammatory species."
-  },
-  "obesity": {
-    "indicators": [
-      "Firmicutes_Bacteroidetes_ratio_increased",
-      "Akkermansia_muciniphila_depleted",
-      "Christensenella_minuta_depleted",
-      "methanogen_abundance_mixed",
-      "SCFA_production_altered"
-    ],
-    "key_genera": [
-      "Akkermansia",
-      "Christensenella",
-      "Faecalibacterium",
-      "Bacteroides",
-      "Prevotella",
-      "Methanobrevibacter"
-    ],
-    "functional_shift": [
-      "SCFA_profile_shifted",
-      "LPS_translocation_increased",
-      "energy_harvest_enhanced",
-      "bile_acid_pool_altered"
-    ],
-    "description": "Obesity-associated microbiome typically shows altered Firmicutes/Bacteroidetes ratio, depletion of Akkermansia and Christensenella, and enhanced energy harvest capacity."
-  },
-  "type_2_diabetes": {
-    "indicators": [
-      "butyrate_producers_depleted",
-      "LPS_translocation_markers",
-      "branched_chain_amino_acids_elevated",
-      "Akkermansia_depleted",
-      "insulin_sensitivity_correlates"
-    ],
-    "key_genera": [
-      "Akkermansia",
-      "Faecalibacterium",
-      "Roseburia",
-      "Eubacterium",
-      "Bifidobacterium",
-      "Prevotella"
-    ],
-    "functional_shift": [
-      "butyrate_decreased",
-      "propionate_altered",
-      "BCAA_synthesis_increased",
-      "LPS_bioactivity_increased",
-      "bile_acid_signaling_impaired"
-    ],
-    "description": "T2D microbiome is characterized by reduced butyrate producers, increased LPS biosynthesis, and elevated branched-chain amino acid production. Akkermansia depletion is a consistent finding."
-  },
-  "colorectal_cancer": {
-    "indicators": [
-      "Fusobacterium_nucleatum_enriched",
-      "Bacteroides_fragilis_ETBF_enriched",
-      "Faecalibacterium_depleted",
-      "Streptococcus_gallolyticus_group_associated",
-      "polyketide_synthase_markers"
-    ],
-    "key_genera": [
-      "Fusobacterium",
-      "Bacteroides",
-      "Faecalibacterium",
-      "Streptococcus",
-      "Enterococcus",
-      "Porphyromonas"
-    ],
-    "functional_shift": [
-      "FadA_adhesion_increased",
-      "BFT_toxin_increased",
-      "DNA_damage_increased",
-      "inflammatory_microenvironment",
-      "oncogenic_signaling_activated"
-    ],
-    "description": "CRC shows enrichment of oral-origin bacteria (Fusobacterium, Parvimonas) and enterotoxigenic Bacteroides fragilis. These promote tumor progression via immune evasion and DNA damage."
-  },
-  "antibiotic_associated_diarrhea": {
-    "indicators": [
-      "diversity_collapsed",
-      "Clostridioides_difficile_expansion",
-      "bile_acid_metabolism_disrupted",
-      "colonization_resistance_lost",
-      "facultative_anaerobes_expanded"
-    ],
-    "key_genera": [
-      "Clostridioides",
-      "Enterococcus",
-      "Escherichia",
-      "Klebsiella",
-      "Bacteroides",
-      "Barnesiella"
-    ],
-    "functional_shift": [
-      "bile_acid_deconjugation_altered",
-      "SCFA_production_decreased",
-      "colonization_resistance_impaired",
-      "pathogen_susceptibility_increased"
-    ],
-    "description": "Antibiotic exposure collapses gut diversity, depletes colonization resistance, and enables C. difficile expansion. Loss of bile acid-metabolizing species is a key mechanism."
-  },
-  "depression_gut_brain_axis": {
-    "indicators": [
-      "Coprococcus_depleted",
-      "Dialister_depleted",
-      "Faecalibacterium_depleted",
-      "inflammatory_taxa_enriched",
-      "tryptophan_metabolism_altered"
-    ],
-    "key_genera": [
-      "Coprococcus",
-      "Dialister",
-      "Faecalibacterium",
-      "Escherichia",
-      "Klebsiella",
-      "Desulfovibrio"
-    ],
-    "functional_shift": [
-      "tryptophan_serotonin_pathway_altered",
-      "GABA_production_changed",
-      "inflammatory_cytokines_increased",
-      "vagal_signaling_modulated"
-    ],
-    "description": "Depression is associated with depletion of butyrate producers and specific genera (Coprococcus, Dialister). The gut-brain axis involves tryptophan metabolism, SCFA signaling, and vagal afferents."
-  },
-  "allergic_diseases": {
-    "indicators": [
-      "bifidobacteria_depleted_infancy",
-      "Lactobacillus_depleted_infancy",
-      "Clostridia_cluster_IV_XIVa_reduced",
-      "diversity_lower_infancy",
-      " acetate_propionate_ratio_altered"
-    ],
-    "key_genera": [
-      "Bifidobacterium",
-      "Lactobacillus",
-      "Bacteroides",
-      "Akkermansia",
-      "Clostridium"
-    ],
-    "functional_shift": [
-      "Treg_induction_impaired",
-      "IgA_production_altered",
-      "SCFA_immunomodulation_reduced",
-      "epithelial_barrier_weakened"
-    ],
-    "description": "Early-life microbiome maturation delays are linked to asthma, eczema, and food allergies. Depletion of Bifidobacterium and specific Clostridia clusters impairs immune tolerance development."
-  },
-  "liver_disease": {
-    "indicators": [
-      "Enterobacteriaceae_expansion",
-      "Streptococcus_spp_increased",
-      "autochthonous_taxa_decreased",
-      "oral_bacteria_translocated",
-      "endotoxemia_markers"
-    ],
-    "key_genera": [
-      "Klebsiella",
-      "Escherichia",
-      "Streptococcus",
-      "Veillonella",
-      "Enterococcus",
-      "Prevotella"
-    ],
-    "functional_shift": [
-      "endotoxin_translocation_increased",
-      "ethanol_production_increased",
-      "bile_acid_metabolism_disrupted",
-      "hepatic_inflammation_exacerbated"
-    ],
-    "description": "Cirrhosis and NAFLD show gut dysbiosis with oral bacteria translocation, Enterobacteriaceae expansion, and endotoxemia driving hepatic inflammation."
-  },
-  "cardiovascular_disease": {
-    "indicators": [
-      "Collinsella_aerofaciens_enriched",
-      "Streptococcus_spp_enriched",
-      "Prevotella_co abundance_varies",
-      "TMAO_production_pathway_active",
-      "butyrate_producers_depleted"
-    ],
-    "key_genera": [
-      "Collinsella",
-      "Streptococcus",
-      "Prevotella",
-      "Desulfovibrio",
-      "Faecalibacterium",
-      "Roseburia"
-    ],
-    "functional_shift": [
-      "TMAO_synthesis_increased",
-      "secondary_bile_acids_altered",
-      "LPS_inflammation_chronic",
-      "SCFA_cardioprotection_reduced"
-    ],
-    "description": "CVD microbiome contributes via trimethylamine N-oxide (TMAO) production from choline/carnitine, chronic LPS-driven inflammation, and altered bile acid metabolism."
-  },
-  "non_alcoholic_fatty_liver_disease": {
-    "indicators": [
-      "Enterobacteriaceae_expansion",
-      "Streptococcus_spp_increased",
-      "Eubacterium_rectale_depleted",
-      "ethanol_producers_enriched",
-      "endotoxemia_markers"
-    ],
-    "key_genera": [
-      "Escherichia",
-      "Klebsiella",
-      "Streptococcus",
-      "Eubacterium",
-      "Faecalibacterium",
-      "Akkermansia"
-    ],
-    "functional_shift": [
-      "endotoxin_translocation_increased",
-      "ethanol_production_increased",
-      "bile_acid_metabolism_disrupted",
-      "SCFA_cardioprotection_reduced",
-      "lipopolysaccharide_signaling_chronic"
-    ],
-    "description": "NAFLD/NASH microbiome shows increased ethanol-producing bacteria, Enterobacteriaceae expansion, and decreased butyrate producers. Endotoxemia drives hepatic inflammation and steatosis progression."
-  },
-  "alzheimers_disease": {
-    "indicators": [
-      "Bacteroides_depleted",
-      "Firmicutes_Bacteroidetes_ratio_increased",
-      "anti_inflammatory_species_reduced",
-      "pro_inflammatory_taxa_enriched",
-      "gut_barrier_dysfunction"
-    ],
-    "key_genera": [
-      "Bacteroides",
-      "Faecalibacterium",
-      "Prevotella",
-      "Escherichia",
-      "Klebsiella",
-      "Desulfovibrio"
-    ],
-    "functional_shift": [
-      "amyloid_secretion_by_bacteria",
-      "LPS_inflammation_chronic",
-      "butyrate_neuroprotection_decreased",
-      "gut_brain_axis_dysregulated",
-      "short_chain_fatty_acids_reduced"
-    ],
-    "description": "AD microbiome shows reduced Bacteroides and butyrate producers, increased pro-inflammatory taxa. Bacterial amyloid and LPS may contribute to neuroinflammation via gut-brain axis."
-  },
-  "parkinsons_disease": {
-    "indicators": [
-      "Prevotella_depleted",
-      "Enterobacteriaceae_expansion",
-      "anti_inflammatory_species_reduced",
-      "alpha_synuclein_fibril_formation",
-      "constipation_associated_changes"
-    ],
-    "key_genera": [
-      "Prevotella",
-      "Faecalibacterium",
-      "Roseburia",
-      "Escherichia",
-      "Klebsiella",
-      "Akkermansia"
-    ],
-    "functional_shift": [
-      "gut_motility_slowed",
-      "LPS_inflammation_chronic",
-      "SCFA_production_decreased",
-      "alpha_synuclein_aggregation",
-      "dopamine_metabolism_altered"
-    ],
-    "description": "PD is associated with reduced Prevotella and butyrate producers, Enterobacteriaceae expansion. Gut dysfunction precedes motor symptoms. Alpha-synuclein pathology may originate in the gut."
-  },
-  "rheumatoid_arthritis": {
-    "indicators": [
-      "Prevotella_copri_enriched",
-      "Collinsella_aerofaciens_enriched",
-      "Faecalibacterium_depleted",
-      "oral_bacteria_translocated",
-      "citullinating_bacteria_present"
-    ],
-    "key_genera": [
-      "Prevotella",
-      "Collinsella",
-      "Faecalibacterium",
-      "Lactobacillus",
-      "Porphyromonas",
-      "Streptococcus"
-    ],
-    "functional_shift": [
-      "citullination_by_bacteria",
-      "T_cell_activation_increased",
-      "anti_inflammatory_SCFA_reduced",
-      "oral_gut_axis_dysregulated",
-      "autoantibody_production_triggered"
-    ],
-    "description": "RA shows enrichment of Prevotella copri and Collinsella aerofaciens. Bacterial citrullination may trigger anti-CCP autoantibodies. Oral-gut axis involvement is increasingly recognized."
-  },
-  "chronic_kidney_disease": {
-    "indicators": [
-      "uremic_toxin_producers_enriched",
-      "p_cresol_producers_increased",
-      "indoxyl_sulfate_producers_increased",
-      "beneficial_species_depleted",
-      "gut_barrier_dysfunction"
-    ],
-    "key_genera": [
-      "Escherichia",
-      "Klebsiella",
-      "Enterococcus",
-      "Faecalibacterium",
-      "Roseburia",
-      "Akkermansia"
-    ],
-    "functional_shift": [
-      "uremic_toxin_production_increased",
-      "p_cresol_sulfate_increased",
-      "indoxyl_sulfate_increased",
-      "trimethylamine_oxide_increased",
-      "gut_barrier_disrupted"
-    ],
-    "description": "CKD microbiome produces uremic toxins (p-cresol sulfate, indoxyl sulfate, TMAO) that the failing kidneys cannot clear. Beneficial SCFA producers are depleted."
-  }
+ "dysbiosis": {
+  "indicators": [
+   "alpha_diversity_decreased",
+   "Firmicutes_Bacteroidetes_ratio_increased",
+   "beneficial_species_depleted",
+   "pathobionts_enriched",
+   "SCFA_producers_reduced"
+  ],
+  "key_genera": [
+   "Faecalibacterium",
+   "Akkermansia",
+   "Roseburia",
+   "Bacteroides",
+   "Prevotella",
+   "Ruminococcus",
+   "Escherichia",
+   "Fusobacterium",
+   "Desulfovibrio"
+  ],
+  "functional_shift": [
+   "SCFA_decrease",
+   "LPS_increase",
+   "bile_acid_dysregulation",
+   "mucin_degradation_increase",
+   "proteolytic_activity_increase"
+  ],
+  "description": "Dysbiosis refers to an imbalanced microbial community structure associated with disease. Typically characterized by reduced diversity, loss of beneficial SCFA producers, and expansion of facultative anaerobes or pathobionts."
+ },
+ "inflammatory_bowel_disease": {
+  "indicators": [
+   "Faecalibacterium_prausnitzii_depleted",
+   "Roseburia_intestinalis_depleted",
+   "Ruminococcus_gnavus_enriched",
+   "Enterobacteriaceae_expansion",
+   "alpha_diversity_decreased"
+  ],
+  "key_genera": [
+   "Faecalibacterium",
+   "Roseburia",
+   "Ruminococcus",
+   "Escherichia",
+   "Klebsiella",
+   "Fusobacterium",
+   "Desulfovibrio"
+  ],
+  "functional_shift": [
+   "butyrate_production_decreased",
+   "hydrogen_sulfide_increased",
+   "mucin_degradation_increased",
+   "proteolytic_activity_increased",
+   "primary_bile_acid_accumulation"
+  ],
+  "description": "IBD (Crohn's disease and ulcerative colitis) is consistently associated with depletion of butyrate producers (Faecalibacterium, Roseburia) and expansion of mucin-degrading or pro-inflammatory species."
+ },
+ "obesity": {
+  "indicators": [
+   "Firmicutes_Bacteroidetes_ratio_increased",
+   "Akkermansia_muciniphila_depleted",
+   "Christensenella_minuta_depleted",
+   "methanogen_abundance_mixed",
+   "SCFA_production_altered"
+  ],
+  "key_genera": [
+   "Akkermansia",
+   "Christensenella",
+   "Faecalibacterium",
+   "Bacteroides",
+   "Prevotella",
+   "Methanobrevibacter"
+  ],
+  "functional_shift": [
+   "SCFA_profile_shifted",
+   "LPS_translocation_increased",
+   "energy_harvest_enhanced",
+   "bile_acid_pool_altered"
+  ],
+  "description": "Obesity-associated microbiome typically shows altered Firmicutes/Bacteroidetes ratio, depletion of Akkermansia and Christensenella, and enhanced energy harvest capacity."
+ },
+ "type_2_diabetes": {
+  "indicators": [
+   "butyrate_producers_depleted",
+   "LPS_translocation_markers",
+   "branched_chain_amino_acids_elevated",
+   "Akkermansia_depleted",
+   "insulin_sensitivity_correlates"
+  ],
+  "key_genera": [
+   "Akkermansia",
+   "Faecalibacterium",
+   "Roseburia",
+   "Eubacterium",
+   "Bifidobacterium",
+   "Prevotella"
+  ],
+  "functional_shift": [
+   "butyrate_decreased",
+   "propionate_altered",
+   "BCAA_synthesis_increased",
+   "LPS_bioactivity_increased",
+   "bile_acid_signaling_impaired"
+  ],
+  "description": "T2D microbiome is characterized by reduced butyrate producers, increased LPS biosynthesis, and elevated branched-chain amino acid production. Akkermansia depletion is a consistent finding."
+ },
+ "colorectal_cancer": {
+  "indicators": [
+   "Fusobacterium_nucleatum_enriched",
+   "Bacteroides_fragilis_ETBF_enriched",
+   "Faecalibacterium_depleted",
+   "Streptococcus_gallolyticus_group_associated",
+   "polyketide_synthase_markers"
+  ],
+  "key_genera": [
+   "Fusobacterium",
+   "Bacteroides",
+   "Faecalibacterium",
+   "Streptococcus",
+   "Enterococcus",
+   "Porphyromonas"
+  ],
+  "functional_shift": [
+   "FadA_adhesion_increased",
+   "BFT_toxin_increased",
+   "DNA_damage_increased",
+   "inflammatory_microenvironment",
+   "oncogenic_signaling_activated"
+  ],
+  "description": "CRC shows enrichment of oral-origin bacteria (Fusobacterium, Parvimonas) and enterotoxigenic Bacteroides fragilis. These promote tumor progression via immune evasion and DNA damage."
+ },
+ "antibiotic_associated_diarrhea": {
+  "indicators": [
+   "diversity_collapsed",
+   "Clostridioides_difficile_expansion",
+   "bile_acid_metabolism_disrupted",
+   "colonization_resistance_lost",
+   "facultative_anaerobes_expanded"
+  ],
+  "key_genera": [
+   "Clostridioides",
+   "Enterococcus",
+   "Escherichia",
+   "Klebsiella",
+   "Bacteroides",
+   "Barnesiella"
+  ],
+  "functional_shift": [
+   "bile_acid_deconjugation_altered",
+   "SCFA_production_decreased",
+   "colonization_resistance_impaired",
+   "pathogen_susceptibility_increased"
+  ],
+  "description": "Antibiotic exposure collapses gut diversity, depletes colonization resistance, and enables C. difficile expansion. Loss of bile acid-metabolizing species is a key mechanism."
+ },
+ "depression_gut_brain_axis": {
+  "indicators": [
+   "Coprococcus_depleted",
+   "Dialister_depleted",
+   "Faecalibacterium_depleted",
+   "inflammatory_taxa_enriched",
+   "tryptophan_metabolism_altered"
+  ],
+  "key_genera": [
+   "Coprococcus",
+   "Dialister",
+   "Faecalibacterium",
+   "Escherichia",
+   "Klebsiella",
+   "Desulfovibrio"
+  ],
+  "functional_shift": [
+   "tryptophan_serotonin_pathway_altered",
+   "GABA_production_changed",
+   "inflammatory_cytokines_increased",
+   "vagal_signaling_modulated"
+  ],
+  "description": "Depression is associated with depletion of butyrate producers and specific genera (Coprococcus, Dialister). The gut-brain axis involves tryptophan metabolism, SCFA signaling, and vagal afferents."
+ },
+ "allergic_diseases": {
+  "indicators": [
+   "bifidobacteria_depleted_infancy",
+   "Lactobacillus_depleted_infancy",
+   "Clostridia_cluster_IV_XIVa_reduced",
+   "diversity_lower_infancy",
+   " acetate_propionate_ratio_altered"
+  ],
+  "key_genera": [
+   "Bifidobacterium",
+   "Lactobacillus",
+   "Bacteroides",
+   "Akkermansia",
+   "Clostridium"
+  ],
+  "functional_shift": [
+   "Treg_induction_impaired",
+   "IgA_production_altered",
+   "SCFA_immunomodulation_reduced",
+   "epithelial_barrier_weakened"
+  ],
+  "description": "Early-life microbiome maturation delays are linked to asthma, eczema, and food allergies. Depletion of Bifidobacterium and specific Clostridia clusters impairs immune tolerance development."
+ },
+ "liver_disease": {
+  "indicators": [
+   "Enterobacteriaceae_expansion",
+   "Streptococcus_spp_increased",
+   "autochthonous_taxa_decreased",
+   "oral_bacteria_translocated",
+   "endotoxemia_markers"
+  ],
+  "key_genera": [
+   "Klebsiella",
+   "Escherichia",
+   "Streptococcus",
+   "Veillonella",
+   "Enterococcus",
+   "Prevotella"
+  ],
+  "functional_shift": [
+   "endotoxin_translocation_increased",
+   "ethanol_production_increased",
+   "bile_acid_metabolism_disrupted",
+   "hepatic_inflammation_exacerbated"
+  ],
+  "description": "Cirrhosis and NAFLD show gut dysbiosis with oral bacteria translocation, Enterobacteriaceae expansion, and endotoxemia driving hepatic inflammation."
+ },
+ "cardiovascular_disease": {
+  "indicators": [
+   "Collinsella_aerofaciens_enriched",
+   "Streptococcus_spp_enriched",
+   "Prevotella_co abundance_varies",
+   "TMAO_production_pathway_active",
+   "butyrate_producers_depleted"
+  ],
+  "key_genera": [
+   "Collinsella",
+   "Streptococcus",
+   "Prevotella",
+   "Desulfovibrio",
+   "Faecalibacterium",
+   "Roseburia"
+  ],
+  "functional_shift": [
+   "TMAO_synthesis_increased",
+   "secondary_bile_acids_altered",
+   "LPS_inflammation_chronic",
+   "SCFA_cardioprotection_reduced"
+  ],
+  "description": "CVD microbiome contributes via trimethylamine N-oxide (TMAO) production from choline/carnitine, chronic LPS-driven inflammation, and altered bile acid metabolism."
+ },
+ "non_alcoholic_fatty_liver_disease": {
+  "indicators": [
+   "Enterobacteriaceae_expansion",
+   "Streptococcus_spp_increased",
+   "Eubacterium_rectale_depleted",
+   "ethanol_producers_enriched",
+   "endotoxemia_markers"
+  ],
+  "key_genera": [
+   "Escherichia",
+   "Klebsiella",
+   "Streptococcus",
+   "Eubacterium",
+   "Faecalibacterium",
+   "Akkermansia"
+  ],
+  "functional_shift": [
+   "endotoxin_translocation_increased",
+   "ethanol_production_increased",
+   "bile_acid_metabolism_disrupted",
+   "SCFA_cardioprotection_reduced",
+   "lipopolysaccharide_signaling_chronic"
+  ],
+  "description": "NAFLD/NASH microbiome shows increased ethanol-producing bacteria, Enterobacteriaceae expansion, and decreased butyrate producers. Endotoxemia drives hepatic inflammation and steatosis progression."
+ },
+ "alzheimers_disease": {
+  "indicators": [
+   "Bacteroides_depleted",
+   "Firmicutes_Bacteroidetes_ratio_increased",
+   "anti_inflammatory_species_reduced",
+   "pro_inflammatory_taxa_enriched",
+   "gut_barrier_dysfunction"
+  ],
+  "key_genera": [
+   "Bacteroides",
+   "Faecalibacterium",
+   "Prevotella",
+   "Escherichia",
+   "Klebsiella",
+   "Desulfovibrio"
+  ],
+  "functional_shift": [
+   "amyloid_secretion_by_bacteria",
+   "LPS_inflammation_chronic",
+   "butyrate_neuroprotection_decreased",
+   "gut_brain_axis_dysregulated",
+   "short_chain_fatty_acids_reduced"
+  ],
+  "description": "AD microbiome shows reduced Bacteroides and butyrate producers, increased pro-inflammatory taxa. Bacterial amyloid and LPS may contribute to neuroinflammation via gut-brain axis."
+ },
+ "parkinsons_disease": {
+  "indicators": [
+   "Prevotella_depleted",
+   "Enterobacteriaceae_expansion",
+   "anti_inflammatory_species_reduced",
+   "alpha_synuclein_fibril_formation",
+   "constipation_associated_changes"
+  ],
+  "key_genera": [
+   "Prevotella",
+   "Faecalibacterium",
+   "Roseburia",
+   "Escherichia",
+   "Klebsiella",
+   "Akkermansia"
+  ],
+  "functional_shift": [
+   "gut_motility_slowed",
+   "LPS_inflammation_chronic",
+   "SCFA_production_decreased",
+   "alpha_synuclein_aggregation",
+   "dopamine_metabolism_altered"
+  ],
+  "description": "PD is associated with reduced Prevotella and butyrate producers, Enterobacteriaceae expansion. Gut dysfunction precedes motor symptoms. Alpha-synuclein pathology may originate in the gut."
+ },
+ "rheumatoid_arthritis": {
+  "indicators": [
+   "Prevotella_copri_enriched",
+   "Collinsella_aerofaciens_enriched",
+   "Faecalibacterium_depleted",
+   "oral_bacteria_translocated",
+   "citullinating_bacteria_present"
+  ],
+  "key_genera": [
+   "Prevotella",
+   "Collinsella",
+   "Faecalibacterium",
+   "Lactobacillus",
+   "Porphyromonas",
+   "Streptococcus"
+  ],
+  "functional_shift": [
+   "citullination_by_bacteria",
+   "T_cell_activation_increased",
+   "anti_inflammatory_SCFA_reduced",
+   "oral_gut_axis_dysregulated",
+   "autoantibody_production_triggered"
+  ],
+  "description": "RA shows enrichment of Prevotella copri and Collinsella aerofaciens. Bacterial citrullination may trigger anti-CCP autoantibodies. Oral-gut axis involvement is increasingly recognized."
+ },
+ "chronic_kidney_disease": {
+  "indicators": [
+   "uremic_toxin_producers_enriched",
+   "p_cresol_producers_increased",
+   "indoxyl_sulfate_producers_increased",
+   "beneficial_species_depleted",
+   "gut_barrier_dysfunction"
+  ],
+  "key_genera": [
+   "Escherichia",
+   "Klebsiella",
+   "Enterococcus",
+   "Faecalibacterium",
+   "Roseburia",
+   "Akkermansia"
+  ],
+  "functional_shift": [
+   "uremic_toxin_production_increased",
+   "p_cresol_sulfate_increased",
+   "indoxyl_sulfate_increased",
+   "trimethylamine_oxide_increased",
+   "gut_barrier_disrupted"
+  ],
+  "description": "CKD microbiome produces uremic toxins (p-cresol sulfate, indoxyl sulfate, TMAO) that the failing kidneys cannot clear. Beneficial SCFA producers are depleted."
+ },
+ "irritable_bowel_syndrome": {
+  "indicators": [
+   "alpha_diversity_mildly_decreased",
+   "Bifidobacterium_depleted",
+   "Dorea_enriched",
+   "Ruminococcus_gnavus_enriched",
+   "SCFA_producers_reduced"
+  ],
+  "key_genera": [
+   "Bifidobacterium",
+   "Faecalibacterium",
+   "Dorea",
+   "Ruminococcus",
+   "Lactobacillus"
+  ],
+  "functional_shift": [
+   "SCFA_profile_shifted",
+   "bile_acid_pool_altered",
+   "gut_barrier_permeability_increased"
+  ],
+  "description": "IBS microbiome shows mild diversity loss, depletion of Bifidobacterium and butyrate producers, and enrichment of gas-producing Dorea/Ruminococcus; subtype (IBS-D vs IBS-C) profiles differ."
+ },
+ "metabolic_syndrome": {
+  "indicators": [
+   "Akkermansia_muciniphila_depleted",
+   "gene_richness_decreased",
+   "LPS_producers_enriched",
+   "SCFA_production_altered"
+  ],
+  "key_genera": [
+   "Akkermansia",
+   "Faecalibacterium",
+   "Bacteroides",
+   "Escherichia",
+   "Prevotella"
+  ],
+  "functional_shift": [
+   "metabolic_endotoxemia",
+   "LPS_translocation_increased",
+   "energy_harvest_enhanced"
+  ],
+  "description": "Metabolic syndrome associates with low bacterial gene richness, Akkermansia depletion, and a pro-inflammatory LPS-rich community driving metabolic endotoxemia."
+ },
+ "hypertension": {
+  "indicators": [
+   "SCFA_producers_reduced",
+   "Prevotella_enriched",
+   "Klebsiella_enriched",
+   "gut_barrier_permeability_increased"
+  ],
+  "key_genera": [
+   "Prevotella",
+   "Klebsiella",
+   "Faecalibacterium",
+   "Roseburia"
+  ],
+  "functional_shift": [
+   "SCFA_profile_shifted",
+   "TMAO_pathway_altered",
+   "LPS_translocation_increased"
+  ],
+  "description": "Hypertension cohorts show reduced SCFA-producing taxa and enrichment of Prevotella/Klebsiella; acetate and butyrate signalling via GPR41/43/109A modulates blood pressure."
+ },
+ "autism_spectrum_disorder": {
+  "indicators": [
+   "alpha_diversity_decreased",
+   "Prevotella_depleted",
+   "Clostridium_enriched",
+   "Desulfovibrio_enriched"
+  ],
+  "key_genera": [
+   "Prevotella",
+   "Clostridium",
+   "Desulfovibrio",
+   "Bifidobacterium",
+   "Bacteroides"
+  ],
+  "functional_shift": [
+   "SCFA_profile_shifted",
+   "tryptophan_metabolism_altered",
+   "p_cresol_increased"
+  ],
+  "description": "ASD gut profiles commonly show Prevotella depletion and Clostridium/Desulfovibrio enrichment; associations are confounded by diet selectivity and remain an active research area."
+ },
+ "multiple_sclerosis": {
+  "indicators": [
+   "Prevotella_depleted",
+   "Akkermansia_muciniphila_mixed",
+   "Methanobrevibacter_mixed",
+   "SCFA_producers_reduced"
+  ],
+  "key_genera": [
+   "Prevotella",
+   "Akkermansia",
+   "Faecalibacterium",
+   "Methanobrevibacter"
+  ],
+  "functional_shift": [
+   "SCFA_profile_shifted",
+   "Th17_Treg_balance_altered"
+  ],
+  "description": "Multiple sclerosis is linked to reduced SCFA producers and altered Prevotella/Akkermansia balance, with proposed effects on Th17/Treg immune homeostasis."
+ },
+ "celiac_disease": {
+  "indicators": [
+   "Bifidobacterium_depleted",
+   "Bacteroides_fragilis_altered",
+   "Escherichia_enriched",
+   "alpha_diversity_mildly_decreased"
+  ],
+  "key_genera": [
+   "Bifidobacterium",
+   "Bacteroides",
+   "Escherichia",
+   "Lactobacillus"
+  ],
+  "functional_shift": [
+   "gut_barrier_permeability_increased",
+   "gluten_peptide_metabolism_altered"
+  ],
+  "description": "Celiac disease shows Bifidobacterium depletion and shifts in gluten-metabolising taxa; a gluten-free diet itself reshapes the community and confounds untreated-disease signatures."
+ },
+ "asthma": {
+  "indicators": [
+   "Lachnospira_depleted",
+   "Faecalibacterium_depleted",
+   "early_life_diversity_decreased",
+   "Candida_enriched"
+  ],
+  "key_genera": [
+   "Lachnospira",
+   "Faecalibacterium",
+   "Veillonella",
+   "Roseburia"
+  ],
+  "functional_shift": [
+   "SCFA_production_reduced",
+   "Th2_skewing"
+  ],
+  "description": "Early-life depletion of Lachnospira/Faecalibacterium/Roseburia/Veillonella (the 'LRVF' signature) predicts asthma risk; SCFA-mediated immune regulation is the leading mechanistic hypothesis."
+ },
+ "bacterial_vaginosis": {
+  "indicators": [
+   "Lactobacillus_crispatus_depleted",
+   "Gardnerella_enriched",
+   "Prevotella_enriched",
+   "community_diversity_increased"
+  ],
+  "key_genera": [
+   "Lactobacillus",
+   "Gardnerella",
+   "Prevotella",
+   "Sneathia"
+  ],
+  "functional_shift": [
+   "lactate_production_reduced",
+   "sialidase_activity_increased",
+   "mucin_degradation_increased"
+  ],
+  "description": "BV is a shift from Lactobacillus crispatus dominance (CST I) to a diverse anaerobic community with Gardnerella biofilms; vaginal pH rises as lactate falls."
+ },
+ "periodontal_disease": {
+  "indicators": [
+   "Porphyromonas_gingivalis_enriched",
+   "Fusobacterium_nucleatum_enriched",
+   "community_diversity_increased"
+  ],
+  "key_genera": [
+   "Porphyromonas",
+   "Fusobacterium",
+   "Treponema",
+   "Tannerella"
+  ],
+  "functional_shift": [
+   "proteolysis_increased",
+   "gingival_inflammation",
+   "biofilm_dysbiosis"
+  ],
+  "description": "Periodontitis features a keystone-pathogen-driven dysbiotic biofilm (red complex: P. gingivalis, T. forsythia, T. denticola) sustained by inflammation-derived nutrients."
+ },
+ "dental_caries": {
+  "indicators": [
+   "Streptococcus_mutans_enriched",
+   "acid_producers_enriched",
+   "community_diversity_decreased"
+  ],
+  "key_genera": [
+   "Streptococcus",
+   "Lactobacillus",
+   "Scardovia",
+   "Prevotella"
+  ],
+  "functional_shift": [
+   "acid_production_increased",
+   "enamel_deminineralisation"
+  ],
+  "description": "Carious lesions are dominated by acidogenic/aciduric taxa (S. mutans, Lactobacillus, Scardovia) whose fermentation acids demineralise enamel."
+ }
 }
