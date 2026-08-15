@@ -114,7 +114,10 @@ async def analyze_multisite_pcoa(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # get_dataframe returns the canonical features x samples orientation
+    # (app/services/orientation.py); every multisite service documents its input
+    # as samples x taxa, so transpose once here.
+    df = get_dataframe(session_id, db).T
     metadata_df = get_metadata_df(session_id, db)
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required for multi-site analysis')
@@ -172,7 +175,10 @@ async def analyze_multisite_permanova(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # get_dataframe returns the canonical features x samples orientation
+    # (app/services/orientation.py); every multisite service documents its input
+    # as samples x taxa, so transpose once here.
+    df = get_dataframe(session_id, db).T
     metadata_df = get_metadata_df(session_id, db)
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
@@ -228,7 +234,10 @@ async def analyze_multisite_markers(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # get_dataframe returns the canonical features x samples orientation
+    # (app/services/orientation.py); every multisite service documents its input
+    # as samples x taxa, so transpose once here.
+    df = get_dataframe(session_id, db).T
     metadata_df = get_metadata_df(session_id, db)
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
@@ -285,7 +294,10 @@ async def analyze_multisite_temporal(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # get_dataframe returns the canonical features x samples orientation
+    # (app/services/orientation.py); every multisite service documents its input
+    # as samples x taxa, so transpose once here.
+    df = get_dataframe(session_id, db).T
     metadata_df = get_metadata_df(session_id, db)
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
@@ -342,7 +354,10 @@ async def analyze_multisite_network_compare(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # get_dataframe returns the canonical features x samples orientation
+    # (app/services/orientation.py); every multisite service documents its input
+    # as samples x taxa, so transpose once here.
+    df = get_dataframe(session_id, db).T
     metadata_df = get_metadata_df(session_id, db)
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')

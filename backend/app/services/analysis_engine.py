@@ -15,11 +15,139 @@ from scipy import sparse
 from scipy.spatial.distance import braycurtis, cityblock, euclidean, jaccard, pdist, squareform
 from scipy.stats import f_oneway, mannwhitneyu, pearsonr, spearmanr, ttest_ind, wilcoxon
 from sklearn.decomposition import PCA
+from sklearn.isotonic import IsotonicRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.manifold import MDS
 from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────── Shared statistics helpers
+
+
+def adjust_pvalues(pvalues, method: str = 'fdr_bh') -> np.ndarray:
+    """Multiple-testing correction.
+
+    Delegates to ``statsmodels.stats.multitest.multipletests``. The previous
+    hand-rolled version computed ``p * n / rank`` without enforcing
+    monotonicity, which yields adjusted p-values that are not non-decreasing in
+    p and are anti-conservative for ties.
+
+    Args:
+        pvalues: 1-D array-like of raw p-values (NaNs are passed through).
+        method: Any method name accepted by statsmodels ('fdr_bh', 'fdr_by',
+            'bonferroni', 'holm', ...). 'BH'/'bh' are accepted as aliases.
+
+    Returns:
+        Array of adjusted p-values, same length and order as the input.
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    alias = {
+        'bh': 'fdr_bh', 'BH': 'fdr_bh', 'fdr': 'fdr_bh',
+        'by': 'fdr_by', 'BY': 'fdr_by',
+        'bonferroni': 'bonferroni', 'holm': 'holm', 'none': None,
+    }
+    method = alias.get(method, method)
+
+    p = np.asarray(pvalues, dtype=float)
+    out = np.full(p.shape, np.nan)
+    if p.size == 0:
+        return out
+    if method is None:
+        return p.copy()
+
+    finite = np.isfinite(p)
+    if not finite.any():
+        return out
+    out[finite] = multipletests(p[finite], method=method)[1]
+    return out
+
+
+def resolve_comparison_groups(
+    metadata_df: pd.DataFrame,
+    group_column: str,
+    comparisons: Optional[List[str]] = None,
+    reference_group: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Decide which two groups a pairwise test should compare.
+
+    Previously this was ``g1, g2 = groups[0], groups[1]`` -- the first two values
+    pandas happened to return, so users could not choose the contrast, the
+    fold-change direction flipped if the metadata rows were reordered, and a
+    seven-timepoint study silently compared only two of them.
+
+    Args:
+        metadata_df: Metadata indexed by sample ID.
+        group_column: Column holding the grouping variable.
+        comparisons: Explicit group labels. Two labels select the contrast; one
+            label is compared against ``reference_group``.
+        reference_group: Baseline group (becomes ``group1``).
+
+    Returns:
+        ``(reference, test)``. Fold changes are computed as test / reference.
+
+    Raises:
+        ValueError: If the requested groups do not exist, or if the column has
+            more than two groups and no explicit selection was made.
+    """
+    available = [str(g) for g in pd.unique(metadata_df[group_column].dropna())]
+    available_sorted = sorted(available)
+
+    def _require(label: str) -> str:
+        if str(label) not in available:
+            raise ValueError(
+                f"Group '{label}' is not present in metadata column "
+                f"'{group_column}'. Available groups: {', '.join(available_sorted)}."
+            )
+        return str(label)
+
+    selected = [str(c) for c in (comparisons or []) if str(c).strip()]
+
+    if len(selected) >= 2:
+        if len(selected) > 2:
+            raise ValueError(
+                f"Pairwise testing compares exactly 2 groups, but {len(selected)} "
+                f"were given: {', '.join(selected)}."
+            )
+        g1, g2 = _require(selected[0]), _require(selected[1])
+        if reference_group and str(reference_group) == g2:
+            g1, g2 = g2, g1  # honour an explicit baseline
+        if g1 == g2:
+            raise ValueError("The two groups to compare must be different.")
+        return g1, g2
+
+    if len(selected) == 1:
+        if not reference_group:
+            raise ValueError(
+                f"Only one group ('{selected[0]}') was selected. Provide a second "
+                f"group in `comparisons`, or set `reference_group` as the baseline. "
+                f"Available groups: {', '.join(available_sorted)}."
+            )
+        return _require(reference_group), _require(selected[0])
+
+    if reference_group:
+        ref = _require(reference_group)
+        others = [g for g in available_sorted if g != ref]
+        if len(others) != 1:
+            raise ValueError(
+                f"Column '{group_column}' has {len(available)} groups, so the group "
+                f"to compare against reference '{ref}' is ambiguous. Set "
+                f"`comparisons`. Available groups: {', '.join(available_sorted)}."
+            )
+        return ref, others[0]
+
+    if len(available) == 2:
+        # Sorted, not file order, so the fold-change direction is stable.
+        return available_sorted[0], available_sorted[1]
+
+    raise ValueError(
+        f"Column '{group_column}' has {len(available)} groups "
+        f"({', '.join(available_sorted)}); pairwise testing needs exactly 2. "
+        f"Set `comparisons` to the two groups you want to compare, e.g. "
+        f'"comparisons": ["{available_sorted[0]}", "{available_sorted[1]}"].'
+    )
 
 
 class AnalysisEngine:
@@ -83,32 +211,92 @@ class AnalysisEngine:
         return simpson
 
     def _calculate_chao1(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate Chao1 richness estimator."""
-        singletons = (df == 1).sum(axis=0)
-        doubletons = (df == 2).sum(axis=0)
-        observed = (df > 0).sum(axis=0)
-        chao1 = observed + (singletons ** 2) / (2 * (doubletons + 1e-10))
-        return chao1
+        """Calculate the bias-corrected Chao1 richness estimator.
+
+        Chao1 = S_obs + F1 * (F1 - 1) / (2 * (F2 + 1))
+
+        This is the bias-corrected form (Chao 1987), which is what vegan and
+        scikit-bio report by default and which stays finite when there are no
+        doubletons. The classic form S_obs + F1^2 / (2*F2) is undefined at
+        F2 = 0; guarding it with a 1e-10 epsilon (as this code previously did)
+        does not fix it -- it produces values on the order of 1e10 for any
+        sample without doubletons, which is common in sparse 2bRAD-M tables.
+        """
+        counts = df.round()  # F1/F2 are only meaningful for integer counts
+        singletons = (counts == 1).sum(axis=0).astype(float)
+        doubletons = (counts == 2).sum(axis=0).astype(float)
+        observed = (df > 0).sum(axis=0).astype(float)
+        return observed + singletons * (singletons - 1) / (2 * (doubletons + 1))
 
     def _calculate_ace(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate simplified ACE richness estimator."""
-        observed = (df > 0).sum(axis=0)
-        singletons = (df == 1).sum(axis=0)
-        doubletons = (df == 2).sum(axis=0)
-        # Simplified ACE: similar to Chao1 for rare species
-        ace = observed + (singletons * (singletons - 1)) / (2 * (doubletons + 1e-10))
-        return ace
+        """Calculate the ACE (Abundance-based Coverage Estimator) richness index.
+
+        ACE = S_abund + S_rare / C_ace + F1 / C_ace * gamma^2
+
+        with rare species defined as those with abundance <= 10, C_ace the
+        Good-Turing sample coverage, and gamma^2 the estimated coefficient of
+        variation of the rare-species abundances.
+
+        Returns S_obs when there are no rare species (ACE degenerates to the
+        observed richness), and NaN when every rare species is a singleton --
+        coverage is then 0 and ACE is genuinely undefined. scikit-bio raises in
+        that case; NaN is used here so one degenerate sample does not fail the
+        whole request, and so the value is never mistaken for an estimate.
+        """
+        counts = df.round()
+        rare_threshold = 10
+        ace_values = {}
+
+        for sample in counts.columns:
+            col = counts[sample]
+            col = col[col > 0]
+            if col.empty:
+                ace_values[sample] = 0.0
+                continue
+
+            rare = col[col <= rare_threshold]
+            s_abund = float((col > rare_threshold).sum())
+            s_rare = float(len(rare))
+            f1 = float((col == 1).sum())
+            n_rare = float(rare.sum())
+
+            if s_rare == 0:
+                # Nothing rare to extrapolate from: ACE == observed richness.
+                ace_values[sample] = float(len(col))
+                continue
+
+            coverage = 1.0 - f1 / n_rare if n_rare > 0 else 0.0
+            if coverage <= 0:
+                # All rare taxa are singletons -> ACE undefined (see docstring).
+                ace_values[sample] = float('nan')
+                continue
+
+            # Coefficient of variation of rare-species abundances.
+            sum_i_i_minus_1 = float(sum(i * (i - 1) * (rare == i).sum() for i in range(1, rare_threshold + 1)))
+            gamma_sq = max(
+                (s_rare / coverage) * sum_i_i_minus_1 / (n_rare * (n_rare - 1)) - 1.0
+                if n_rare > 1 else 0.0,
+                0.0,
+            )
+            ace_values[sample] = s_abund + s_rare / coverage + (f1 / coverage) * gamma_sq
+
+        return pd.Series(ace_values, index=counts.columns, dtype=float)
 
     def _calculate_observed(self, df: pd.DataFrame) -> pd.Series:
         """Calculate observed species richness."""
         return (df > 0).sum(axis=0)
 
     def _calculate_pielou(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate Pielou's evenness index."""
+        """Calculate Pielou's evenness index (Shannon / ln(richness)).
+
+        Evenness is undefined for samples with fewer than two observed
+        features: ln(1) = 0 makes the ratio 0/0. Those samples return NaN
+        rather than the +inf the previous ``+ 1e-10`` guard produced.
+        """
         shannon = self._calculate_shannon(df)
-        richness = self._calculate_observed(df)
-        evenness = shannon / np.log(richness + 1e-10)
-        return evenness
+        richness = self._calculate_observed(df).astype(float)
+        denom = np.log(richness.where(richness > 1))
+        return shannon / denom
 
     # ─────────────────────────────── Paged Result Helpers
 
@@ -243,7 +431,17 @@ class AnalysisEngine:
         }
         scipy_metric = metric_map.get(distance, 'braycurtis')
 
-        distances = pdist(df_t, metric=scipy_metric)
+        if scipy_metric == 'jaccard':
+            # Jaccard is a presence/absence metric. scipy's implementation on
+            # continuous input counts every position where the two vectors
+            # merely *differ*, so on abundance data almost every pair comes out
+            # near 1.0 regardless of which taxa are actually shared. Binarise
+            # first so the metric means what its name says.
+            values = (df_t.values > 0)
+            distances = pdist(values, metric='jaccard')
+        else:
+            distances = pdist(df_t.values, metric=scipy_metric)
+
         dist_matrix = squareform(distances)
         return pd.DataFrame(dist_matrix, index=df_t.index, columns=df_t.index)
 
@@ -292,18 +490,34 @@ class AnalysisEngine:
             else []
         )
 
-        # Create DataFrame
-        n_components = len(eigenvalues)
-        pc_cols = [f'PC{i+1}' for i in range(n_components)]
-        coords_df = pd.DataFrame(
-            coordinates, index=distance_matrix.index, columns=pc_cols
-        )
+        # Always expose at least PC1/PC2, zero-padded when the matrix is
+        # rank-deficient. A degenerate distance matrix (every sample identical,
+        # e.g. Jaccard on a table where all samples share all features) has no
+        # positive eigenvalues; returning a 0-column frame made every downstream
+        # plot raise KeyError('PC1') as an opaque 500.
+        n_positive = len(eigenvalues)
+        n_components = max(n_positive, 2)
+        pc_cols = [f'PC{i + 1}' for i in range(n_components)]
+        padded = np.zeros((len(distance_matrix.index), n_components))
+        if n_positive:
+            padded[:, :n_positive] = coordinates
+        coords_df = pd.DataFrame(padded, index=distance_matrix.index, columns=pc_cols)
 
-        return {
+        result = {
             'eigenvalues': eigenvalues.tolist(),
             'samples': coords_df,
-            'variance_explained': variance_explained,
+            'variance_explained': variance_explained + [0.0] * (n_components - n_positive),
         }
+        if n_positive == 0:
+            result['degenerate'] = True
+            result['warning'] = (
+                'All pairwise distances are zero, so the ordination carries no '
+                'information: every sample is identical under this distance metric. '
+                'This is typical of a presence/absence metric (jaccard) on a table '
+                'where all samples share all features -- use an abundance-weighted '
+                'metric such as Bray-Curtis instead.'
+            )
+        return result
 
     # ─────────────────────────────── NMDS
 
@@ -331,8 +545,36 @@ class AnalysisEngine:
             max_iter=500,
             n_init=10,
         )
+        # NOTE: the embedding itself is scikit-learn-version dependent (1.9's
+        # optimiser reaches a markedly lower-stress solution than 1.6 on the same
+        # input). The reported stress below always describes the embedding that
+        # was actually produced, so it stays interpretable either way.
         coordinates = mds.fit_transform(distance_matrix.values)
-        stress = float(mds.stress_)
+
+        # Kruskal stress-1, computed from the returned embedding rather than from
+        # ``mds.stress_``.
+        #
+        # Ecologists read NMDS stress against Kruskal's rules of thumb (<0.05
+        # excellent, <0.1 good, <0.2 usable, >0.2 suspect), which are defined for
+        #     stress-1 = sqrt( sum((d_fit - d_hat)^2) / sum(d_fit^2) )
+        # where d_hat are the disparities from a monotone regression of the
+        # observed dissimilarities onto the embedding distances.
+        #
+        # ``mds.stress_`` cannot be used for this: its meaning changed across
+        # scikit-learn versions (1.6 returns a raw sum of squares, 1.9 returns an
+        # already-normalised value under normalized_stress="auto"). Deriving
+        # stress-1 from it therefore produced a different number on every
+        # environment -- and on new scikit-learn it double-normalised, reporting
+        # 0.008 where the embedding's true stress-1 was 0.0023.
+        raw_stress = float(mds.stress_)
+        d_obs = squareform(distance_matrix.values, checks=False)
+        d_fit = pdist(coordinates)
+        denom = float(np.sum(d_fit ** 2))
+        if denom > 0:
+            disparities = IsotonicRegression().fit_transform(d_obs, d_fit)
+            stress_1 = float(np.sqrt(np.sum((d_fit - disparities) ** 2) / denom))
+        else:
+            stress_1 = float('nan')
 
         nmds_cols = [f'NMDS{i+1}' for i in range(n_components)]
         coords_df = pd.DataFrame(
@@ -341,7 +583,9 @@ class AnalysisEngine:
 
         return {
             'coordinates': coords_df,
-            'stress': stress,
+            'stress': stress_1,
+            'stress_type': 'kruskal_stress_1',
+            'raw_stress': raw_stress,
             'n_components': n_components,
         }
 
@@ -410,17 +654,7 @@ class AnalysisEngine:
 
         result_df = pd.DataFrame(results)
         if len(result_df) > 0:
-            # Benjamini-Hochberg FDR correction
-            from scipy.stats import rankdata
-
-            pvalues = result_df['pvalue'].values
-            n = len(pvalues)
-            if n > 0:
-                ranks = rankdata(pvalues, method='max')
-                padj = np.minimum(pvalues * n / ranks, 1.0)
-                result_df['padj'] = padj
-            else:
-                result_df['padj'] = pvalues
+            result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, 'fdr_bh')
             result_df = result_df.sort_values('pvalue')
 
         return result_df
@@ -473,16 +707,7 @@ class AnalysisEngine:
 
         result_df = pd.DataFrame(results)
         if len(result_df) > 0:
-            from scipy.stats import rankdata
-
-            pvalues = result_df['pvalue'].values
-            n = len(pvalues)
-            if n > 0:
-                ranks = rankdata(pvalues, method='max')
-                padj = np.minimum(pvalues * n / ranks, 1.0)
-                result_df['padj'] = padj
-            else:
-                result_df['padj'] = pvalues
+            result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, 'fdr_bh')
             result_df = result_df.sort_values('pvalue')
 
         return result_df
@@ -532,16 +757,7 @@ class AnalysisEngine:
 
         result_df = pd.DataFrame(results)
         if len(result_df) > 0:
-            from scipy.stats import rankdata
-
-            pvalues = result_df['pvalue'].values
-            n = len(pvalues)
-            if n > 0:
-                ranks = rankdata(pvalues, method='max')
-                padj = np.minimum(pvalues * n / ranks, 1.0)
-                result_df['padj'] = padj
-            else:
-                result_df['padj'] = pvalues
+            result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, 'fdr_bh')
             result_df = result_df.sort_values('pvalue')
 
         return result_df
@@ -554,28 +770,43 @@ class AnalysisEngine:
         metadata: pd.DataFrame,
         group_var: str,
         n_permutations: int = 999,
+        random_seed: int = 42,
     ) -> dict:
         """PERMANOVA (Permutational Multivariate Analysis of Variance).
 
-        Custom implementation using F-statistic on group centroids.
+        Anderson (2001) partitioning of the distance matrix into within- and
+        between-group sums of squares, with a label-permutation test.
 
         Args:
             distance_matrix: Square distance matrix.
             metadata: Metadata DataFrame with grouping variable.
             group_var: Column name for grouping.
             n_permutations: Number of permutations for p-value estimation.
+            random_seed: Seed for the permutation RNG. Fixed by default so the
+                reported p-value is reproducible; pass None for a fresh draw.
 
         Returns:
-            Dictionary with pseudo-F statistic, p-value, and group centroids.
+            Dictionary with pseudo-F, R^2, p-value and the SS partition.
+
+        Raises:
+            ValueError: If the samples cannot be grouped into >=2 groups.
         """
         samples = distance_matrix.index.intersection(metadata.index)
+        if len(samples) == 0:
+            raise ValueError(
+                "No overlap between the distance matrix and the metadata index; "
+                "the feature table is probably transposed."
+            )
         dist = distance_matrix.loc[samples, samples].values
         groups = metadata.loc[samples, group_var].values
         unique_groups = np.unique(groups)
         n = len(samples)
 
         if len(unique_groups) < 2:
-            return {'error': 'Need at least 2 groups for PERMANOVA'}
+            raise ValueError(
+                f"PERMANOVA needs at least 2 groups in '{group_var}', found "
+                f"{len(unique_groups)} across {n} matched samples."
+            )
 
         # Calculate within-group sum of squares (SSW)
         def calc_ssw(dist_matrix, group_labels, groups):
@@ -595,27 +826,43 @@ class AnalysisEngine:
         df_between = len(unique_groups) - 1
         df_within = n - len(unique_groups)
 
-        f_obs = (ssb / df_between) / (ssw_obs / df_within + 1e-10)
+        def _pseudo_f(ssb_val: float, ssw_val: float) -> float:
+            # No epsilon in the denominator: it biases the statistic (visible as a
+            # ~1e-6 offset against vegan/scikit-bio). SSW is 0 only in degenerate
+            # cases, which are reported as +inf rather than silently rescaled.
+            if ssw_val <= 0:
+                return float('inf') if ssb_val > 0 else float('nan')
+            return (ssb_val / df_between) / (ssw_val / df_within)
 
-        # Permutation test
+        f_obs = _pseudo_f(ssb, ssw_obs)
+        r_squared = ssb / sst if sst > 0 else float('nan')
+
+        # Permutation test. Uses a dedicated Generator seeded from `random_seed`
+        # so repeated runs on the same data return the same p-value; the global
+        # numpy RNG previously used made results irreproducible.
+        rng = np.random.default_rng(random_seed)
         f_permuted = []
         for _ in range(n_permutations):
-            permuted_groups = np.random.permutation(groups)
+            permuted_groups = rng.permutation(groups)
             ssw_perm = calc_ssw(dist, permuted_groups, unique_groups)
             ssb_perm = sst - ssw_perm
-            f_perm = (ssb_perm / df_between) / (ssw_perm / df_within + 1e-10)
-            f_permuted.append(f_perm)
+            f_permuted.append(_pseudo_f(ssb_perm, ssw_perm))
 
         pvalue = (np.sum(np.array(f_permuted) >= f_obs) + 1) / (n_permutations + 1)
 
         return {
             'pseudo_f': float(f_obs),
+            'r_squared': float(r_squared),
             'pvalue': float(pvalue),
             'ssb': float(ssb),
             'ssw': float(ssw_obs),
+            'sst': float(sst),
             'df_between': int(df_between),
             'df_within': int(df_within),
             'n_permutations': n_permutations,
+            'random_seed': random_seed,
+            'n_samples': int(n),
+            'groups': [str(g) for g in unique_groups],
             'significant': bool(pvalue < 0.05),
         }
 
@@ -627,28 +874,44 @@ class AnalysisEngine:
         metadata: pd.DataFrame,
         group_var: str,
         n_permutations: int = 999,
+        random_seed: int = 42,
     ) -> dict:
         """ANOSIM (Analysis of Similarities) test.
 
-        Custom implementation comparing between-group and within-group distances.
+        R = (r_between - r_within) / (N * (N - 1) / 4), where N is the number of
+        **samples** and r_* are mean ranks of the between/within-group pairwise
+        distances (Clarke 1993). R is bounded in [-1, 1]: ~1 means groups are
+        completely separated, ~0 means no separation.
 
         Args:
             distance_matrix: Square distance matrix.
             metadata: Metadata DataFrame with grouping variable.
             group_var: Column name for grouping.
             n_permutations: Number of permutations for p-value estimation.
+            random_seed: Seed for the permutation RNG (fixed for reproducibility).
 
         Returns:
             Dictionary with R statistic, p-value, and test details.
+
+        Raises:
+            ValueError: If the samples cannot be grouped into >=2 groups.
         """
         samples = distance_matrix.index.intersection(metadata.index)
+        if len(samples) == 0:
+            raise ValueError(
+                "No overlap between the distance matrix and the metadata index; "
+                "the feature table is probably transposed."
+            )
         dist = distance_matrix.loc[samples, samples].values
         groups = metadata.loc[samples, group_var].values
         unique_groups = np.unique(groups)
         n = len(samples)
 
         if len(unique_groups) < 2:
-            return {'error': 'Need at least 2 groups for ANOSIM'}
+            raise ValueError(
+                f"ANOSIM needs at least 2 groups in '{group_var}', found "
+                f"{len(unique_groups)} across {n} matched samples."
+            )
 
         # Rank distances
         triu_idx = np.triu_indices(n, k=1)
@@ -664,21 +927,27 @@ class AnalysisEngine:
         r_within = ranks[within_mask].mean() if within_mask.sum() > 0 else 0
         r_between = ranks[between_mask].mean() if between_mask.sum() > 0 else 0
 
-        n_ranks = len(ranks)
-        r_obs = (r_between - r_within) / (n_ranks * (n_ranks - 1) / 4 + 1e-10)
+        # Denominator is N(N-1)/4 with N = number of SAMPLES. This previously
+        # used the number of pairwise distances (N(N-1)/2) in place of N, which
+        # inflated the denominator by roughly N(N-1)/4 and drove R to ~0 for
+        # every dataset (a perfectly separated 30-sample set reported R=0.005
+        # instead of R=1.0).
+        denom = n * (n - 1) / 4.0
 
-        # Permutation test
-        r_permuted = []
-        for _ in range(n_permutations):
-            permuted_groups = np.random.permutation(groups)
-            g_i = permuted_groups[triu_idx[0]]
-            g_j = permuted_groups[triu_idx[1]]
+        def _r_stat(labels: np.ndarray) -> float:
+            g_i = labels[triu_idx[0]]
+            g_j = labels[triu_idx[1]]
             w_mask = g_i == g_j
             b_mask = ~w_mask
             rw = ranks[w_mask].mean() if w_mask.sum() > 0 else 0
             rb = ranks[b_mask].mean() if b_mask.sum() > 0 else 0
-            r_perm = (rb - rw) / (n_ranks * (n_ranks - 1) / 4 + 1e-10)
-            r_permuted.append(r_perm)
+            return (rb - rw) / denom
+
+        r_obs = _r_stat(groups)
+
+        # Permutation test (seeded; see permanova for rationale)
+        rng = np.random.default_rng(random_seed)
+        r_permuted = [_r_stat(rng.permutation(groups)) for _ in range(n_permutations)]
 
         pvalue = (np.sum(np.array(r_permuted) >= r_obs) + 1) / (n_permutations + 1)
 
@@ -686,6 +955,12 @@ class AnalysisEngine:
             'r_statistic': float(r_obs),
             'pvalue': float(pvalue),
             'n_permutations': n_permutations,
+            'random_seed': random_seed,
+            'n_samples': int(n),
+            'groups': [str(g) for g in unique_groups],
+            'mean_rank_within': float(r_within),
+            'mean_rank_between': float(r_between),
+            # Legacy key names kept for existing frontend/report consumers.
             'r_within': float(r_within),
             'r_between': float(r_between),
             'significant': bool(pvalue < 0.05),
@@ -715,6 +990,11 @@ class AnalysisEngine:
             Dictionary with accuracy, feature importance, and cross-validation results.
         """
         samples = df.columns.intersection(metadata.index)
+        if len(samples) == 0:
+            raise ValueError(
+                "No overlap between feature-table columns and metadata index; "
+                "the feature table is probably transposed."
+            )
         X = df[samples].T.values
         y = metadata.loc[samples, group_var].values
 
@@ -723,6 +1003,15 @@ class AnalysisEngine:
 
         le = LabelEncoder()
         y_encoded = le.fit_transform(y)
+
+        # Smallest class size drives what is feasible for stratified splitting/CV.
+        class_counts = np.bincount(y_encoded)
+        min_class_size = int(class_counts.min())
+        if min_class_size < 2:
+            raise ValueError(
+                f"Random Forest needs at least 2 samples per group; smallest group in "
+                f"'{group_var}' has {min_class_size}."
+            )
 
         # Train/test split
         from sklearn.model_selection import train_test_split
@@ -746,17 +1035,23 @@ class AnalysisEngine:
             'importance': importances,
         }).sort_values('importance', ascending=False)
 
-        # Cross-validation
+        # Cross-validation. The number of folds is bounded by the smallest class,
+        # not by the number of classes (stratified CV needs >=1 sample per class
+        # per fold).
         from sklearn.model_selection import cross_val_score
 
-        cv_scores = cross_val_score(rf, X, y_encoded, cv=min(5, len(np.unique(y_encoded))))
+        n_splits = max(2, min(5, min_class_size))
+        cv_scores = cross_val_score(rf, X, y_encoded, cv=n_splits)
 
-        # Confusion matrix
+        # Confusion matrix. y_test/y_pred are label-encoded integers, so `labels`
+        # must be the encoded values -- passing le.classes_ (strings) here raises
+        # a TypeError on comparison.
         from sklearn.metrics import confusion_matrix
         y_pred = rf.predict(X_test)
-        cm = confusion_matrix(y_test, y_pred, labels=le.classes_)
+        encoded_labels = list(range(len(le.classes_)))
+        cm = confusion_matrix(y_test, y_pred, labels=encoded_labels)
         cm_dict = {
-            'labels': le.classes_.tolist(),
+            'labels': [str(c) for c in le.classes_],
             'matrix': cm.tolist(),
         }
 
@@ -764,6 +1059,7 @@ class AnalysisEngine:
             'accuracy': accuracy,
             'cv_mean_accuracy': float(cv_scores.mean()),
             'cv_std_accuracy': float(cv_scores.std()),
+            'cv_folds': n_splits,
             'n_estimators': n_estimators,
             'n_features': len(feature_names),
             'n_samples': len(samples),
@@ -1170,21 +1466,12 @@ def run_alpha_diversity(
     """Run alpha diversity analysis and return structured results."""
     params = parameters or {}
     indices = params.get('indices', ['shannon', 'simpson', 'observed', 'chao1', 'evenness'])
-    
-    # Auto-detect orientation: if more rows than typical features, likely samples x features
-    # Alpha diversity expects features x samples (features as rows)
-    # Heuristic: if index looks like sample IDs (strings like S1, S2) and columns look like taxa,
-    # we need to transpose
-    if len(df) > 0 and len(df.columns) > 0:
-        # If row names look like sample IDs and column names look like taxa, transpose
-        first_col = str(df.columns[0])
-        first_idx = str(df.index[0])
-        # Sample IDs often start with S, followed by numbers
-        idx_like_sample = bool(re.match(r'^[Ss]\d+$', first_idx))
-        col_like_taxa = '|' in first_col or '__' in first_col or first_col[0].isupper()
-        if idx_like_sample or (not col_like_taxa and len(df) < len(df.columns)):
-            df = df.T
-    
+
+    # `df` is expected in canonical features x samples orientation, resolved once
+    # at the data-access layer (app/services/orientation.py). This function used
+    # to re-guess with a regex on the first row/column label, which disagreed with
+    # the heuristics in run_beta_diversity and with run_pcoa (which had none) --
+    # so one upload could yield alpha diversity over samples and PCoA over taxa.
     engine = AnalysisEngine()
     alpha_df = engine.alpha_diversity(df, metrics=indices)
 
@@ -1267,14 +1554,8 @@ def run_beta_diversity(
     """Run beta diversity analysis and return structured results."""
     params = parameters or {}
     metric = params.get('metric', 'braycurtis')
-    
-    # Auto-detect orientation (same heuristic as alpha diversity)
-    if len(df) > 0 and len(df.columns) > 0:
-        first_idx = str(df.index[0])
-        idx_like_sample = bool(re.match(r'^[Ss]\d+$', first_idx))
-        if idx_like_sample:
-            df = df.T
-    
+
+    # See run_alpha_diversity: orientation is settled upstream, not guessed here.
     engine = AnalysisEngine()
     dist_matrix = engine.beta_diversity(df, distance=metric)
 
@@ -1351,6 +1632,8 @@ def run_nmds(
         'metric': metric,
         'coordinates': nmds_result['coordinates'].to_dict(orient='index'),
         'stress': nmds_result['stress'],
+        'stress_type': nmds_result['stress_type'],
+        'raw_stress': nmds_result['raw_stress'],
         'n_components': n_components,
     }
 
@@ -1424,6 +1707,7 @@ def run_differential_analysis(
 
     elif test_method == 'lefse':
         from app.services.r_analysis import run_lefse
+        engine = AnalysisEngine()
         lda_threshold = params.get('lda_threshold', 2.0)
         lefse_df = run_lefse(df, metadata_df, group_column, lda_threshold=lda_threshold)
         result_data = {
@@ -1438,11 +1722,16 @@ def run_differential_analysis(
             result_data['plot_data'] = plot_data
         return result_data
 
-    if len(groups) != 2:
-        return {'error': f'Differential analysis requires exactly 2 groups, found {len(groups)}'}
-
     engine = AnalysisEngine()
-    g1, g2 = groups[0], groups[1]
+    try:
+        g1, g2 = resolve_comparison_groups(
+            metadata_df,
+            group_column,
+            params.get('comparisons'),
+            params.get('reference_group'),
+        )
+    except ValueError as e:
+        return {'error': str(e)}
 
     if test_method in ('ttest', 't-test'):
         diff_df = engine.differential_ttest(df, metadata_df, group_column, g1, g2)
@@ -1455,7 +1744,11 @@ def run_differential_analysis(
         'group_column': group_column,
         'group1': str(g1),
         'group2': str(g2),
+        'reference_group': str(g1),
         'test_method': test_method,
+        # log2FC is computed as log2(mean(group2) / mean(group1)): positive means
+        # enriched in group2 relative to the reference.
+        'fold_change_direction': f'{g2} vs {g1}',
         'significant_features': diff_df[diff_df['pvalue'] < pvalue_threshold].to_dict(orient='records'),
         'all_features': diff_df.to_dict(orient='records'),
     }

@@ -139,14 +139,24 @@ def _pcoa(distance_matrix: np.ndarray, n_components: int = 2) -> Tuple[np.ndarra
     positive_mask = eigenvalues > 0
     eigenvalues = eigenvalues[positive_mask]
     eigenvectors = eigenvectors[:, positive_mask]
-    
+
     # Compute coordinates
     coords = eigenvectors * np.sqrt(eigenvalues)
-    
-    # Return top n_components
+
+    # Always return exactly n_components columns, zero-padding when the matrix
+    # is rank-deficient. A degenerate distance matrix (e.g. Jaccard on a table
+    # where every sample shares every feature -> all distances 0) yields NO
+    # positive eigenvalues, and returning a 0-column array made callers fail
+    # with "index 0 is out of bounds for axis 1 with size 0" instead of
+    # producing a plot or a clear message.
     n_ret = min(n_components, coords.shape[1])
-    
-    return coords[:, :n_ret], eigenvalues[:n_ret]
+    out_coords = np.zeros((n, n_components))
+    out_eigen = np.zeros(n_components)
+    if n_ret > 0:
+        out_coords[:, :n_ret] = coords[:, :n_ret]
+        out_eigen[:n_ret] = eigenvalues[:n_ret]
+
+    return out_coords, out_eigen
 
 
 def _pam_clustering(
@@ -502,6 +512,18 @@ def run_enterotype(
     # Step 1: Compute distance matrix
     X = df.values.astype(float)
     dist_matrix = _compute_distance_matrix(X, metric=distance_metric)
+
+    # A distance matrix with no variation cannot be clustered into enterotypes.
+    # The usual cause is a presence/absence metric (jaccard) on a dense table
+    # where every sample carries every feature, which makes all distances 0.
+    if not np.any(dist_matrix > 0):
+        raise ValueError(
+            f"All pairwise distances are zero under the '{distance_metric}' metric, so "
+            f"no enterotypes can be distinguished. This happens when every sample "
+            f"contains the same set of features (common for genus-level tables with "
+            f"'jaccard'). Use an abundance-weighted metric such as 'braycurtis' or "
+            f"'jsd' instead."
+        )
     
     # Step 2: Clustering
     used_fallback = False

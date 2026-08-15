@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.database import get_db
 from sqlalchemy.orm import Session as DBSession
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agent import (
     get_planner,
@@ -31,7 +31,15 @@ from app.agent import (
     get_module_spec,
     MODULE_REGISTRY,
 )
-from app.api.routes.analysis import get_db, get_dataframe, get_dataframe_by_name, get_metadata_df
+from app.api.routes.analysis import (
+    _jsonify,
+    get_db,
+    get_dataframe,
+    get_dataframe_by_name,
+    get_metabolome_df,
+    get_metadata_df,
+    get_microbiome_df,
+)
 from app.services.agent_engine import AgentEngine
 from app.services.data_parser import parse_data_file
 
@@ -83,18 +91,42 @@ class AnalyzeResponse(BaseModel):
     results: Dict[str, Any]
     report: Optional[Dict[str, Any]] = None
     execution_time: float
+    failed_steps: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Steps that did not complete, with the module and the error message",
+    )
 
 
 # ── L3 / L4 / L5 Schemas ───────────────────────────────────────
 
 class RecommendRequest(BaseModel):
-    """L3 – Request method recommendations."""
-    data_summary: Dict[str, Any] = Field(
-        ...,
-        description="Data characteristics: data_type, sample_size, has_metadata, study_design, n_groups, feature_count, sequencing_platform",
-    )
+    """L3 – Request method recommendations.
+
+    Every key of ``data_summary`` is optional as far as the recommender is
+    concerned, and the server can read all of them off an uploaded session, so
+    the caller may describe the study either way: pass ``session_id`` and let
+    the summary be derived, pass ``data_summary`` explicitly, or pass both (in
+    which case explicit keys win over the derived ones).
+    """
     research_question: str = Field(..., description="Natural-language research goal")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session whose uploaded data describes the study; used to fill in data_summary",
+    )
+    data_summary: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Data characteristics: data_type, sample_size, has_metadata, study_design, n_groups, feature_count, sequencing_platform. Overrides anything derived from session_id.",
+    )
     top_k: int = Field(default=5, ge=1, le=20, description="Maximum number of recommendations to return")
+
+    @model_validator(mode="after")
+    def _require_a_data_source(self):
+        if not self.session_id and not self.data_summary:
+            raise ValueError(
+                "provide 'session_id' (to derive the data summary from uploaded data) "
+                "or 'data_summary' (to describe the study explicitly)"
+            )
+        return self
 
 
 class RecommendResponse(BaseModel):
@@ -267,54 +299,65 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
 # EXECUTION (SSE STREAMING)
 # ───────────────────────────────────────────────────────────────
 
+def _first_table(session_id: str, db: DBSession, loaders, exclude=None):
+    """Return the first loader that yields a usable feature table.
+
+    ``exclude`` is a frame already claimed by another omics layer; filename
+    patterns overlap (``%mb%`` also matches ``Huang_mBio_metabolome.tsv``), so a
+    candidate identical to it is skipped rather than handed to two layers.
+
+    Note the explicit ``is None`` / ``.empty`` tests. These loaders return
+    DataFrames, and chaining them with ``or`` is what produced
+    "The truth value of a DataFrame is ambiguous" on every /agent/analyze call.
+    """
+    for describe, load in loaders:
+        try:
+            df = load()
+        except HTTPException:
+            continue  # 404 "no feature table" / 400 orientation failure
+        except Exception as e:
+            logger.warning("Session %s: loading %s failed: %s", session_id, describe, e)
+            continue
+        if df is None or df.empty:
+            continue
+        if exclude is not None and df.shape == exclude.shape and df.equals(exclude):
+            continue
+        return df
+    return None
+
+
 def _load_session_data(session_id: str, db: DBSession):
-    """Load microbiome, metabolome, and metadata dataframes for a session."""
-    # Try dedicated file types first
-    from app.models import DataFile
+    """Load microbiome, metabolome, and metadata dataframes for a session.
 
-    mb_file = (
-        db.query(DataFile)
-        .filter(DataFile.session_id == session_id, DataFile.file_type == "microbiome")
-        .order_by(DataFile.id.desc())
-        .first()
-    )
-    met_file = (
-        db.query(DataFile)
-        .filter(DataFile.session_id == session_id, DataFile.file_type == "metabolome")
-        .order_by(DataFile.id.desc())
-        .first()
-    )
+    Feature tables come back in the project's canonical features x samples
+    orientation: every loader used here routes through the orientation resolver
+    in app/api/routes/analysis.py, so the agent modules must not re-guess.
+    """
+    from app.api.routes.analysis import get_dataframe_by_type
 
-    microbiome_df = None
-    if mb_file:
-        try:
-            microbiome_df, _ = parse_data_file(Path(mb_file.file_path), use_chunks=True)
-        except Exception:
-            pass
+    # Metabolome first: its patterns are the more specific of the two.
+    metabolome_df = _first_table(session_id, db, [
+        ("file_type=metabolome", lambda: get_dataframe_by_type(session_id, db, "metabolome")),
+        ("file_type=humann3", lambda: get_dataframe_by_type(session_id, db, "humann3")),
+        ("name~metabolome", lambda: get_dataframe_by_name(session_id, db, "metabolome")),
+        ("name~met", lambda: get_dataframe_by_name(session_id, db, "met")),
+    ])
 
-    metabolome_df = None
-    if met_file:
-        try:
-            metabolome_df, _ = parse_data_file(Path(met_file.file_path), use_chunks=True)
-        except Exception:
-            pass
-
-    # Fallback: filename patterns
-    if microbiome_df is None:
-        microbiome_df = get_dataframe_by_name(session_id, db, "microbiome") or \
-                        get_dataframe_by_name(session_id, db, "mb")
-    if metabolome_df is None:
-        metabolome_df = get_dataframe_by_name(session_id, db, "metabolome") or \
-                        get_dataframe_by_name(session_id, db, "met")
+    microbiome_df = _first_table(session_id, db, [
+        ("file_type=microbiome", lambda: get_dataframe_by_type(session_id, db, "microbiome")),
+        ("file_type=metaphlan", lambda: get_dataframe_by_type(session_id, db, "metaphlan")),
+        ("name~microbiome", lambda: get_dataframe_by_name(session_id, db, "microbiome")),
+        ("file_type=feature_table", lambda: get_dataframe_by_type(session_id, db, "feature_table")),
+        ("name~mb", lambda: get_dataframe_by_name(session_id, db, "mb")),
+    ], exclude=metabolome_df)
 
     metadata_df = get_metadata_df(session_id, db)
 
     # Final fallback: if only one feature table exists, use it as microbiome
     if microbiome_df is None and metabolome_df is None:
-        try:
-            microbiome_df = get_dataframe(session_id, db)
-        except Exception:
-            pass
+        microbiome_df = _first_table(session_id, db, [
+            ("session feature table", lambda: get_dataframe(session_id, db)),
+        ])
 
     return microbiome_df, metabolome_df, metadata_df
 
@@ -350,7 +393,7 @@ async def _execute_workflow_stream(
     microbiome_df, metabolome_df, metadata_df = _load_session_data(session_id, db)
 
     # Execute
-    executor = WorkflowExecutor()
+    executor = WorkflowExecutor(session_id=session_id)
     executor.set_session_data(microbiome_df, metabolome_df, metadata_df)
 
     async for event in executor.execute(plan):
@@ -422,7 +465,7 @@ async def analyze_one_shot(request: AnalyzeRequest, db: DBSession = Depends(get_
         microbiome_df, metabolome_df, metadata_df = _load_session_data(request.session_id, db)
 
         # Execute (collect all events)
-        executor = WorkflowExecutor()
+        executor = WorkflowExecutor(session_id=request.session_id)
         executor.set_session_data(microbiome_df, metabolome_df, metadata_df)
 
         events = []
@@ -431,16 +474,31 @@ async def analyze_one_shot(request: AnalyzeRequest, db: DBSession = Depends(get_
             if event.event_type == "complete":
                 break
 
-        # Build results
-        all_results = executor.get_all_results()
+        # Build results. Analysis modules hand back numpy arrays and numpy
+        # scalars (ordination coordinates, eigenvalues, CCA loadings); pydantic
+        # refuses to serialise those, so the whole response 500s unless they are
+        # converted first.
+        all_results = _jsonify(executor.get_all_results())
 
         # Generate report
         report = None
         if request.generate_report:
             integrator = ResultIntegrator()
-            report = integrator.integrate(all_results, plan)
+            report = _jsonify(integrator.integrate(all_results, plan))
 
         elapsed = time.time() - start_time
+
+        # Surface step failures instead of silently returning a short results
+        # dict -- a rejected data_validator aborts the rest of the plan.
+        failed_steps = [
+            {
+                "step_id": e.step_id,
+                "module": e.payload.get("module") or executor.step_modules.get(e.step_id),
+                "error": e.payload.get("error"),
+            }
+            for e in events
+            if e.event_type == "step_error"
+        ]
 
         return AnalyzeResponse(
             query=request.query,
@@ -451,8 +509,13 @@ async def analyze_one_shot(request: AnalyzeRequest, db: DBSession = Depends(get_
             results=all_results,
             report=report,
             execution_time=elapsed,
+            failed_steps=failed_steps,
         )
 
+    except HTTPException:
+        # Already carries a meaningful status/detail (e.g. 404 no data,
+        # 400 unresolvable orientation); do not relabel it as a 500.
+        raise
     except Exception as e:
         logger.error(f"Analysis failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
@@ -499,13 +562,87 @@ def _get_agent_engine() -> AgentEngine:
 
 # ── L3: Method Recommendation ────────────────────────────────────
 
+# File types that identify each omics layer of a session.
+_MICROBIOME_FILE_TYPES = {
+    "feature_table", "biom", "shared", "filtered_feature_table",
+    "normalized_relative", "normalized_tss", "normalized_rarefaction",
+    "normalized_clr", "normalized_css", "microbiome", "metaphlan",
+}
+_METABOLOME_FILE_TYPES = {"metabolome", "humann3"}
+
+
+def _derive_data_summary(session_id: str, db: DBSession) -> Dict[str, Any]:
+    """Describe a session's uploaded data the way MethodRecommender expects.
+
+    Only facts that can actually be read off the session are filled in; keys
+    the server cannot observe (study_design, n_groups, sequencing_platform)
+    are left out so the recommender applies its own defaults, and the caller
+    can still supply them through ``data_summary``.
+    """
+    from app.models import DataFile
+
+    file_types = {
+        ft for (ft,) in db.query(DataFile.file_type)
+        .filter(DataFile.session_id == session_id)
+        .all()
+        if ft
+    }
+    has_microbiome = bool(file_types & _MICROBIOME_FILE_TYPES)
+    has_metabolome = bool(file_types & _METABOLOME_FILE_TYPES)
+
+    summary: Dict[str, Any] = {}
+    if has_microbiome and has_metabolome:
+        summary["data_type"] = "multi-omics"
+    elif has_metabolome:
+        summary["data_type"] = "metabolome"
+    elif has_microbiome:
+        # A bare feature table does not say amplicon vs shotgun; "amplicon"
+        # is what the recommender assumes by default anyway.
+        summary["data_type"] = "amplicon"
+
+    table = None
+    if has_microbiome:
+        try:
+            table = get_microbiome_df(session_id, db)
+        except Exception:
+            table = None
+    if table is None and has_metabolome:
+        try:
+            table = get_metabolome_df(session_id, db)
+        except Exception:
+            table = None
+    if table is not None and getattr(table, "ndim", 0) == 2:
+        # Feature tables are canonically features x samples (see orientation.py).
+        summary["feature_count"] = int(table.shape[0])
+        summary["sample_size"] = int(table.shape[1])
+
+    try:
+        metadata_df = get_metadata_df(session_id, db)
+    except Exception:
+        metadata_df = None
+    summary["has_metadata"] = metadata_df is not None and not metadata_df.empty
+
+    return summary
+
+
 @router.post("/recommend", response_model=RecommendResponse)
-async def recommend_methods(request: RecommendRequest):
+async def recommend_methods(request: RecommendRequest, db: DBSession = Depends(get_db)):
     """
     L3 – Recommend optimal analysis methods given data characteristics
     and a research question.
 
-    Example:
+    Describe the data either by pointing at a session (the server reads
+    data_type / sample_size / feature_count / has_metadata off the uploads)
+    or by spelling out ``data_summary`` — or both, in which case explicit
+    ``data_summary`` keys override the derived ones.
+
+    Example (session-backed):
+        {
+            "session_id": "abc123",
+            "research_question": "Which taxa differ by visit?"
+        }
+
+    Example (explicit):
         {
             "data_summary": {
                 "data_type": "amplicon",
@@ -518,10 +655,24 @@ async def recommend_methods(request: RecommendRequest):
             "top_k": 5
         }
     """
+    data_summary: Dict[str, Any] = {}
+    if request.session_id:
+        derived = _derive_data_summary(request.session_id, db)
+        if "sample_size" not in derived and not request.data_summary:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No uploaded data found for session {request.session_id}; "
+                    "upload a feature table or pass 'data_summary' explicitly"
+                ),
+            )
+        data_summary.update(derived)
+    data_summary.update(request.data_summary or {})
+
     try:
         engine = _get_agent_engine()
         result = engine.recommend_methods(
-            data_summary=request.data_summary,
+            data_summary=data_summary,
             research_question=request.research_question,
             top_k=request.top_k,
         )

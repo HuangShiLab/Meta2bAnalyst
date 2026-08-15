@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.database import get_db
 from app.models import Session as SessionModel
+from app.utils.file_storage import delete_session_files
 from app.schemas import (
     ErrorResponse,
     SessionCreate,
@@ -161,7 +162,7 @@ async def delete_session(
     session_id: str,
     db: DBSession = Depends(get_db),
 ):
-    """Delete a session and all associated data."""
+    """Delete a session, its database rows, and its uploaded files."""
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -169,10 +170,20 @@ async def delete_session(
             detail=f"Session {session_id} not found",
         )
     try:
-        # TODO: Delete uploaded files from disk
         db.delete(session)
         db.commit()
-        logger.info(f"Deleted session {session_id}")
+
+        # Remove the session's files too. This used to be a TODO, so deleting a
+        # session left its uploads on disk forever -- on this machine that had
+        # accumulated 230 orphaned directories against 65 live sessions. For a
+        # service that ingests human subject data, "deleted" has to mean the
+        # data is actually gone.
+        if not delete_session_files(session_id):
+            # The rows are already gone; report the leak rather than failing the
+            # request, which the client cannot act on anyway.
+            logger.error(f"Session {session_id} deleted but its files could not be removed")
+
+        logger.info(f"Deleted session {session_id} and its uploaded files")
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to delete session {session_id}: {e}")

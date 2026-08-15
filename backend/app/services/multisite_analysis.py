@@ -430,12 +430,20 @@ def run_multisite_temporal(
     df_aligned = df.loc[common]
     meta = metadata_df.loc[common]
 
-    # Ensure time is numeric
+    # Ensure time is numeric.
+    # Both branches must yield the same type: pd.to_numeric returns a Series
+    # (which has .values) while pd.Categorical(...).codes returns a bare ndarray
+    # (which does not). Any non-numeric timepoint label -- e.g. the T1..T9 visits
+    # this platform is built around -- therefore took the second branch and then
+    # died on `time_numeric.values` further down. Normalise to a Series here.
     time_vals = meta[time_column]
     try:
         time_numeric = pd.to_numeric(time_vals)
-    except Exception:
-        time_numeric = pd.Categorical(time_vals).codes
+    except (ValueError, TypeError):
+        # Ordered by label so the trajectory follows a stable, meaningful order.
+        codes = pd.Categorical(time_vals, categories=sorted(time_vals.dropna().unique()),
+                               ordered=True).codes
+        time_numeric = pd.Series(codes, index=time_vals.index, name=time_column)
 
     # PCoA trajectory
     from skbio.stats.distance import DistanceMatrix

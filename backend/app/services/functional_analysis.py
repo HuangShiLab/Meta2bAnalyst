@@ -243,14 +243,8 @@ def hypergeometric_enrichment(
     df = pd.DataFrame(results)
 
     # BH-FDR correction
-    pvalues = df["pvalue"].values
-    n = len(pvalues)
-    if n > 0:
-        ranks = rankdata(pvalues, method="max")
-        padj = np.minimum(pvalues * n / ranks, 1.0)
-        df["padj"] = padj
-    else:
-        df["padj"] = pvalues
+    from app.services.analysis_engine import adjust_pvalues
+    df["padj"] = adjust_pvalues(df["pvalue"].values, "fdr_bh")
 
     df["neg_log10_p"] = -np.log10(df["pvalue"].replace(0, 1e-300))
     df["neg_log10_padj"] = -np.log10(df["padj"].replace(0, 1e-300))

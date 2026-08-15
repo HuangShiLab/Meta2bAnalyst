@@ -79,7 +79,7 @@ export function FilterPage() {
                   <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>移除在大多数样本中计数低于阈值的特征，可减少噪声。</p>
+                  <p>Remove features with counts below the threshold in most samples to reduce noise.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -144,7 +144,7 @@ export function FilterPage() {
           {countMethod === "prevalence" && (
             <div className="space-y-3 rounded-lg bg-muted/30 p-4">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Prevalence 阈值 (%)</Label>
+                <Label className="text-sm font-medium">Prevalence Threshold (%)</Label>
                 <div className="flex items-center gap-2">
                   <Slider
                     value={[prevalence]}
@@ -166,7 +166,7 @@ export function FilterPage() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Features must exceed the minimum count threshold in at least {prevalence}% 的样本中大于Minimum Count阈值才会被保留。
+                Features must exceed the minimum count threshold in at least {prevalence}% of samples with counts above the Minimum Count threshold to be retained.
               </p>
             </div>
           )}
@@ -185,7 +185,7 @@ export function FilterPage() {
                   <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>移除方差最低的特征，这些特征通常不提供区分信息。</p>
+                  <p>Remove features with the lowest variance, which typically do not provide discriminative information.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -272,7 +272,7 @@ export function FilterPage() {
         <StatusAlert
           status="success"
           title="Filtering Complete"
-          description={`Feature count changed: ${result.before.toLocaleString()} → ${result.after.toLocaleString()} (移除了 ${result.before - result.after} 个特征)`}
+          description={`Feature count changed: ${result.before.toLocaleString()} → ${result.after.toLocaleString()} (removed ${result.before - result.after} features)`}
         />
       )}
 

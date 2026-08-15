@@ -40,14 +40,21 @@ def _fmt_pvalue(p: Optional[float]) -> str:
 
 
 def _significance_badge(p: Optional[float]) -> str:
+    """Plain-language significance label at the conventional alpha = 0.05.
+
+    A missing p-value means "not reported", not "not significant" -- the earlier
+    version conflated the two. Below 0.05 is significant; the previous thresholds
+    called p = 0.04 "marginally significant", which understates a conventionally
+    significant result.
+    """
     if p is None:
-        return "not significant"
+        return "not reported"
     if p < 0.001:
-        return "highly significant"
-    if p < 0.01:
-        return "significant"
+        return "significant (p < 0.001)"
     if p < 0.05:
-        return "marginally significant"
+        return "significant"
+    if p < 0.1:
+        return "not significant (trend)"
     return "not significant"
 
 
@@ -979,6 +986,17 @@ class PaperSection:
     word_count: int
     keywords: List[str] = field(default_factory=list)
 
+    #: Marks the text as machine-drafted. Sections are template-filled from
+    #: analysis results and unfilled fields appear as [BRACKETED] placeholders;
+    #: nothing here has been verified against the actual study.
+    ai_generated: bool = True
+    requires_author_verification: bool = True
+
+    @property
+    def unfilled_placeholders(self) -> List[str]:
+        """Bracketed fields the author still has to complete."""
+        return sorted(set(re.findall(r"\[[A-Z][A-Z0-9 §/&'’,.\-—]*\]", self.content)))
+
 
 class PaperWriter:
     """
@@ -1055,16 +1073,17 @@ class PaperWriter:
         background = rs.get("background", "The human microbiome plays a critical role in health and disease. However, the microbial signatures associated with specific conditions remain incompletely characterised.")
         objective = rs.get("objective", "To characterise the microbiome composition and identify differentially abundant taxa between study groups.")
         methods = rs.get("methods_summary", self._methods_summary_from_history())
-        n_samples = rs.get("n_samples", "N")
-        data_type = rs.get("data_type", "16S rRNA amplicon")
-        key_findings = rs.get("key_findings", ["No key findings were pre-specified."])
-        conclusion = rs.get("conclusion", "These findings contribute to our understanding of microbiome dynamics and may inform future mechanistic studies.")
+        n_samples = rs.get("n_samples", "[N]")
+        # Never guess the assay: a 2bRAD-M study is not 16S amplicon sequencing.
+        data_type = rs.get("data_type") or "[SEQUENCING ASSAY]"
+        key_findings = rs.get("key_findings", ["[KEY FINDINGS]"])
+        conclusion = rs.get("conclusion", "[CONCLUSION]")
 
         content = textwrap.dedent(f"""\
             Background: {background}
             Objective: {objective}
-            Methods: {methods} A total of {n_samples} samples were profiled using {data_type} sequencing. Quality control, taxonomic assignment, and statistical analyses were performed using established bioinformatics pipelines.
-            Results: {" ".join(key_findings)}
+            Methods: {methods} A total of {n_samples} samples were profiled using {data_type}.
+            Results: {" ".join(str(k) for k in key_findings)}
             Conclusions: {conclusion}
         """)
         return PaperSection(
@@ -1086,7 +1105,7 @@ class PaperWriter:
 
             {gap} Existing studies have been limited by small sample sizes, heterogeneous methodologies, and lack of functional validation. Consequently, there is a pressing need for well-powered, standardised analyses that integrate taxonomic and functional profiling.
 
-            {objective} To address this gap, we conducted a comprehensive {rs.get('study_design', 'cross-sectional')} analysis of {rs.get('n_samples', 'N')} {rs.get('sample_type', 'faecal')} samples. {hypothesis} By applying rigorous statistical frameworks and controlling for confounding variables, we sought to identify reproducible microbial signatures with potential translational relevance.
+            {objective} To address this gap, we conducted a {rs.get('study_design') or '[STUDY DESIGN]'} analysis of {rs.get('n_samples', '[N]')} {rs.get('sample_type') or '[SAMPLE TYPE]'} samples. {hypothesis}
         """)
         return PaperSection(
             section_type="introduction",
@@ -1095,39 +1114,69 @@ class PaperWriter:
             word_count=len(content.split()),
         )
 
+    #: Wet-lab and pipeline facts this platform cannot observe. They are emitted
+    #: as bracketed placeholders unless the caller supplies the real value.
+    #: Filling them with plausible defaults (DADA2/SILVA 138/MiSeq V3-V4/QIIME 2,
+    #: as an earlier version did) produced a Methods section that was wrong for
+    #: every 2bRAD-M study and, in the case of the ethics statement, asserted an
+    #: approval that may never have been granted.
+    _METHODS_PLACEHOLDERS = {
+        "data_type": "[SEQUENCING ASSAY]",
+        "sequencing_platform": "[SEQUENCING PLATFORM]",
+        "target_region": "[TARGET REGION]",
+        "read_length": "[READ LENGTH]",
+        "sample_type": "[SAMPLE TYPE]",
+        "study_design": "[STUDY DESIGN]",
+        "collection_protocol": "[SAMPLE COLLECTION AND STORAGE PROTOCOL]",
+        "dna_extraction": "[DNA EXTRACTION PROTOCOL]",
+        "qc_steps": "[QUALITY-CONTROL AND READ-FILTERING STEPS]",
+        "tax_assignment": "[TAXONOMIC ASSIGNMENT PIPELINE AND REFERENCE DATABASE]",
+        "normalisation": "[NORMALISATION STRATEGY]",
+        "software": "[SOFTWARE AND VERSIONS]",
+    }
+
     def _write_methods(self, rs: Dict[str, Any], ctx: Dict[str, Any]) -> PaperSection:
-        data_type = rs.get("data_type", "16S rRNA amplicon")
-        n_samples = rs.get("n_samples", "N")
-        platform = rs.get("sequencing_platform", "Illumina MiSeq")
-        region = rs.get("target_region", "V3-V4")
-        qc = rs.get("qc_steps", "Samples with fewer than 10,000 reads were excluded. Adapters and low-quality bases were trimmed using Cutadapt.")
-        tax_assignment = rs.get("tax_assignment", "Taxonomic assignment was performed using the DADA2 pipeline against the SILVA 138 reference database.")
-        norm = rs.get("normalisation", "Feature tables were rarefied to the minimum sampling depth for alpha-diversity analyses. Relative abundance (TSS) normalisation was used for compositional methods.")
+        ph = self._METHODS_PLACEHOLDERS
+
+        def f(key: str) -> str:
+            """Caller-supplied value, or a placeholder the author must fill in."""
+            value = rs.get(key)
+            return str(value) if value not in (None, "") else ph[key]
+
+        n_samples = rs.get("n_samples", "[N]")
         stats = rs.get("statistical_methods", self._stats_methods_from_history())
-        sw = rs.get("software", "QIIME 2 (v2024.2) and R (v4.3) with the phyloseq and vegan packages.")
-        ethics = rs.get("ethics", "This study was approved by the institutional ethics committee.")
+
+        # Only stated if the caller explicitly provides it.
+        ethics = rs.get("ethics")
+        ethics_body = ethics or (
+            "[ETHICS APPROVAL - state the approving committee and protocol number, "
+            "or remove this section.]"
+        )
+        # Indented to match the dedent level of the f-string block below.
+        ethics_section = f"\n\n            Ethics statement\n            {ethics_body}"
 
         content = textwrap.dedent(f"""\
-            Study design and sample collection
-            {rs.get('study_design', 'Cross-sectional')} {rs.get('sample_type', 'faecal')} samples were collected from {n_samples} participants. {rs.get('collection_protocol', 'Samples were immediately frozen at −80 °C until DNA extraction.')}
+            NOTE - This draft was assembled automatically. Every bracketed field
+            describes wet-lab or pipeline detail that Meta2bAnalyst cannot observe
+            from a feature table; fill each one in and verify the rest before use.
 
-            {data_type.capitalize()} sequencing
-            DNA was extracted using a commercial kit according to the manufacturer's instructions. The {region} hypervariable region of the bacterial 16S rRNA gene was amplified and sequenced on the {platform} platform using paired-end {rs.get('read_length', '2 × 250 bp')} chemistry.
+            Study design and sample collection
+            {f('study_design')} {f('sample_type')} samples were collected from {n_samples} participants. {f('collection_protocol')}
+
+            Sequencing
+            DNA was extracted as follows: {f('dna_extraction')}. Libraries were prepared for {f('data_type')} and sequenced on the {f('sequencing_platform')} platform ({f('target_region')}, {f('read_length')}).
 
             Bioinformatics processing
-            {qc} {tax_assignment} A phylogenetic tree was constructed with MAFFT and FastTree for UniFrac distance calculations.
+            {f('qc_steps')} {f('tax_assignment')}
 
             Normalisation and quality control
-            {norm}
+            {f('normalisation')}
 
             Statistical analysis
             {stats}
 
             Software and reproducibility
-            All analyses were conducted in {sw} Code and processed data are available upon reasonable request.
-
-            Ethics statement
-            {ethics}
+            Statistical analyses reported above were run in Meta2bAnalyst. Upstream processing used: {f('software')}.{ethics_section}
         """)
         return PaperSection(
             section_type="methods",
@@ -1137,7 +1186,7 @@ class PaperWriter:
         )
 
     def _write_results(self, rs: Dict[str, Any], ctx: Dict[str, Any]) -> PaperSection:
-        data_type = rs.get("data_type", "16S rRNA amplicon")
+        data_type = rs.get("data_type") or "[SEQUENCING ASSAY]"
         n_samples = rs.get("n_samples", "N")
         n_features = rs.get("n_features", "M")
         findings = rs.get("key_findings", [])
@@ -1148,45 +1197,78 @@ class PaperWriter:
         paragraphs: List[str] = []
         paragraphs.append(
             f"After quality filtering, {n_samples} samples remained for analysis, yielding a total of {n_features} {data_type} features. "
-            f"Rarefaction curves indicated adequate sequencing depth for diversity estimation (Figure S1)."
         )
+        if rs.get("rarefaction_result"):
+            paragraphs.append(
+                "Rarefaction curves were used to assess whether sequencing depth was "
+                "adequate for diversity estimation (Figure S1)."
+            )
+
+        # Wording is driven by the p-value. These sentences previously asserted a
+        # "significant difference" whenever a result object was present at all, so
+        # a p of 0.8 was still written up as significant.
+        alpha = 0.05
 
         if alpha_result:
             p = alpha_result.get("pvalue")
             metric = alpha_result.get("metric", "Shannon")
-            direction = alpha_result.get("direction", "altered")
-            paragraphs.append(
-                f"Alpha diversity analysis revealed a significant difference in {metric} diversity between groups "
-                f"({_fmt_pvalue(p)}), with {direction} diversity observed in the {alpha_result.get('group_name', 'case')} group."
-            )
+            group_name = alpha_result.get("group_name")
+            if p is not None and p < alpha:
+                direction = alpha_result.get("direction", "altered")
+                where = f" in the {group_name} group" if group_name else ""
+                paragraphs.append(
+                    f"Alpha diversity differed significantly between groups for the "
+                    f"{metric} index ({_fmt_pvalue(p)}), with {direction} diversity observed{where}."
+                )
+            else:
+                paragraphs.append(
+                    f"Alpha diversity did not differ significantly between groups for the "
+                    f"{metric} index ({_fmt_pvalue(p)})."
+                )
         else:
             paragraphs.append(
-                "No significant differences in alpha diversity metrics were detected between study groups, suggesting comparable within-sample community richness."
+                "Alpha diversity was not compared between groups in this analysis."
             )
 
         if beta_result:
             p = beta_result.get("pvalue")
-            r2 = beta_result.get("r2")
+            r2 = beta_result.get("r2", beta_result.get("r_squared"))
             dist = beta_result.get("distance_metric", "Bray-Curtis")
-            paragraphs.append(
-                f"Beta-diversity analysis ({dist} distance) demonstrated significant compositional separation between groups "
-                f"({_fmt_pvalue(p)}, R² = {r2:.3f}), indicating distinct community structures."
-            )
+            r2_txt = f", R² = {r2:.3f}" if isinstance(r2, (int, float)) else ""
+            if p is not None and p < alpha:
+                paragraphs.append(
+                    f"Beta-diversity analysis ({dist} distance) showed significant "
+                    f"compositional separation between groups ({_fmt_pvalue(p)}{r2_txt})."
+                )
+            else:
+                paragraphs.append(
+                    f"Beta-diversity analysis ({dist} distance) showed no significant "
+                    f"compositional separation between groups ({_fmt_pvalue(p)}{r2_txt})."
+                )
         else:
             paragraphs.append(
-                "Beta-diversity ordination showed overlapping clusters between groups, with no statistically significant separation."
+                "Beta diversity was not compared between groups in this analysis."
             )
 
         if diff_result:
             n_sig = diff_result.get("n_significant", 0)
-            top = diff_result.get("top_feature", "—")
-            paragraphs.append(
-                f"Differential abundance testing identified {n_sig} taxa with significantly altered abundance after multiple-testing correction. "
-                f"The most strongly associated taxon was {top} (log₂FC = {diff_result.get('top_log2fc', '—')}, FDR-adjusted p = {_fmt_pvalue(diff_result.get('top_adj_p'))})."
-            )
+            if n_sig:
+                top = diff_result.get("top_feature", "—")
+                paragraphs.append(
+                    f"Differential abundance testing identified {n_sig} taxa with "
+                    f"significantly altered abundance after multiple-testing correction. "
+                    f"The most strongly associated taxon was {top} "
+                    f"(log₂FC = {diff_result.get('top_log2fc', '—')}, "
+                    f"FDR-adjusted {_fmt_pvalue(diff_result.get('top_adj_p'))})."
+                )
+            else:
+                paragraphs.append(
+                    "No taxa survived multiple-testing correction in the differential "
+                    "abundance analysis."
+                )
         else:
             paragraphs.append(
-                "No taxa survived multiple-testing correction in the differential abundance analysis."
+                "Differential abundance testing was not performed in this analysis."
             )
 
         for f in findings:

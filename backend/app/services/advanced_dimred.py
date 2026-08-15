@@ -285,15 +285,8 @@ def maaslin3_associations(
     result_df = pd.DataFrame(results)
     
     # BH-FDR
-    pvals = result_df["pvalue"].values
-    n = len(pvals)
-    if n > 0:
-        from scipy.stats import rankdata
-        ranks = rankdata(pvals, method="max")
-        padj = np.minimum(pvals * n / ranks, 1.0)
-        result_df["padj"] = padj
-    else:
-        result_df["padj"] = pvals
+    from app.services.analysis_engine import adjust_pvalues
+    result_df["padj"] = adjust_pvalues(result_df["pvalue"].values, "fdr_bh")
     
     return result_df.sort_values("pvalue")
 

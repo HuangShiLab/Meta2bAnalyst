@@ -7,6 +7,7 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -60,15 +61,44 @@ app.add_middleware(
 )
 
 
+def _field_path(error: dict) -> str:
+    """Render one validation error's ``loc`` as a dotted field path."""
+    parts = [str(p) for p in error.get("loc", []) if p is not None]
+    return ".".join(parts) if parts else "body"
+
+
+def summarize_validation_errors(errors: list) -> str:
+    """One-line, human-readable summary that names every offending field.
+
+    Clients (and the pipeline smoke harness) surface ``detail`` and nothing
+    else, so a bare "Validation error" tells the caller nothing about which
+    field it got wrong.
+    """
+    return "; ".join(f"{_field_path(e)}: {e.get('msg', 'invalid value')}" for e in errors)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors."""
-    logger.error(f"Validation error: {exc.errors()}")
+    """Handle validation errors.
+
+    Pydantic v2 puts the original exception object in each error's ``ctx``,
+    which is not JSON-serialisable. Passing ``exc.errors()`` straight into a
+    JSONResponse makes this handler itself raise, turning every 422 into an
+    opaque, body-less 500. ``jsonable_encoder`` coerces those objects to
+    strings so the client actually receives the validation detail.
+
+    ``detail`` names the offending fields inline; ``fields`` repeats them as a
+    machine-readable list and ``errors`` keeps the raw Pydantic payload.
+    """
+    errors = jsonable_encoder(exc.errors())
+    summary = summarize_validation_errors(errors)
+    logger.error(f"Validation error: {errors}")
     return JSONResponse(
         status_code=422,
         content={
-            "detail": "Validation error",
-            "errors": exc.errors(),
+            "detail": f"Validation error: {summary}" if summary else "Validation error",
+            "fields": [_field_path(e) for e in errors],
+            "errors": errors,
         },
     )
 

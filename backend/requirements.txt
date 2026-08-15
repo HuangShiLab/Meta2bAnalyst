@@ -1,21 +1,71 @@
+# ── Web framework ────────────────────────────────────────────────────────────
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
+aiofiles>=23.0.0
+httpx>=0.25.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 sqlalchemy>=2.0.0
+
+# ── Task queue ───────────────────────────────────────────────────────────────
+celery>=5.3.0
+redis>=5.0.0
+
+# ── Core scientific stack ────────────────────────────────────────────────────
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.11.0
 scikit-learn>=1.3.0
+# Reference implementations for diversity/ordination/PERMANOVA/ANOSIM. The
+# hand-rolled versions this replaced disagreed with vegan (ANOSIM R was off by
+# ~200x); analysis_engine is regression-tested against skbio.
+scikit-bio>=0.6.0
+# Multiple-testing correction (adjust_pvalues). The previous hand-rolled BH did
+# not enforce monotonicity.
+statsmodels>=0.14.0
+# Co-occurrence network construction (app/services/network_analysis.py).
+# Imported at module level and reachable from app.main -- omitting it made the
+# Docker image fail to start.
+networkx>=3.0
+
+# ── Data formats ─────────────────────────────────────────────────────────────
 biom-format>=2.1.0
+# Knowledge-base method definitions (app/knowledge/method_db.yaml); imported at
+# module level from app.knowledge.loader, so also required for startup.
+PyYAML>=6.0
+# Parquet caching of parsed feature tables (app/services/data_parser.py).
+pyarrow>=14.0.0
+
+# ── Reporting / figures ──────────────────────────────────────────────────────
 plotly>=5.18.0
-celery>=5.3.0
-redis>=5.0.0
+# Static image export for Plotly figures (PNG/SVG/PDF).
+kaleido>=0.2.1
+# PDF report generation (app/services/export_service.py).
+reportlab>=4.0.0
+
+# ── Logging ──────────────────────────────────────────────────────────────────
 python-json-logger>=2.0.0
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
-httpx>=0.25.0
+
+# ── Testing ──────────────────────────────────────────────────────────────────
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-aiofiles>=23.0.0
-# rpy2 for R integration (install from source if binary wheels fail on macOS ARM)
-rpy2==3.5.15
+
+# ── Optional extras ──────────────────────────────────────────────────────────
+# Everything below is imported lazily inside the function that needs it; the app
+# starts and all core analyses run without them. Install to enable the feature
+# named in the comment.
+#
+# UMAP embedding (app/services/advanced_dimred.py):
+#   pip install umap-learn>=0.5.5
+# K-medoids enterotyping (app/services/enterotype.py; falls back to a built-in
+# implementation when absent):
+#   pip install scikit-learn-extra>=0.3.0
+# LLM-backed planner (app/agent/planner.py; the rule-based planner is default):
+#   pip install openai>=1.0.0
+#
+# R integration for DESeq2/edgeR/vegan/phyloseq etc. rpy2 needs a working R
+# installation; without it those methods refuse to run rather than silently
+# substituting a Python approximation (see app/services/r_analysis.py).
+# Install R packages with: python scripts/install_r_packages.py
+#   pip install rpy2==3.5.15

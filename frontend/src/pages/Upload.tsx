@@ -173,7 +173,7 @@ export function UploadPage() {
 
   const handleValidate = async () => {
     setValidationStatus("validating");
-    setValidationMessage("正在验证Data Format和完整性...");
+    setValidationMessage("Validating data format and completeness...");
 
     if (uploadedFiles.length < 1) {
       setValidationStatus("error");
@@ -388,7 +388,7 @@ export function UploadPage() {
               <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
                 <p><strong>Feature table:</strong> First row: sample names; First column: feature names; Values: abundance counts.</p>
                 <p><strong>Metadata:</strong> First row: sample names; Subsequent columns: grouping variables, experimental conditions, etc.</p>
-                <p><strong>Taxonomy (可选):</strong> Contains mapping between feature names and taxonomic annotations.</p>
+                <p><strong>Taxonomy (optional):</strong> Contains mapping between feature names and taxonomic annotations.</p>
                 <p><strong>BIOM:</strong> QIIME-generated BIOM format abundance table; JSON format recommended.</p>
                 <p><strong>Mothur:</strong> .shared file contains OTU abundance table; .taxonomy file contains taxonomic annotations.</p>
               </CardContent>

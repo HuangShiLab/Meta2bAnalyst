@@ -5,24 +5,33 @@ Supports both synchronous (fast) and asynchronous (Celery) execution modes.
 """
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
 import pandas as pd
-
-import pandas as pd
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session as DBSession
 
 from app.celery_app import celery_app
+from app.config import settings
 from app.database import get_db
 from app.models import AnalysisJob, DataFile, Session as SessionModel
 from app.schemas import AnalysisRequest, AnalysisResponse, AnalysisResultResponse, ErrorResponse
-from app.services.r_analysis import run_ancombc, run_deseq2, run_edger, run_maaslin3, run_lefse
+from app.services.r_analysis import (
+    ApproximationRefused,
+    engine_for as r_engine_for,
+    run_ancombc,
+    run_deseq2,
+    run_edger,
+    run_maaslin3,
+    run_lefse,
+)
 from app.services.analysis_engine import (
     AnalysisEngine,
+    resolve_comparison_groups,
     run_alpha_diversity,
     run_beta_diversity,
     run_differential_analysis,
@@ -44,6 +53,11 @@ from app.services.analysis_engine import (
     run_o2pls_analysis,
 )
 from app.services.data_parser import parse_data_file
+from app.services.orientation import (
+    OrientationError,
+    assert_sample_alignment,
+    resolve_feature_table,
+)
 from app.services.rarefaction import run_rarefaction
 from app.services.taxonomy_bar import run_taxonomy_bar, run_core_microbiome
 from app.services.mofa import run_mofa_plus
@@ -76,21 +90,47 @@ ASYNC_FEATURE_THRESHOLD = 1000
 ASYNC_SAMPLE_THRESHOLD = 100
 
 
-def _check_broker_available() -> bool:
-    """Check if Celery broker is available."""
+# Cache the worker probe: it costs a broker round-trip and the answer rarely
+# changes within a request burst.
+_WORKER_PROBE: Dict[str, Any] = {'checked_at': 0.0, 'available': False}
+_WORKER_PROBE_TTL = 30.0
+
+
+def _workers_available() -> bool:
+    """Check whether at least one Celery worker is alive and consuming.
+
+    A reachable broker is not enough: with the SQLite broker fallback, ``.delay()``
+    happily accepts a task even when nothing will ever run it, leaving the job
+    stuck at 'pending' forever while the client polls. Probing for live workers
+    is what actually distinguishes "will run" from "will hang".
+    """
+    now = time.time()
+    if now - _WORKER_PROBE['checked_at'] < _WORKER_PROBE_TTL:
+        return _WORKER_PROBE['available']
+
+    available = False
     try:
-        from celery.app.control import Inspect
-        inspect = Inspect(app=celery_app)
-        return inspect.ping() is not None
-    except Exception:
-        return False
+        replies = celery_app.control.ping(timeout=1.0)
+        available = bool(replies)
+    except Exception as e:
+        logger.debug(f'Celery worker probe failed: {e}')
+        available = False
+
+    _WORKER_PROBE.update({'checked_at': now, 'available': available})
+    if not available:
+        logger.info('No Celery worker responded; large analyses will run synchronously.')
+    return available
 
 
 def _should_use_async(df: pd.DataFrame) -> bool:
-    """Determine if analysis should run asynchronously based on data size."""
+    """Decide whether to offload an analysis to Celery.
+
+    Requires both a large dataset *and* a live worker -- see _workers_available.
+    """
     n_features = len(df.index)
     n_samples = len(df.columns)
-    return n_features > ASYNC_FEATURE_THRESHOLD or n_samples > ASYNC_SAMPLE_THRESHOLD
+    is_large = n_features > ASYNC_FEATURE_THRESHOLD or n_samples > ASYNC_SAMPLE_THRESHOLD
+    return is_large and _workers_available()
 
 
 def _get_celery_task_status(job_id: str) -> Optional[Dict[str, Any]]:
@@ -115,8 +155,30 @@ def _get_celery_task_status(job_id: str) -> Optional[Dict[str, Any]]:
 # ─────────────────────────────── Data retrieval helpers
 
 
+def _orient(session_id: str, db: DBSession, df: pd.DataFrame, name: str) -> pd.DataFrame:
+    """Put a parsed feature table into canonical features x samples orientation.
+
+    Orientation is resolved once, here, against the session's metadata -- see
+    app/services/orientation.py. Analysis functions must not re-guess.
+    """
+    metadata_df = get_metadata_df(session_id, db)
+    try:
+        oriented, report = resolve_feature_table(df, metadata_df, name=name)
+    except OrientationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    for w in report.warnings:
+        logger.warning('Session %s: %s', session_id, w)
+    _LAST_ORIENTATION[session_id] = report.to_dict()
+    return oriented
+
+
+# Most recent orientation decision per session, attached to analysis responses so
+# the client can show how the table was interpreted.
+_LAST_ORIENTATION: Dict[str, Dict[str, Any]] = {}
+
+
 def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
-    """Get the feature table as a DataFrame for a session."""
+    """Get the feature table as a DataFrame for a session (features x samples)."""
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
@@ -134,13 +196,13 @@ def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
         )
     try:
         df, _ = parse_data_file(Path(data_file.file_path), use_chunks=True)
-        return df
     except Exception as e:
         logger.error(f'Failed to parse data file: {e}')
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Failed to parse data file: {str(e)}',
         )
+    return _orient(session_id, db, df, data_file.original_name or 'feature table')
 
 
 def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
@@ -182,10 +244,10 @@ def get_dataframe_by_name(session_id: str, db: DBSession, name_pattern: str) -> 
         return None
     try:
         df, _ = parse_data_file(Path(data_file.file_path), use_chunks=True)
-        return df
     except Exception as e:
         logger.error(f'Failed to parse data file {data_file.original_name}: {e}')
         return None
+    return _orient(session_id, db, df, data_file.original_name or name_pattern)
 
 
 def get_dataframe_by_type(session_id: str, db: DBSession, file_type: str) -> Optional[pd.DataFrame]:
@@ -201,10 +263,10 @@ def get_dataframe_by_type(session_id: str, db: DBSession, file_type: str) -> Opt
         return None
     try:
         df, _ = parse_data_file(Path(data_file.file_path), file_type=file_type, use_chunks=True)
-        return df
     except Exception as e:
         logger.error(f'Failed to parse data file {data_file.file_path}: {e}')
         return None
+    return _orient(session_id, db, df, data_file.original_name or file_type)
 
 
 def get_microbiome_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
@@ -228,26 +290,152 @@ def get_metabolome_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
 # ─────────────────────────────── Generic analysis helpers
 
 
-def _save_result(session_id: str, job: AnalysisJob, result_data: Dict[str, Any]) -> None:
-    """Save analysis result to disk and update job record."""
-    session_dir = Path('./uploads') / session_id / 'results'
+def _guard_approximation(method_key: str, request: Any) -> Dict[str, Any]:
+    """Resolve provenance for a method that may fall back to an approximation.
+
+    Reads ``allow_approximation`` from the request (either a top-level field or
+    inside ``parameters``) and turns a refusal into a 400 whose message names the
+    missing R package and what the substitute actually computes.
+    """
+    params = getattr(request, 'parameters', None) or {}
+    allow = bool(
+        getattr(request, 'allow_approximation', False)
+        or (params.get('allow_approximation') if isinstance(params, dict) else False)
+    )
+    try:
+        return r_engine_for(method_key, allow)
+    except ApproximationRefused as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+def _guard_unvalidated(method_key: str, request: Any, reason: str) -> Dict[str, Any]:
+    """Block a method whose implementation is known not to match its name.
+
+    Unlike an approximation of a published algorithm, these compute something
+    that is not the named method at all -- UniFrac over a phylogeny simulated
+    from taxon-name string similarity, PICRUSt2 against a toy reference table
+    hard-coded in this repo. They stay reachable for development but refuse to
+    run unless the caller explicitly acknowledges the limitation, and every
+    result they do return is labelled.
+    """
+    params = getattr(request, 'parameters', None) or {}
+    if not isinstance(params, dict):
+        params = {}
+    acknowledged = bool(
+        getattr(request, 'acknowledge_unvalidated', False)
+        or params.get('acknowledge_unvalidated')
+    )
+    if not acknowledged:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"'{method_key}' is not available: {reason} Results from it must not "
+                f"be reported as {method_key}. To run it anyway for development "
+                f'purposes, resend with "acknowledge_unvalidated": true in '
+                f"`parameters`."
+            ),
+        )
+    return {
+        'engine': f'unvalidated::{method_key}',
+        'is_approximation': True,
+        'is_validated': False,
+        'approximation_note': reason,
+        'reporting_guidance': (
+            f'These numbers are not {method_key} output and must not be published '
+            f'as such.'
+        ),
+    }
+
+
+def _jsonify(obj: Any) -> Any:
+    """Recursively convert numpy/pandas scalars and arrays to JSON-native types.
+
+    Plotly figures and sklearn outputs carry numpy arrays and numpy scalars.
+    SQLAlchemy's JSON column serialises with the stdlib encoder, which rejects
+    them ("Object of type ndarray is not JSON serializable") and aborts the whole
+    request at commit time. Sanitising here keeps that failure mode out of every
+    endpoint.
+    """
+    import numpy as _np
+
+    if isinstance(obj, dict):
+        return {str(k): _jsonify(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonify(v) for v in obj]
+    if isinstance(obj, _np.ndarray):
+        return _jsonify(obj.tolist())
+    if isinstance(obj, _np.generic):
+        obj = obj.item()
+    if isinstance(obj, float):
+        # NaN/Inf are not valid JSON; null round-trips through every client.
+        return None if (obj != obj or obj in (float('inf'), float('-inf'))) else obj
+    if isinstance(obj, (pd.Timestamp, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, pd.Series):
+        return _jsonify(obj.to_dict())
+    if isinstance(obj, pd.DataFrame):
+        return _jsonify(obj.to_dict(orient='records'))
+    if isinstance(obj, (str, int, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def _save_result(session_id: str, job: AnalysisJob, result_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Save an analysis result to disk and update the job record.
+
+    ``result_data`` is sanitised **in place** so that the caller's own reference
+    -- which is what every endpoint hands to the Pydantic response model -- is
+    JSON-safe too. Returning a new dict instead would leave 37 call sites
+    serialising raw numpy and failing at response time.
+
+    Raises:
+        HTTPException: 400 if the analysis reported an error. Service functions
+            signal failure by returning ``{'error': ...}``; every endpoint used
+            to save that and then set ``status='completed'``, so a failed
+            PERMANOVA came back as ``201 Created`` with a success status and an
+            error buried in the payload. Failures are surfaced as failures here,
+            in one place, for all endpoints.
+    """
+    if isinstance(result_data, dict) and result_data.get('error'):
+        message = str(result_data['error'])
+        job.status = 'failed'
+        job.error_message = message
+        job.completed_at = datetime.utcnow()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+    session_dir = Path(settings.UPLOAD_DIR) / session_id / 'results'
     session_dir.mkdir(parents=True, exist_ok=True)
     result_path = session_dir / f'analysis_{job.id}_{job.job_type}.json'
     import json
+
+    clean = _jsonify(result_data)
+    result_data.clear()
+    result_data.update(clean)
+
     with open(result_path, 'w') as f:
         json.dump(result_data, f, indent=2, default=str)
     job.result_path = str(result_path)
     job.result_data = result_data
+    return result_data
 
 
-def _submit_async_task(task_func, session_id: str, job: AnalysisJob, **kwargs) -> AnalysisResponse:
-    """Submit a Celery async task and return pending response."""
+def _submit_async_task(task_func, _session_id: str, job: AnalysisJob, **kwargs) -> AnalysisResponse:
+    """Submit a Celery async task and return a pending response.
+
+    ``kwargs`` holds the Celery task's own arguments, which include a
+    ``session_id``. The session id used for the *response* is therefore named
+    ``_session_id`` -- with both called ``session_id``, every call site bound the
+    argument twice and raised ``TypeError: got multiple values for argument
+    'session_id'`` before the body ever ran. This path was unreachable until the
+    orientation fix made large datasets actually take it.
+    """
+    kwargs.setdefault('session_id', _session_id)
     try:
         celery_job = task_func.delay(**kwargs)
         job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
         return AnalysisResponse(
             job_id=job.id,
-            session_id=session_id,
+            session_id=_session_id,
             job_type=job.job_type,
             status='pending',
             parameters=job.parameters,
@@ -435,6 +623,10 @@ async def analyze_alpha_diversity(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Alpha diversity analysis failed: {e}')
@@ -507,6 +699,10 @@ async def analyze_beta_diversity(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Beta diversity analysis failed: {e}')
@@ -589,6 +785,10 @@ async def analyze_pcoa(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'PCoA analysis failed: {e}')
@@ -662,6 +862,10 @@ async def analyze_nmds(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'NMDS analysis failed: {e}')
@@ -713,8 +917,13 @@ async def analyze_differential(
             logger.info(f"Large dataset detected ({df.shape}), using async differential task")
             job.status = 'pending'
             db.commit()
-            groups = metadata_df[request.group_column].dropna().unique()
-            g1, g2 = str(groups[0]), str(groups[1]) if len(groups) >= 2 else ('', '')
+            try:
+                g1, g2 = resolve_comparison_groups(
+                    metadata_df, request.group_column,
+                    request.comparisons, request.reference_group,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return _submit_async_task(
                 differential_task,
                 session_id, job,
@@ -732,45 +941,86 @@ async def analyze_differential(
         test_method = job.parameters['test_method']
         groups = metadata_df[request.group_column].dropna().unique()
         engine = AnalysisEngine()
+        allow_approx = bool(request.parameters.get('allow_approximation', False))
 
-        if test_method in ('deseq2', 'DESeq2') and len(groups) == 2:
-            g1, g2 = groups[0], groups[1]
+        def _pairwise_groups():
+            """Resolve the two groups to contrast, or fail with a 400."""
+            try:
+                return resolve_comparison_groups(
+                    metadata_df, request.group_column,
+                    request.comparisons, request.reference_group,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        def _engine(method_key: str):
+            """Resolve provenance, turning a refusal into an actionable 400.
+
+            Previously each R-backed branch was additionally gated on
+            `len(groups) == 2`; with more groups the condition simply fell
+            through to the generic Wilcoxon branch, so a DESeq2 request silently
+            returned Wilcoxon results labelled 'DESeq2'.
+            """
+            try:
+                return r_engine_for(method_key, allow_approx)
+            except ApproximationRefused as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+        if test_method in ('deseq2', 'DESeq2'):
+            provenance = _engine('deseq2')
+            g1, g2 = _pairwise_groups()
             diff_df = run_deseq2(df, metadata_df, request.group_column, g1, g2)
             result_data = {
                 'group_column': request.group_column,
                 'group1': str(g1),
                 'group2': str(g2),
+                'reference_group': str(g1),
+                'fold_change_direction': f'{g2} vs {g1}',
                 'test_method': 'DESeq2',
+                **provenance,
                 'significant_features': diff_df[diff_df['padj'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
                 'all_features': diff_df.to_dict(orient='records'),
             }
-        elif test_method in ('edger', 'edgeR') and len(groups) == 2:
-            g1, g2 = groups[0], groups[1]
+        elif test_method in ('edger', 'edgeR'):
+            provenance = _engine('edger')
+            g1, g2 = _pairwise_groups()
             diff_df = run_edger(df, metadata_df, request.group_column, g1, g2)
             result_data = {
                 'group_column': request.group_column,
                 'group1': str(g1),
                 'group2': str(g2),
+                'reference_group': str(g1),
+                'fold_change_direction': f'{g2} vs {g1}',
                 'test_method': 'edgeR',
+                **provenance,
                 'significant_features': diff_df[diff_df['FDR'] < job.parameters['pvalue_threshold']].to_dict(orient='records'),
                 'all_features': diff_df.to_dict(orient='records'),
             }
         elif test_method in ('ancombc', 'ANCOM-BC'):
-            if len(groups) != 2:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f'ANCOM-BC requires exactly 2 groups, found {len(groups)}',
-                )
+            provenance = _engine('ancombc')
+            # Restrict to the requested contrast instead of rejecting the whole
+            # request when the column has more than two levels. Checking
+            # len(groups) against every level meant a 7-timepoint study could not
+            # run ANCOM-BC at all, even with `comparisons` naming exactly two.
+            g1, g2 = _pairwise_groups()
+            pair_samples = metadata_df.index[metadata_df[request.group_column].isin([g1, g2])]
+            ancom_meta = metadata_df.loc[pair_samples]
+            ancom_df = df[df.columns.intersection(pair_samples)]
             zero_cut = request.parameters.get('zero_cut', 0.9)
             lib_cut = request.parameters.get('lib_cut', 0)
             struc_zero = request.parameters.get('struc_zero', True)
             p_adj_method = request.parameters.get('p_adj_method', 'BH')
-            diff_df = run_ancombc(df, metadata_df, request.group_column, zero_cut, lib_cut, struc_zero, p_adj_method)
+            diff_df = run_ancombc(ancom_df, ancom_meta, request.group_column, zero_cut, lib_cut, struc_zero, p_adj_method)
             if 'error' in diff_df.columns:
                 raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
             result_data = {
                 'group_column': request.group_column,
+                'group1': str(g1),
+                'group2': str(g2),
+                'reference_group': str(g1),
+                'fold_change_direction': f'{g2} vs {g1}',
                 'test_method': 'ANCOM-BC',
+                **provenance,
                 'zero_cut': zero_cut,
                 'lib_cut': lib_cut,
                 'struc_zero': struc_zero,
@@ -783,6 +1033,7 @@ async def analyze_differential(
                 plot_data = engine.plotly_volcano(diff_df)
                 result_data['plot_data'] = plot_data
         elif test_method in ('maaslin3', 'MaAsLin3'):
+            provenance = _engine('maaslin3')
             fixed_effects = request.parameters.get('fixed_effects', [request.group_column])
             random_effects = request.parameters.get('random_effects', None)
             normalization = request.parameters.get('normalization', 'TSS')
@@ -792,6 +1043,7 @@ async def analyze_differential(
                 raise HTTPException(status_code=400, detail=str(diff_df['error'].iloc[0]))
             result_data = {
                 'test_method': 'MaAsLin3',
+                **provenance,
                 'normalization': normalization,
                 'transform': transform,
                 'fixed_effects': fixed_effects,
@@ -802,25 +1054,52 @@ async def analyze_differential(
             if 'coefficient' in diff_df.columns and 'metadata' in diff_df.columns:
                 plot_data = engine.plotly_maaslin3_bar(diff_df)
                 result_data['plot_data'] = plot_data
-        else:
+        elif test_method == 'lefse':
+            provenance = _engine('lefse')
+            job.parameters = {**job.parameters, 'comparisons': request.comparisons,
+                              'reference_group': request.reference_group}
             result_data = run_differential_analysis(df, metadata_df, job.parameters)
+            result_data.update(provenance)
+        else:
+            # Native Python tests (t-test / Mann-Whitney): no R equivalent is
+            # being claimed, so they are not approximations of anything.
+            job.parameters = {**job.parameters, 'comparisons': request.comparisons,
+                              'reference_group': request.reference_group}
+            result_data = run_differential_analysis(df, metadata_df, job.parameters)
+            result_data.setdefault('engine', f"python::{result_data.get('test_method', test_method)}")
+            result_data.setdefault('is_approximation', False)
 
-        # Generate Plotly volcano chart
+        # Generate Plotly volcano chart.
+        #
+        # Each engine names its columns differently (log2FC / log2_fold_change /
+        # log2FoldChange; pvalue / PValue). Renaming padj -> pvalue, as this did
+        # previously, produced two columns called 'pvalue' for DESeq2 output
+        # (which already has one) and then crashed inside plotly_volcano with
+        # "Cannot set a DataFrame with multiple columns to the single column
+        # neg_log10_p". Columns are mapped explicitly instead, and the raw
+        # p-value is preferred over the adjusted one for the y-axis.
         engine = AnalysisEngine()
-        if len(groups) == 2 and 'all_features' in result_data:
+        if 'all_features' in result_data:
             diff_df = pd.DataFrame(result_data['all_features'])
-            if len(diff_df) > 0 and 'pvalue' in diff_df.columns and 'log2_fold_change' in diff_df.columns:
-                diff_df = diff_df.rename(columns={'log2_fold_change': 'log2FC'})
-                plot_data = engine.plotly_volcano(diff_df)
-                result_data['plot_data'] = plot_data
-            elif len(diff_df) > 0 and 'log2FoldChange' in diff_df.columns:
-                diff_df = diff_df.rename(columns={'log2FoldChange': 'log2FC'})
-                if 'padj' in diff_df.columns:
-                    diff_df = diff_df.rename(columns={'padj': 'pvalue'})
-                elif 'FDR' in diff_df.columns:
-                    diff_df = diff_df.rename(columns={'FDR': 'pvalue'})
-                plot_data = engine.plotly_volcano(diff_df)
-                result_data['plot_data'] = plot_data
+            fc_col = next(
+                (c for c in ('log2FC', 'log2_fold_change', 'log2FoldChange', 'logFC', 'lfc')
+                 if c in diff_df.columns),
+                None,
+            )
+            p_col = next(
+                (c for c in ('pvalue', 'PValue', 'p_value', 'padj', 'FDR', 'qvalue')
+                 if c in diff_df.columns),
+                None,
+            )
+            if len(diff_df) > 0 and fc_col and p_col:
+                volcano_df = pd.DataFrame({
+                    'feature': diff_df.get('feature', pd.Series(diff_df.index, index=diff_df.index)),
+                    'log2FC': pd.to_numeric(diff_df[fc_col], errors='coerce'),
+                    'pvalue': pd.to_numeric(diff_df[p_col], errors='coerce'),
+                }).dropna(subset=['log2FC', 'pvalue'])
+                if len(volcano_df) > 0:
+                    result_data['plot_data'] = engine.plotly_volcano(volcano_df)
+                    result_data['volcano_pvalue_column'] = p_col
 
         _save_result(session_id, job, result_data)
         job.status = 'completed'
@@ -835,6 +1114,10 @@ async def analyze_differential(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Differential analysis failed: {e}')
@@ -912,6 +1195,10 @@ async def analyze_permanova(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'PERMANOVA analysis failed: {e}')
@@ -989,6 +1276,10 @@ async def analyze_anosim(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'ANOSIM analysis failed: {e}')
@@ -1078,6 +1369,10 @@ async def analyze_random_forest(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Random Forest analysis failed: {e}')
@@ -1142,6 +1437,10 @@ async def analyze_lefse(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'LEfSe analysis failed: {e}')
@@ -1222,6 +1521,10 @@ async def analyze_heatmap(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Heatmap generation failed: {e}')
@@ -1284,6 +1587,10 @@ async def analyze_stacked_bar(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Stacked bar generation failed: {e}')
@@ -1340,6 +1647,10 @@ async def analyze_library_size(
             result_data=result_data,
             completed_at=job.completed_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Library size analysis failed: {e}')
@@ -1388,6 +1699,10 @@ async def create_analysis(
             parameters=job.parameters,
             created_at=job.created_at,
         )
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f'Failed to create analysis job: {str(e)}')
@@ -1660,7 +1975,13 @@ def functional_prediction(
     db.add(job)
     db.commit()
     db.refresh(job)
+    provenance = _guard_unvalidated(
+        'PICRUSt2/Tax4Fun', request,
+        'the KO reference database is a small mock table hard-coded in '
+        'app/services/functional_prediction.py, not the PICRUSt2 reference data.',
+    )
     result_data = run_functional_prediction(df, metadata_df, request.model_dump())
+    result_data.update(provenance)
     _save_result(session_id, job, result_data)
     job.status = 'completed'
     job.completed_at = datetime.utcnow()
@@ -1702,7 +2023,14 @@ def phylogenetic_analysis(
     db.add(job)
     db.commit()
     db.refresh(job)
+    provenance = _guard_unvalidated(
+        'UniFrac/Faith PD', request,
+        'the phylogenetic distances are simulated from taxonomic name string '
+        'similarity plus random noise (see _simulate_phylogenetic_tree in '
+        'app/services/phylogenetic_analysis.py), not read from a real tree.',
+    )
     result_data = run_phylogenetic_analysis(df, metadata_df, request.model_dump())
+    result_data.update(provenance)
     _save_result(session_id, job, result_data)
     job.status = 'completed'
     job.completed_at = datetime.utcnow()
@@ -2195,12 +2523,18 @@ async def analyze_rarefaction(session_id: str, request: RarefactionRequest, db: 
     db.commit()
     db.refresh(job)
     try:
-        result = run_rarefaction(df, metadata_df, group_column=request.group_column, metrics=request.metrics, max_depth=request.max_depth, steps=request.steps, iterations=request.iterations)
+        # run_rarefaction works sample-wise (its `df` is samples x taxa), while
+        # get_dataframe returns the canonical features x samples orientation.
+        result = run_rarefaction(df.T, metadata_df, group_column=request.group_column, metrics=request.metrics, max_depth=request.max_depth, steps=request.steps, iterations=request.iterations)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Analysis failed: {e}')
@@ -2235,6 +2569,10 @@ async def analyze_taxonomy_bar(session_id: str, request: TaxonomyBarRequest, db:
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Analysis failed: {e}')
@@ -2269,6 +2607,10 @@ async def analyze_core_microbiome(session_id: str, request: CoreMicrobiomeReques
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Analysis failed: {e}')
@@ -2299,12 +2641,18 @@ async def analyze_mofa(session_id: str, request: MOFARequest, db: DBSession = De
     db.commit()
     db.refresh(job)
     try:
-        result = run_mofa_plus(mb_df, met_df, metadata_df, n_factors=request.n_factors, group_column=request.group_column)
+        # get_*_df returns the canonical features x samples orientation;
+        # this service works sample-wise (its `df` is samples x features).
+        result = run_mofa_plus(mb_df.T, met_df.T, metadata_df, n_factors=request.n_factors, group_column=request.group_column)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'MOFA+ analysis failed: {e}')
@@ -2314,6 +2662,12 @@ async def analyze_mofa(session_id: str, request: MOFARequest, db: DBSession = De
 class ALDEx2Request(BaseModel):
     group_column: str
     test_method: str = 'welch'
+    # Accepted for consistency with AnalysisRequest: options may be sent either
+    # as top-level fields or inside `parameters` (both are read by the route).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    # Read by _guard_approximation; without it the opt-in could never be sent
+    # for endpoints that use a typed model instead of the generic AnalysisRequest.
+    allow_approximation: bool = False
 
 
 @router.post('/sessions/{session_id}/analyze/aldex2', response_model=AnalysisResponse)
@@ -2336,12 +2690,20 @@ async def analyze_aldex2(session_id: str, request: ALDEx2Request, db: DBSession 
     db.commit()
     db.refresh(job)
     try:
-        result = run_aldex2(df, metadata_df, group_column=request.group_column, test_method=request.test_method)
+        provenance = _guard_approximation('aldex2', request)
+        # run_aldex2 documents samples x features; get_dataframe returns the
+        # canonical features x samples.
+        result = run_aldex2(df.T, metadata_df, group_column=request.group_column, test_method=request.test_method)
+        result.update(provenance)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'ALDEx2 analysis failed: {e}')
@@ -2373,12 +2735,18 @@ async def analyze_songbird(session_id: str, request: SongbirdRequest, db: DBSess
     db.commit()
     db.refresh(job)
     try:
-        result = run_songbird(df, metadata_df, group_column=request.group_column, epochs=request.epochs)
+        # get_*_df returns the canonical features x samples orientation;
+        # this service works sample-wise (its `df` is samples x features).
+        result = run_songbird(df.T, metadata_df, group_column=request.group_column, epochs=request.epochs)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Songbird analysis failed: {e}')
@@ -2387,8 +2755,15 @@ async def analyze_songbird(session_id: str, request: SongbirdRequest, db: DBSess
 
 class EnterotypeRequest(BaseModel):
     n_clusters: int = 3
-    distance_metric: str = 'jaccard'
+    # Abundance-weighted by default. 'jaccard' is presence/absence, and on a
+    # typical genus table every sample carries every genus, so all distances
+    # collapse to 0 and no enterotypes can be found.
+    distance_metric: str = 'braycurtis'
     group_column: Optional[str] = None
+    # Accepted for consistency with AnalysisRequest: options may be sent either
+    # as top-level fields or inside `parameters` (both are read by the route).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
 
 
 @router.post('/sessions/{session_id}/analyze/enterotype', response_model=AnalysisResponse)
@@ -2409,12 +2784,22 @@ async def analyze_enterotype(session_id: str, request: EnterotypeRequest, db: DB
     db.commit()
     db.refresh(job)
     try:
-        result = run_enterotype(df, metadata_df, n_clusters=request.n_clusters, distance_metric=request.distance_metric)
+        # get_*_df returns the canonical features x samples orientation;
+        # this service works sample-wise (its `df` is samples x features).
+        # Options may arrive top-level or inside `parameters`; prefer an explicit
+        # value in `parameters` so both request styles behave the same.
+        n_clusters = request.parameters.get('n_clusters', request.n_clusters)
+        distance_metric = request.parameters.get('distance_metric', request.distance_metric)
+        result = run_enterotype(df.T, metadata_df, n_clusters=n_clusters, distance_metric=distance_metric)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'Enterotype analysis failed: {e}')
@@ -2426,6 +2811,10 @@ class WGCNARequest(BaseModel):
     min_module_size: int = 10
     merge_cut_height: float = 0.25
     group_column: Optional[str] = None
+    # Accepted for consistency with AnalysisRequest: options may be sent either
+    # as top-level fields or inside `parameters` (both are read by the route).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    allow_approximation: bool = False
 
 
 @router.post('/sessions/{session_id}/analyze/wgcna', response_model=AnalysisResponse)
@@ -2446,12 +2835,18 @@ async def analyze_wgcna(session_id: str, request: WGCNARequest, db: DBSession = 
     db.commit()
     db.refresh(job)
     try:
+        provenance = _guard_approximation('wgcna', request)
         result = run_wgcna(df, metadata_df, power=request.power, min_module_size=request.min_module_size, merge_cut_height=request.merge_cut_height)
+        result.update(provenance)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'WGCNA analysis failed: {e}')
@@ -2461,6 +2856,10 @@ async def analyze_wgcna(session_id: str, request: WGCNARequest, db: DBSession = 
 class DIABLORequest(BaseModel):
     n_components: int = 2
     group_column: str
+    # Accepted for consistency with AnalysisRequest: options may be sent either
+    # as top-level fields or inside `parameters` (both are read by the route).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    allow_approximation: bool = False
 
 
 @router.post('/sessions/{session_id}/analyze/diablo', response_model=AnalysisResponse)
@@ -2486,12 +2885,18 @@ async def analyze_diablo(session_id: str, request: DIABLORequest, db: DBSession 
     db.commit()
     db.refresh(job)
     try:
+        provenance = _guard_approximation('diablo', request)
         result = run_diablo(mb_df, met_df, metadata_df, group_column=request.group_column, n_components=request.n_components)
+        result.update(provenance)
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
         db.commit()
         return AnalysisResponse(job_id=job.id, session_id=session_id, job_type=job.job_type, status=job.status, result_data=job.result_data, completed_at=job.completed_at)
+    except HTTPException:
+        # Deliberate 4xx from inside the try block: keep its status code.
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f'DIABLO analysis failed: {e}')

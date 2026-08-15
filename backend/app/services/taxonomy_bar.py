@@ -63,10 +63,12 @@ def run_taxonomy_bar(
     Returns:
         Dict with plot_data, statistics
     """
-    # Auto-detect orientation: if rows look like taxa names, transpose
-    first_idx = str(df.index[0])
-    if '|' in first_idx or '__' in first_idx:
-        df = df.T
+    # `df` arrives in the canonical features x samples orientation resolved at the
+    # data-access layer (app/services/orientation.py). The functions below work
+    # sample-wise, so transpose unconditionally rather than sniffing the first
+    # index label -- that heuristic only fired for taxonomy-style names like
+    # 'k__Bacteria|...' and silently treated plain taxa names as samples.
+    df = df.T
 
     # Normalize to relative abundance (rows = samples)
     rel_abund = df.div(df.sum(axis=1), axis=0) * 100
@@ -74,7 +76,12 @@ def run_taxonomy_bar(
     # Parse taxonomy level and aggregate
     taxa_parsed = _parse_taxonomy_level(rel_abund.columns.tolist(), tax_level)
     grouping = pd.Series({col: taxa_parsed.get(col, col) for col in rel_abund.columns})
-    aggregated = rel_abund.groupby(grouping, axis=1).sum()
+    # Aggregate columns (taxa) by their parsed rank. `groupby(..., axis=1)` was
+    # deprecated in pandas 2.1 and REMOVED in pandas 3.0 ("DataFrame.groupby()
+    # got an unexpected keyword argument 'axis'"), which broke this endpoint on
+    # any fresh install. Transposing around a row-wise groupby is the supported
+    # equivalent and works on both pandas 2 and 3.
+    aggregated = rel_abund.T.groupby(grouping).sum().T
 
     # Identify top N taxa
     mean_abundance = aggregated.mean(axis=0).sort_values(ascending=False)
@@ -179,10 +186,12 @@ def run_core_microbiome(
     Returns:
         Dict with plot_data, core_taxa list
     """
-    # Auto-detect orientation: if rows look like taxa names, transpose
-    first_idx = str(df.index[0])
-    if '|' in first_idx or '__' in first_idx:
-        df = df.T
+    # `df` arrives in the canonical features x samples orientation resolved at the
+    # data-access layer (app/services/orientation.py). The functions below work
+    # sample-wise, so transpose unconditionally rather than sniffing the first
+    # index label -- that heuristic only fired for taxonomy-style names like
+    # 'k__Bacteria|...' and silently treated plain taxa names as samples.
+    df = df.T
 
     rel_abund = df.div(df.sum(axis=1), axis=0)
 

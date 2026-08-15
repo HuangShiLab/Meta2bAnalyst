@@ -33,11 +33,18 @@ class PlanStep:
 
 @dataclass
 class ExecutionPlan:
-    """Complete execution plan as a DAG."""
+    """Complete execution plan as a DAG.
+
+    ``clarification_needed`` is set when the planner could not work out which
+    analysis the user wants. In that case the plan carries no analysis steps and
+    the caller must ask the user to rephrase instead of pretending that a
+    validator-only plan is a real analysis.
+    """
     query: str
     steps: List[PlanStep]
     estimated_time: str = ""
     notes: List[str] = field(default_factory=list)
+    clarification_needed: bool = False
 
 
 # ───────────────────────────────────────────────────────────────
@@ -86,7 +93,13 @@ ANALYSIS_TEMPLATES = [
         "name": "marker_discovery",
         "patterns": [
             r"marker.*discover|differential.*abundance|diff.*analysis|biomarker|significant.*feature",
-            r"标记物|差异.*分析|差异.*代谢物|差异.*菌",
+            # Ordinary phrasings: "find differential markers comparing visits",
+            # "which markers differ between groups", "differentially abundant taxa".
+            r"differential.*(marker|feature|taxa|genera|genus|specie|metabolite)",
+            r"(find|identify|discover|show|list|get).*\bmarkers?\b",
+            r"\bmarkers?\b.*(between|across|comparing|compare|by group|discovery)",
+            r"differential(ly)?.*(analysis|abundant|expressed)",
+            r"标记物|差异.*分析|差异.*代谢物|差异.*菌|差异.*标记|差异.*特征|差异.*物种",
         ],
         "description": "Marker discovery for both microbiome (CLR+Wilcoxon) and metabolome (log1p+Welch)",
         "steps": [
@@ -129,7 +142,9 @@ ANALYSIS_TEMPLATES = [
         "name": "cross_correlation",
         "patterns": [
             r"cross.*correlation|correlat.*genera.*metabolite|heatmap.*genus.*metabolite",
-            r"交叉.*相关|菌属.*代谢物.*相关|热图.*相关",
+            r"correlat\w*\s+(the\s+)?(genera|genus|taxa|microbe\w*|bacteri\w*|species)\b",
+            r"(genera|genus|taxa|microbe\w*|bacteri\w*)\b.*\b(with|and|against|vs\.?|versus)\b.*metabolit",
+            r"交叉.*相关|菌属.*代谢物.*相关|热图.*相关|菌.*代谢物.*关联",
         ],
         "description": "Spearman cross-correlation between bacterial genera and metabolites",
         "steps": [
@@ -277,6 +292,10 @@ ANALYSIS_TEMPLATES = [
         "steps": [
             {"module": "data_validator", "id": "step1_validate"},
         ],
+        # Advisory templates deliberately plan no analysis steps - the answer is a
+        # method recommendation (see /agent/recommend), not a DAG. Flagged so the
+        # validator-only plan is never presented as if it were an analysis.
+        "advisory": True,
         "notes": ["This is a method recommendation request. The Agent will provide method suggestions based on data characteristics."],
     },
 ]
@@ -398,7 +417,7 @@ MODULE_KEYWORDS = {
     "metabolome_alpha": ["metabolome.*alpha", "metabolite.*richness"],
     
     # Differential Analysis
-    "microbiome_marker": ["microbiome.*marker", "microbiome.*differential", "clr.*wilcoxon", "微生物组.*标记", "微生物组.*差异", "differential.*abundance", "biomarker", "biomarker.*discovery", "marker.*discovery", "significant.*taxa", "significant.*feature"],
+    "microbiome_marker": ["microbiome.*marker", "microbiome.*differential", "clr.*wilcoxon", "微生物组.*标记", "微生物组.*差异", "differential.*abundance", "biomarker", "biomarker.*discovery", "marker.*discovery", "significant.*taxa", "significant.*feature", "differential.*marker", "diff.*taxa", "差异.*标记", "标记.*发现"],
     "metabolome_marker": ["metabolome.*marker", "metabolome.*differential", "代谢组.*标记", "代谢物.*差异", "differential.*metabolite"],
     "maaslin3": ["maaslin", "multivariate.*association", "mixed.*effect", "longitudinal.*analysis", "纵向.*分析", "重复.*测量"],
     
@@ -419,7 +438,9 @@ MODULE_KEYWORDS = {
     "rda": ["rda", "redundancy", "冗余.*分析"],
     "o2pls": ["o2pls", "joint.*variation", "orthogonal"],
     "cross_correlation": ["cross.*correlation", "heatmap", "genus.*metabolite", "菌属.*代谢物"],
-    "moafa": ["mofa", "mofa\+", "factor.*analysis", "multi-omics.*factor"],
+    # NOTE: key was "moafa" (typo), so MOFA+ queries never routed anywhere. The
+    # pattern also used "mofa\+" in a non-raw string, an invalid escape sequence.
+    "mofa": ["mofa", r"mofa\+", "factor.*analysis", "multi-omics.*factor"],
     "diablo": ["diablo", "spls-da", "pls-da", "mixomics"],
     "wgcna": ["wgcna", "weighted.*co-expression", "module.*detection", "module.*analysis"],
     
@@ -450,42 +471,176 @@ MODULE_KEYWORDS = {
 
 
 def _match_template(query: str) -> Optional[Dict[str, Any]]:
-    """Match query against predefined templates using regex patterns."""
+    """Match query against predefined templates using regex patterns.
+
+    The template whose patterns match the query most often wins; ties are broken
+    by declaration order, so a query that matches exactly one template behaves
+    the same as it did under first-match-wins.
+    """
     query_lower = query.lower()
-    for template in ANALYSIS_TEMPLATES:
-        for pattern in template["patterns"]:
-            if re.search(pattern, query_lower, re.IGNORECASE):
-                return template
-    return None
+    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    for idx, template in enumerate(ANALYSIS_TEMPLATES):
+        hits = sum(
+            1 for pattern in template["patterns"]
+            if re.search(pattern, query_lower, re.IGNORECASE)
+        )
+        if hits:
+            scored.append((hits, idx, template))
+    if not scored:
+        return None
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return scored[0][2]
 
 
-def _detect_modules_from_keywords(query: str) -> List[Tuple[str, float]]:
-    """Detect individual modules mentioned in query with confidence scores."""
+def unregistered_keyword_modules() -> List[str]:
+    """MODULE_KEYWORDS keys that have no entry in MODULE_REGISTRY.
+
+    Keyword routing and the module registry are maintained by hand and had
+    drifted apart ("moafa", "diablo", "wgcna", "random_forest" were routable but
+    not registered), so a matching query produced a plan step the executor could
+    not resolve.
+
+    These keys are deliberately *kept* in MODULE_KEYWORDS: a query for one of
+    them is recognised as "you asked for X, X is not available yet" (see
+    ``_detect_modules_from_keywords``) rather than being silently ignored. A
+    module only becomes plannable once it has BOTH a ModuleSpec here and an
+    entry in ``app.agent.executor._MODULE_FUNCTIONS`` - see
+    ``module_registry.PENDING_EXECUTOR_WIRING``.
+    """
+    return sorted(set(MODULE_KEYWORDS) - set(MODULE_REGISTRY))
+
+
+# Log the drift once at import instead of on every planning call.
+_PENDING_KEYWORD_MODULES = unregistered_keyword_modules()
+if _PENDING_KEYWORD_MODULES:
+    logger.warning(
+        "%d keyword rule(s) route to modules with no MODULE_REGISTRY entry and "
+        "are therefore not plannable: %s",
+        len(_PENDING_KEYWORD_MODULES),
+        ", ".join(_PENDING_KEYWORD_MODULES),
+    )
+
+
+def _detect_modules_from_keywords(query: str) -> Tuple[List[Tuple[str, float]], List[str]]:
+    """Detect individual modules mentioned in query with confidence scores.
+
+    Returns ``(matched, unavailable)`` where ``matched`` holds only modules that
+    exist in MODULE_REGISTRY (anything else would yield a step the executor
+    cannot resolve) and ``unavailable`` holds the names the query asked for that
+    are not implemented yet, so the planner can say so out loud.
+    """
     query_lower = query.lower()
-    matched = []
+    matched: List[Tuple[str, float]] = []
+    unavailable: List[str] = []
     for module_name, keywords in MODULE_KEYWORDS.items():
         score = 0
         for kw in keywords:
             if re.search(kw, query_lower, re.IGNORECASE):
                 score += 1
-        if score > 0:
-            matched.append((module_name, score))
-    # Sort by confidence
+        if not score:
+            continue
+        if module_name not in MODULE_REGISTRY:
+            unavailable.append(module_name)
+            continue
+        matched.append((module_name, score))
+    # Sort by confidence (stable: ties keep MODULE_KEYWORDS declaration order)
     matched.sort(key=lambda x: x[1], reverse=True)
-    return matched
+    return matched, unavailable
 
 
 def _infer_data_type(query: str) -> Dict[str, bool]:
-    """Infer which omics data types are mentioned."""
+    """Infer which omics data types the query explicitly mentions.
+
+    ``explicit`` is False when the query names neither omics ("find differential
+    markers comparing visits"). In that case both flags are True so the planner
+    does NOT drop every microbiome/metabolome module and collapse to a
+    validator-only plan; what is actually available is decided later from the
+    session context (see ``_available_omics_from_context``).
+    """
     q = query.lower()
-    has_mb = any(k in q for k in ["microbiome", "microbial", "16s", "bacteria", "taxa", "genus", "微生物组", "菌群", "细菌"])
+    has_mb = any(k in q for k in ["microbiome", "microbial", "16s", "bacteria", "taxa", "genus", "genera", "微生物组", "菌群", "细菌"])
     has_met = any(k in q for k in ["metabolome", "metabolite", "metabolic", "lc-ms", "代谢组", "代谢物"])
-    # Default to both if neither is explicitly mentioned but multi-omics context
     if not has_mb and not has_met:
-        if any(k in q for k in ["multi.?omics", "multiomics", "整合", "integration", "联合", "correlation"]):
-            has_mb = True
-            has_met = True
-    return {"microbiome": has_mb, "metabolome": has_met}
+        return {"microbiome": True, "metabolome": True, "explicit": False}
+    return {"microbiome": has_mb, "metabolome": has_met, "explicit": True}
+
+
+def _available_omics_from_context(context: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Work out which omics the session actually holds.
+
+    Returns 'microbiome_only', 'metabolome_only' or None (both / unknown).
+    An explicit ``context['available_data']`` wins; otherwise it is derived from
+    the uploaded file names and file types so the planner does not schedule
+    steps that are guaranteed to fail for lack of data.
+    """
+    if not context:
+        return None
+    explicit = context.get("available_data")
+    if explicit in ("microbiome_only", "metabolome_only"):
+        return explicit
+    names = list(context.get("session_files") or []) + [
+        str(t) for t in (context.get("file_types") or [])
+    ]
+    if not names:
+        return None
+    info = _infer_data_type_from_files(names)
+    if info["has_microbiome"] and not info["has_metabolome"]:
+        return "microbiome_only"
+    if info["has_metabolome"] and not info["has_microbiome"]:
+        return "metabolome_only"
+    return None
+
+
+def _drop_unrunnable_steps(steps: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Remove steps whose module is not in MODULE_REGISTRY and repair the DAG.
+
+    Some templates reference modules that are not registered/executable yet
+    (anosim, random_forest, volcano). Keeping them would produce a plan the
+    executor aborts on; dropping them naively would leave dangling depends_on
+    entries that stall every downstream step. Dependencies on a dropped step are
+    therefore rewired to that step's own dependencies.
+    """
+    kept: List[Dict[str, Any]] = []
+    dropped_deps: Dict[str, List[str]] = {}
+    dropped_modules: List[str] = []
+
+    for step in steps:
+        if step["module"] in MODULE_REGISTRY:
+            kept.append(step)
+        else:
+            dropped_deps[step["id"]] = list(step.get("depends_on", []))
+            if step["module"] not in dropped_modules:
+                dropped_modules.append(step["module"])
+
+    if dropped_modules:
+        for step in kept:
+            resolved: List[str] = []
+            seen_dropped: set = set()
+            stack = list(step.get("depends_on", []))
+            while stack:
+                dep = stack.pop(0)
+                if dep in dropped_deps:
+                    if dep in seen_dropped:
+                        continue
+                    seen_dropped.add(dep)
+                    stack.extend(dropped_deps[dep])
+                elif dep not in resolved:
+                    resolved.append(dep)
+            step["depends_on"] = resolved
+
+    return kept, dropped_modules
+
+
+def _prune_dangling_dependencies(steps: List[PlanStep]) -> None:
+    """Drop depends_on entries pointing at steps that are no longer in the plan.
+
+    Without this, filtering a plan (e.g. removing metabolome steps for a
+    microbiome-only session) leaves survivors waiting on a step that will never
+    run, and the executor silently skips them.
+    """
+    valid = {s.id for s in steps}
+    for step in steps:
+        step.depends_on = [d for d in step.depends_on if d in valid]
 
 
 def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
@@ -546,47 +701,194 @@ def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[
     return steps
 
 
-def _build_plan(query: str, template: Optional[Dict[str, Any]] = None) -> ExecutionPlan:
-    """Build execution plan from template or keyword detection."""
+def _estimate_time(n_steps: int) -> str:
+    """Rough wall-clock estimate for a plan of n_steps."""
+    if n_steps > 8:
+        return f"~{(n_steps * 15) // 60}-{(n_steps * 15 + 60) // 60} minutes"
+    return f"~{n_steps * 15}-{(n_steps * 15) + 30} seconds"
+
+
+CLARIFICATION_PREFIX = "CLARIFICATION NEEDED"
+
+# Some unregistered keyword names are plot views that a registered module
+# already emits (see its output_spec), so asking for them is satisfied by
+# planning that module - do not report those as unavailable.
+_PLOT_ALIASES: Dict[str, set] = {
+    "volcano": {"microbiome_marker", "metabolome_marker", "maaslin3"},
+    "heatmap": {"cross_correlation"},
+}
+
+
+def _filter_covered_aliases(unavailable: List[str], planned_modules: set) -> List[str]:
+    """Drop 'unavailable' names whose output a planned module already produces."""
+    return [
+        name for name in unavailable
+        if not (_PLOT_ALIASES.get(name, set()) & planned_modules)
+    ]
+
+_EXAMPLE_QUERIES = [
+    "find differential markers comparing visits",
+    "run PCoA and PERMANOVA on the microbiome",
+    "correlate genera with metabolites",
+    "alpha diversity by group",
+]
+
+
+def _clarification_plan(
+    query: str,
+    unavailable: Optional[List[str]] = None,
+    reason: Optional[str] = None,
+) -> ExecutionPlan:
+    """Plan returned when the query cannot be mapped onto any analysis.
+
+    Deliberately carries NO analysis steps: a validator-only plan dressed up as
+    an analysis is worse than admitting the query was not understood.
+    """
     notes = []
+    if reason:
+        notes.append(f"{CLARIFICATION_PREFIX}: {reason}")
+    elif unavailable:
+        notes.append(
+            f"{CLARIFICATION_PREFIX}: the query asks for "
+            f"{', '.join(sorted(unavailable))}, which is recognised but not "
+            f"available in this deployment yet, and nothing else matched."
+        )
+    else:
+        notes.append(
+            f"{CLARIFICATION_PREFIX}: could not determine which analysis is "
+            f"being requested, so no steps were planned."
+        )
+    notes.append("Please rephrase, e.g. " + "; ".join(f'"{q}"' for q in _EXAMPLE_QUERIES) + ".")
+    notes.append(f"Available modules: {', '.join(sorted(get_module_names()))}")
+    return ExecutionPlan(
+        query=query,
+        steps=[],
+        estimated_time="~0 seconds",
+        notes=notes,
+        clarification_needed=True,
+    )
+
+
+def _keyword_steps(
+    detected: List[Tuple[str, float]],
+    data_types: Dict[str, bool],
+    existing_modules: Optional[set] = None,
+    start_index: int = 2,
+    validator_id: str = "step1_validate",
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Turn keyword hits into plan steps, skipping omics the query rules out.
+
+    Returns ``(steps, skipped)``; ``skipped`` names modules that were dropped
+    because the query explicitly scoped itself to one omics layer.
+    """
+    existing = set(existing_modules or ())
+    steps: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+
+    for module_name, _score in detected:
+        if module_name in existing:
+            continue
+        spec = get_module_spec(module_name)
+        if not spec:
+            continue
+
+        # Only skip on data the query explicitly rules out. When the query names
+        # no omics layer at all, _infer_data_type reports both as available so
+        # that ordinary phrasings still get a real plan.
+        reqs = spec.input_requirements
+        if reqs.get("microbiome") == "required" and not data_types["microbiome"]:
+            skipped.append(module_name)
+            continue
+        if reqs.get("metabolome") == "required" and not data_types["metabolome"]:
+            skipped.append(module_name)
+            continue
+
+        existing.add(module_name)
+        steps.append({
+            "module": module_name,
+            "id": f"step{start_index + len(steps)}_{module_name}",
+            "depends_on": [validator_id],
+        })
+
+    return steps, skipped
+
+
+def _build_plan(
+    query: str,
+    template: Optional[Dict[str, Any]] = None,
+    detected: Optional[List[Tuple[str, float]]] = None,
+    unavailable: Optional[List[str]] = None,
+) -> ExecutionPlan:
+    """Build execution plan from template and/or keyword detection.
+
+    Template and keyword routing are combined rather than mutually exclusive: a
+    template match used to discard every other module the user asked for
+    ("run PCoA and find markers" planned only markers).
+    """
+    notes: List[str] = []
+    if detected is None or unavailable is None:
+        detected, unavailable = _detect_modules_from_keywords(query)
+    data_types = _infer_data_type(query)
+    skipped_for_data: List[str] = []
 
     if template:
-        steps_raw = template["steps"]
+        # Deep-ish copy: _apply_best_practices writes into params/depends_on and
+        # would otherwise mutate ANALYSIS_TEMPLATES for every later request.
+        steps_raw = [
+            dict(s, params=dict(s.get("params", {})), depends_on=list(s.get("depends_on", [])))
+            for s in template["steps"]
+        ]
         notes.append(f"Matched template: {template['name']}")
         notes.append(template["description"])
+        notes.extend(template.get("notes", []))
+
+        validator = next((s for s in steps_raw if s["module"] == "data_validator"), None)
+        validator_id = validator["id"] if validator else "step1_validate"
+        extra, skipped_for_data = _keyword_steps(
+            detected,
+            data_types,
+            existing_modules={s["module"] for s in steps_raw},
+            start_index=len(steps_raw) + 1,
+            validator_id=validator_id,
+        )
+        if extra:
+            steps_raw.extend(extra)
+            notes.append(
+                "Added from the query on top of the template: "
+                + ", ".join(s["module"] for s in extra)
+            )
     else:
-        # Fall back to keyword-based module detection
-        detected = _detect_modules_from_keywords(query)
-        data_types = _infer_data_type(query)
-
         steps_raw = [{"module": "data_validator", "id": "step1_validate"}]
+        extra, skipped_for_data = _keyword_steps(detected, data_types)
+        steps_raw.extend(extra)
+        notes.append(
+            "Keyword-based planning detected: "
+            + (", ".join(s["module"] for s in extra) if extra else "nothing")
+        )
 
-        for module_name, score in detected:
-            spec = get_module_spec(module_name)
-            if not spec:
-                continue
+    # Drop steps whose module has no registered spec (templates still reference
+    # modules that were never registered) and repair the dependency edges.
+    steps_raw, dropped = _drop_unrunnable_steps(steps_raw)
+    if dropped:
+        notes.append(
+            "Skipped (no executable module registered): " + ", ".join(sorted(dropped))
+        )
+    unavailable = _filter_covered_aliases(unavailable, {s["module"] for s in steps_raw})
+    if unavailable:
+        notes.append(
+            "Requested but not available in this deployment: "
+            + ", ".join(sorted(unavailable))
+        )
+    if skipped_for_data:
+        notes.append(
+            "Skipped (query scoped to "
+            + ("microbiome" if data_types["microbiome"] else "metabolome")
+            + " only): " + ", ".join(sorted(set(skipped_for_data)))
+        )
 
-            # Skip modules that need data we don't have
-            reqs = spec.input_requirements
-            if reqs.get("microbiome") == "required" and not data_types["microbiome"]:
-                continue
-            if reqs.get("metabolome") == "required" and not data_types["metabolome"]:
-                continue
-
-            step_id = f"step{len(steps_raw)+1}_{module_name}"
-            depends_on = ["step1_validate"]
-
-            # Add dependencies on ordination steps for integration methods
-            if module_name == "procrustes":
-                depends_on = ["step1_validate"]  # Will be resolved later
-
-            steps_raw.append({
-                "module": module_name,
-                "id": step_id,
-                "depends_on": depends_on,
-            })
-
-        notes.append(f"Keyword-based planning detected: {[m for m, _ in detected[:5]]}")
+    analysis_modules = [s for s in steps_raw if s["module"] != "data_validator"]
+    if not analysis_modules and not (template and template.get("advisory")):
+        return _clarification_plan(query, unavailable)
 
     # Apply best practices
     steps_raw = _apply_best_practices(steps_raw, query)
@@ -603,9 +905,25 @@ def _build_plan(query: str, template: Optional[Dict[str, Any]] = None) -> Execut
         if s["module"] == "procrustes" and ordination_steps:
             s["depends_on"] = list(ordination_steps.values())
 
+    # The report summarises everything, so it must run last no matter how it got
+    # into the plan (template, keyword hit or best-practice injection).
+    reports = [s for s in steps_raw if s["module"] == "report_generator"]
+    others = [s for s in steps_raw if s["module"] != "report_generator"]
+    if reports:
+        upstream = [s["id"] for s in others if s["module"] != "data_validator"]
+        for r in reports:
+            r["depends_on"] = upstream or [s["id"] for s in others]
+        steps_raw = others + reports
+
+    if template and template.get("advisory"):
+        notes.append(
+            "Advisory request: no analysis steps were planned - the answer is a "
+            "method recommendation, not a pipeline."
+        )
+
     # Build PlanStep objects
     plan_steps = []
-    for i, s in enumerate(steps_raw):
+    for s in steps_raw:
         spec = get_module_spec(s["module"])
         desc = spec.description if spec else ""
         plan_steps.append(PlanStep(
@@ -616,16 +934,12 @@ def _build_plan(query: str, template: Optional[Dict[str, Any]] = None) -> Execut
             description=desc,
         ))
 
-    # Estimate time
-    n_steps = len(plan_steps)
-    est_time = f"~{n_steps * 15}-{(n_steps * 15) + 30} seconds"
-    if n_steps > 8:
-        est_time = f"~{(n_steps * 15) // 60}-{(n_steps * 15 + 60) // 60} minutes"
+    _prune_dangling_dependencies(plan_steps)
 
     return ExecutionPlan(
         query=query,
         steps=plan_steps,
-        estimated_time=est_time,
+        estimated_time=_estimate_time(len(plan_steps)),
         notes=notes,
     )
 
@@ -659,60 +973,106 @@ class AnalysisPlanner:
         else:
             return self._rule_plan(query, context)
 
+    def _data_aware_plan(self, query: str, context: Dict[str, Any]) -> Optional[ExecutionPlan]:
+        """Recommend a pipeline from the uploaded files alone.
+
+        Only used when the query itself carries no analysis intent - it ignores
+        the query, so running it unconditionally (as before) meant any session
+        query got the same generic pipeline back.
+        """
+        data_info = _infer_data_type_from_files(context["session_files"])
+        if data_info["format"] == "unknown":
+            return None
+
+        steps = _get_recommended_steps(data_info)
+        steps, dropped = _drop_unrunnable_steps(steps)
+        steps = _apply_best_practices(steps, query)
+
+        plan_steps = []
+        for s in steps:
+            spec = get_module_spec(s["module"])
+            desc = spec.description if spec else ""
+            plan_steps.append(PlanStep(
+                id=s["id"],
+                module=s["module"],
+                params=s.get("params", {}),
+                depends_on=s.get("depends_on", []),
+                description=desc,
+            ))
+        _prune_dangling_dependencies(plan_steps)
+
+        notes = [
+            "No specific analysis was named - recommending a pipeline from the uploaded data.",
+            f"Auto-detected data format: {data_info['format']}",
+            f"Files: {', '.join(context['session_files'])}",
+        ]
+        if data_info["has_metaphlan"]:
+            notes.append("MetaPhlAn shotgun data detected - using species-level profiling")
+        if data_info["has_humann3"]:
+            notes.append("HUMAnN3 functional data detected - adding pathway analysis")
+        if dropped:
+            notes.append("Skipped (no executable module registered): " + ", ".join(sorted(dropped)))
+
+        return ExecutionPlan(
+            query=query,
+            steps=plan_steps,
+            estimated_time=_estimate_time(len(plan_steps)),
+            notes=notes,
+        )
+
     def _rule_plan(self, query: str, context: Optional[Dict[str, Any]] = None) -> ExecutionPlan:
         """Rule-based planning (default, no API key needed)."""
-        
-        # Check for data-aware auto-analysis
-        if context and context.get("session_files"):
-            data_info = _infer_data_type_from_files(context["session_files"])
-            if data_info["format"] != "unknown":
-                # User asked for auto-analysis with uploaded files
-                steps = _get_recommended_steps(data_info)
-                steps = _apply_best_practices(steps, query)
-                
-                plan_steps = []
-                for i, s in enumerate(steps):
-                    spec = get_module_spec(s["module"])
-                    desc = spec.description if spec else ""
-                    plan_steps.append(PlanStep(
-                        id=s["id"],
-                        module=s["module"],
-                        params=s.get("params", {}),
-                        depends_on=s.get("depends_on", []),
-                        description=desc,
-                    ))
-                
-                notes = [
-                    f"Auto-detected data format: {data_info['format']}",
-                    f"Files: {', '.join(context['session_files'])}",
-                ]
-                if data_info["has_metaphlan"]:
-                    notes.append("MetaPhlAn shotgun data detected - using species-level profiling")
-                if data_info["has_humann3"]:
-                    notes.append("HUMAnN3 functional data detected - adding pathway analysis")
-                
-                return ExecutionPlan(
-                    query=query,
-                    steps=plan_steps,
-                    estimated_time=f"~{len(plan_steps) * 15}-{len(plan_steps) * 15 + 30} seconds",
-                    notes=notes,
-                )
-        
-        # Try template matching first
         template = _match_template(query)
-        plan = _build_plan(query, template)
+        detected, unavailable = _detect_modules_from_keywords(query)
 
-        # Add context-based adjustments
-        if context:
-            if context.get("available_data") == "microbiome_only":
-                # Remove metabolome-dependent steps
-                plan.steps = [s for s in plan.steps
-                              if get_module_spec(s.module).input_requirements.get("metabolome") != "required"]
-                plan.notes.append("Adjusted for microbiome-only data")
-            elif context.get("available_data") == "metabolome_only":
-                plan.steps = [s for s in plan.steps
-                              if get_module_spec(s.module).input_requirements.get("microbiome") != "required"]
-                plan.notes.append("Adjusted for metabolome-only data")
+        # Fall back to file-driven recommendations only when the query says
+        # nothing specific ("analyze my data", or nothing we recognise).
+        query_is_open_ended = (
+            (template is None and not detected)
+            or (template is not None and template["name"] == "auto_analyze")
+        )
+        if query_is_open_ended and context and context.get("session_files"):
+            data_plan = self._data_aware_plan(query, context)
+            if data_plan is not None:
+                pending = _filter_covered_aliases(
+                    unavailable, {s.module for s in data_plan.steps}
+                )
+                if pending:
+                    data_plan.notes.append(
+                        "Requested but not available in this deployment: "
+                        + ", ".join(sorted(pending))
+                    )
+                logger.info("Data-aware plan generated: %d steps", len(data_plan.steps))
+                return data_plan
+
+        plan = _build_plan(query, template, detected, unavailable)
+
+        # Drop steps whose data the session does not actually hold.
+        available = _available_omics_from_context(context)
+        if available == "microbiome_only":
+            plan.steps = [s for s in plan.steps
+                          if get_module_spec(s.module).input_requirements.get("metabolome") != "required"]
+            plan.notes.append("Adjusted for microbiome-only data")
+        elif available == "metabolome_only":
+            plan.steps = [s for s in plan.steps
+                          if get_module_spec(s.module).input_requirements.get("microbiome") != "required"]
+            plan.notes.append("Adjusted for metabolome-only data")
+
+        if available:
+            _prune_dangling_dependencies(plan.steps)
+            if not [s for s in plan.steps if s.module != "data_validator"]:
+                # Everything the query asked for needs data this session lacks.
+                return _clarification_plan(
+                    query,
+                    unavailable,
+                    reason=(
+                        f"every analysis this query asks for needs data the "
+                        f"session does not have (it provides "
+                        f"{available.replace('_only', '')} only), so no steps "
+                        f"were planned."
+                    ),
+                )
+            plan.estimated_time = _estimate_time(len(plan.steps))
 
         logger.info(f"Rule-based plan generated: {len(plan.steps)} steps")
         return plan

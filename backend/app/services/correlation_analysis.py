@@ -27,20 +27,14 @@ def _bh_fdr(pvalues: np.ndarray) -> np.ndarray:
 
     Returns:
         Array of q-values (adjusted p-values).
+
+    Note:
+        The monotonicity (step-down) pass must run over p-values sorted
+        ascending; applying it to unsorted values, as an earlier version did,
+        produced q-values that depended on input row order.
     """
-    pvals = np.asarray(pvalues, dtype=float)
-    n = len(pvals)
-    if n == 0:
-        return pvals
-    # Rank p-values (1 = smallest)
-    from scipy.stats import rankdata
-    ranks = rankdata(pvals, method='ordinal')
-    # BH correction
-    qvals = pvals * n / ranks
-    # Ensure monotonicity by backward pass
-    qvals = np.minimum.accumulate(qvals[::-1])[::-1]
-    qvals = np.clip(qvals, 0.0, 1.0)
-    return qvals
+    from app.services.analysis_engine import adjust_pvalues
+    return adjust_pvalues(pvalues, 'fdr_bh')
 
 
 def compute_feature_correlation(

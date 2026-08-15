@@ -137,23 +137,32 @@ class NormalizeResponse(BaseModel):
 
 # ─────────────────────────────── Analysis Schemas
 class AnalysisRequest(BaseModel):
-    """Request to run an analysis job."""
-    analysis_type: str = Field(..., description="Analysis type: alpha, beta, differential, pcoa, nmds, heatmap, etc.")
+    """Request to run an analysis job.
+
+    ``analysis_type`` is optional: the endpoint path already identifies the
+    analysis. It used to be required *and* to use a different naming convention
+    than the routes (POST /analyze/random-forest demanded
+    ``analysis_type="random_forest"``), so the obvious request was rejected.
+    Values that do not match a known analysis are ignored rather than refused.
+    """
+    analysis_type: Optional[str] = Field(
+        default=None,
+        description="Optional, informational only; the endpoint path selects the analysis.",
+    )
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Analysis-specific parameters")
     group_column: Optional[str] = Field(default=None, description="Metadata column for grouping")
-    comparisons: Optional[List[str]] = Field(default=None, description="Groups to compare")
-
-    @field_validator("analysis_type")
-    def analysis_type_must_be_valid(cls, v):
-        allowed = {
-            "alpha", "beta", "differential", "pcoa", "nmds", "heatmap",
-            "taxonomy_bar", "venn", "upset", "network", "correlation",
-            "lefse", "ancom", "deseq2", "aldex2", "maaslin2", "random_forest",
-            "permanova", "anosim",
-        }
-        if v not in allowed:
-            raise ValueError(f"analysis_type must be one of {allowed}")
-        return v
+    comparisons: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Which groups of `group_column` to compare. Give two labels for a "
+            "pairwise test, or one label to compare it against `reference_group`. "
+            "Required when the column has more than two groups."
+        ),
+    )
+    reference_group: Optional[str] = Field(
+        default=None,
+        description="Baseline group; fold changes are expressed relative to it.",
+    )
 
 
 class AnalysisResponse(BaseModel):
@@ -214,8 +223,17 @@ class StrainAnalysisResponse(BaseModel):
 
 # ─────────────────────────────── Export Schemas
 class ExportRequest(BaseModel):
-    """Request to export data or results."""
-    export_type: str = Field(..., description="Export type: data, result, plot, report")
+    """Request to export data or results.
+
+    ``export_type`` defaults to ``data``: exporting the session's feature table
+    is the only branch that needs no further input (``result`` needs a job_id,
+    ``plot``/``report`` need generated artefacts), so ``{"format": "csv"}``
+    alone is a complete request.
+    """
+    export_type: str = Field(
+        default="data",
+        description="Export type: data (default), result, plot, report, metadata",
+    )
     format: str = Field(default="csv", description="Export format: csv, tsv, xlsx, biom, json, pdf, png, svg, html")
     file_id: Optional[int] = Field(default=None, description="Specific file ID to export")
     job_id: Optional[int] = Field(default=None, description="Specific job ID to export")

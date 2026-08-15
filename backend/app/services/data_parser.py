@@ -75,80 +75,10 @@ class DataParser:
             logger.error(f"Failed chunked parse of CSV/TSV file {file_path}: {e}")
             raise ValueError(f"Failed chunked parse: {e}") from e
 
-    def parse_metaphlan(self, file_path: str) -> pd.DataFrame:
-        """Parse MetaPhlAn merged abundance table.
-
-        Expected format:
-            - First column: clade_name (taxonomy path like k__Bacteria|p__Firmicutes|...)
-            - Subsequent columns: sample relative abundances (0-100)
-
-        Returns:
-            DataFrame with taxonomy clades as index and samples as columns.
-        """
-        try:
-            # Read first line to check header
-            with open(file_path, 'r', encoding='utf-8') as f:
-                first_line = f.readline().strip()
-
-            df = pd.read_csv(
-                file_path,
-                sep='	',
-                index_col=0,
-                header=0,
-                engine='python',
-            )
-
-            # Rename index to remove leading '#'
-            df.index.name = 'clade_name'
-
-            # Convert to numeric
-            df = df.apply(pd.to_numeric, errors='coerce')
-            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
-
-            logger.info(
-                f"Parsed MetaPhlAn file {file_path}: shape={df.shape}, "
-                f"clades={len(df.index)}, samples={len(df.columns)}"
-            )
-            return df
-
-        except Exception as e:
-            logger.error(f"Failed to parse MetaPhlAn file {file_path}: {e}")
-            raise ValueError(f"Failed to parse MetaPhlAn file: {e}") from e
-
-    def parse_humann3(self, file_path: str) -> pd.DataFrame:
-        """Parse HUMAnN3 gene family or pathway abundance table.
-
-        Expected format:
-            - First column: feature name (UniRef90_xxx or pathway name)
-            - Subsequent columns: sample abundances (RPK or CPM)
-            - May contain stratified rows (feature|g__Genus.s__Species)
-
-        Returns:
-            DataFrame with features as index and samples as columns.
-        """
-        try:
-            df = pd.read_csv(
-                file_path,
-                sep='	',
-                index_col=0,
-                header=0,
-                comment='#',
-                engine='python',
-            )
-
-            # Convert to numeric
-            df = df.apply(pd.to_numeric, errors='coerce')
-            df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
-
-            logger.info(
-                f"Parsed HUMAnN3 file {file_path}: shape={df.shape}, "
-                f"features={len(df.index)}, samples={len(df.columns)}"
-            )
-            return df
-
-        except Exception as e:
-            logger.error(f"Failed to parse HUMAnN3 file {file_path}: {e}")
-            raise ValueError(f"Failed to parse HUMAnN3 file: {e}") from e
+    # NOTE: parse_metaphlan / parse_humann3 are defined further down in this
+    # class. They used to be defined twice, with the earlier (dead) copies here;
+    # the later definitions were the ones actually in effect and are the only
+    # ones kept.
 
     def parse_csv_tsv(self, file_path: str, sep: str = ',') -> pd.DataFrame:
         """Parse CSV/TSV feature table.

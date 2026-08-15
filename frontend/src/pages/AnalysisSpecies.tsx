@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useRequiredSession } from "@/hooks/useRequiredSession";
+import { useMetadataColumns } from "@/hooks/useMetadataColumns";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
 import type { PlotlyFigure, AnalysisJobResponse, DifferentialParams } from "@/types";
@@ -28,7 +31,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const metadataColumns = ["Treatment", "Group", "Site", "Timepoint", "Gender", "Age"];
 
 function ParameterItem({ label, children, tooltip }: { label: string; children: React.ReactNode; tooltip?: string }) {
   return (
@@ -228,7 +230,10 @@ export function AnalysisSpecies() {
   const [mlGroup, setMlGroup] = useState("Treatment");
   const [mlCV, setMlCV] = useState("5-fold");
 
-  const sessionId = sessionStore.analysisResults?.summary ? "mock-session" : "mock-session";
+  const { sessionId, hasSession } = useRequiredSession();
+  // Grouping variables come from the uploaded metadata, not a fixed list.
+  const { groupingColumns } = useMetadataColumns(sessionId);
+  const metadataColumns = groupingColumns.map((c) => c.name);
 
   const handleRunCommunity = useCallback(async () => {
     clearResult();
@@ -361,6 +366,7 @@ export function AnalysisSpecies() {
 
   return (
     <div data-testid="analysis-species-page" className={cn("space-y-6")}>
+      {!hasSession && <NoSessionBanner />}
       <div>
         <h1 data-testid="analysis-title" className="text-2xl font-bold tracking-tight">Species Analysis</h1>
         <p className="text-muted-foreground">

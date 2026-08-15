@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useRequiredSession } from "@/hooks/useRequiredSession";
 import { downloadFigure, downloadCSV } from "@/utils/api";
 import api from "@/utils/api";
 import type { AnalysisHistoryItem } from "@/types";
@@ -254,6 +255,7 @@ function downloadChunkedCSV(data: Record<string, string | number>[], filename: s
 
 export function Results() {
   const sessionStore = useSessionStore();
+  const { sessionId } = useRequiredSession();
   const history = sessionStore.analysisHistory || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -305,8 +307,12 @@ export function Results() {
         <Button 
           className="gap-2"
           onClick={async () => {
+            if (!sessionId) {
+              console.error('PDF report download requires an active session');
+              return;
+            }
             try {
-              const response = await api.post(`/sessions/${sessionStore.analysisResults?.summary ? 'mock-session' : 'mock-session'}/export/report`, {
+              const response = await api.post(`/sessions/${sessionId}/export/report`, {
                 format: 'pdf',
               }, {
                 responseType: 'blob',
@@ -314,7 +320,7 @@ export function Results() {
               const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
               const link = document.createElement('a');
               link.href = url;
-              link.download = `Meta2bAnalyst_Report_${sessionStore.analysisResults?.summary ? 'mock-session' : 'mock-session'}.pdf`;
+              link.download = `Meta2bAnalyst_Report_${sessionId}.pdf`;
               document.body.appendChild(link);
               link.click();
               document.body.removeChild(link);
@@ -323,7 +329,7 @@ export function Results() {
               console.error('PDF report download failed:', error);
             }
           }}
-          disabled={history.length === 0}
+          disabled={history.length === 0 || !sessionId}
         >
           <FileText className="w-4 h-4" />
           Download Comprehensive Report (PDF)

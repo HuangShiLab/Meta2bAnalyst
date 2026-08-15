@@ -19,6 +19,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
+COPY scripts/ ./scripts/
+
+# NOTE: R integration (DESeq2 / edgeR / vegan / phyloseq / ANCOMBC / ALDEx2 /
+# MaAsLin3 / mixOmics / WGCNA) is NOT installed in this image. Those methods
+# refuse to run rather than silently substituting a Python approximation, so the
+# image is honest about what it can compute. To enable them, extend this stage:
+#
+#   RUN apt-get update && apt-get install -y --no-install-recommends \
+#         r-base r-base-dev libcurl4-openssl-dev libssl-dev libxml2-dev \
+#       && rm -rf /var/lib/apt/lists/*
+#   RUN pip install --no-cache-dir rpy2==3.5.15
+#   RUN python scripts/install_r_packages.py
+#
+# This adds roughly 1.5 GB and a long build; keep it in a separate image tag if
+# most users only need the Python analyses.
 
 # Create uploads and logs directories
 RUN mkdir -p uploads logs

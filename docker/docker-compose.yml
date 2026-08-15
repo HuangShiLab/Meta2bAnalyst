@@ -47,6 +47,41 @@ services:
       retries: 5
       start_period: 30s
 
+  # Celery worker. Without it, any analysis large enough to take the async path
+  # was queued and never executed: the API accepted the task and the job sat at
+  # "pending" forever while the client polled. The backend now probes for a live
+  # worker and falls back to synchronous execution when none answers, so this
+  # service is what actually enables background processing.
+  worker:
+    build:
+      context: ../backend
+      dockerfile: ../docker/backend.Dockerfile
+    container_name: meta2b-worker
+    restart: unless-stopped
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./meta2bAnalyst.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - UPLOAD_DIR=/app/uploads
+      - LOG_DIR=/app/logs
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    volumes:
+      # Must share the uploads volume with the backend: tasks read the session's
+      # files from disk by path.
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery_app.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   frontend:
     build:
       context: ../frontend

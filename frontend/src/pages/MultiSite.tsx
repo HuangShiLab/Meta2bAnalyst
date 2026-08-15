@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useRequiredSession } from "@/hooks/useRequiredSession";
+import { useMetadataColumns } from "@/hooks/useMetadataColumns";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
 import type { PlotlyFigure, AnalysisJobResponse } from "@/types";
@@ -31,7 +34,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const metadataColumns = ["Treatment", "Group", "Site", "Timepoint", "Subject", "Gender", "Age"];
 const siteOptions = ["Oral", "Gut", "Skin", "Nasal", "Vaginal"];
 
 function ParameterItem({ label, children, tooltip }: { label: string; children: React.ReactNode; tooltip?: string }) {
@@ -216,7 +218,10 @@ export function MultiSite() {
   const [networkCorrMethod, setNetworkCorrMethod] = useState("Spearman");
   const [networkThreshold, setNetworkThreshold] = useState(0.3);
 
-  const sessionId = sessionStore.analysisResults?.summary ? "mock-session" : "mock-session";
+  const { sessionId, hasSession } = useRequiredSession();
+  // Grouping variables come from the uploaded metadata, not a fixed list.
+  const { groupingColumns } = useMetadataColumns(sessionId);
+  const metadataColumns = groupingColumns.map((c) => c.name);
 
   const handleRunComparison = useCallback(async () => {
     clearResult();
@@ -378,6 +383,7 @@ export function MultiSite() {
 
   return (
     <div data-testid="multi-site-page" className={cn("space-y-6")}>
+      {!hasSession && <NoSessionBanner />}
       <div>
         <h1 data-testid="multi-site-title" className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Globe className="h-6 w-6" /> Multi-Site Integration

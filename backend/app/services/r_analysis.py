@@ -44,8 +44,100 @@ def rpy2_available() -> bool:
 
 
 def rpackage_available(pkg: str) -> bool:
-    """Check if a specific R package is available."""
-    return R_PACKAGES.get(pkg, False)
+    """Check if a specific R package is available.
+
+    Packages are probed once at import for a fixed list; anything else is
+    imported on demand so that later-installed packages are picked up.
+    """
+    if pkg in R_PACKAGES:
+        return R_PACKAGES[pkg]
+    if not R_AVAILABLE:
+        R_PACKAGES[pkg] = False
+        return False
+    try:
+        importr(pkg)
+        R_PACKAGES[pkg] = True
+    except Exception:
+        R_PACKAGES[pkg] = False
+    return R_PACKAGES[pkg]
+
+
+# ─────────────────────────────── Method provenance
+#
+# Several methods here have a Python approximation that stands in when the real
+# R package is missing. Those approximations are NOT the published method -- the
+# "DESeq2" fallback is a Welch t-test, "LEfSe" is a Kruskal screen with a
+# Cohen's-d effect size, and so on. They used to be substituted silently while
+# the response still reported `test_method: "DESeq2"`, which misrepresents what
+# produced the numbers. Callers must now opt in explicitly, and every result
+# carries a provenance block saying which engine actually ran.
+
+class ApproximationRefused(RuntimeError):
+    """Raised when a real implementation is unavailable and no opt-in was given."""
+
+
+#: method key -> (required R package, what the Python fallback actually does)
+APPROXIMATION_NOTES: Dict[str, tuple] = {
+    'deseq2': ('DESeq2', 'Welch t-test on untransformed values with BH FDR; no '
+                         'negative-binomial model, dispersion shrinkage or size factors.'),
+    'edger': ('edgeR', 'Welch t-test on untransformed values with BH FDR; no '
+                       'negative-binomial model or TMM normalisation.'),
+    'ancombc': ('ANCOMBC', 'CLR transform plus per-feature testing; no bias correction '
+                           'or structural-zero handling.'),
+    'maaslin3': ('MaAsLin3', 'Per-feature linear models; no MaAsLin3 normalisation, '
+                             'prevalence/abundance joint modelling or random effects.'),
+    'aldex2': ('ALDEx2', 'Single CLR point estimate; no Monte-Carlo Dirichlet sampling.'),
+    'lefse': ('lefser', 'Kruskal-Wallis screen with a standardised mean difference in '
+                        'place of the LDA effect size; no pairwise Wilcoxon nesting.'),
+    'wgcna': ('WGCNA', 'Correlation matrix with a TOM approximation and simplified '
+                       'tree cut; not the WGCNA module-detection algorithm.'),
+    'diablo': ('mixOmics', 'PLS-style projection; not the DIABLO multi-block algorithm.'),
+}
+
+
+def engine_for(method: str, allow_approximation: bool = False) -> Dict[str, Any]:
+    """Resolve which implementation will run, or refuse.
+
+    Args:
+        method: Key from :data:`APPROXIMATION_NOTES`.
+        allow_approximation: Whether the caller accepts the Python stand-in.
+
+    Returns:
+        Provenance dict: ``engine``, ``is_approximation``, and, when approximate,
+        ``approximation_note`` describing what the substitute actually computes.
+
+    Raises:
+        ApproximationRefused: If the R package is missing and the caller has not
+            opted in to the approximation.
+    """
+    pkg, note = APPROXIMATION_NOTES.get(method, (None, ''))
+    if pkg and R_AVAILABLE and rpackage_available(pkg):
+        return {
+            'engine': f'R::{pkg}',
+            'is_approximation': False,
+            'r_available': True,
+        }
+
+    if not allow_approximation:
+        raise ApproximationRefused(
+            f"'{method}' requires the R package '{pkg}', which is not installed on "
+            f"this server, so the published method cannot be run. A Python "
+            f"approximation is available but it is NOT {pkg}: {note} "
+            f"Install {pkg} in R, or re-send the request with "
+            f'"allow_approximation": true in `parameters` to accept the '
+            f"approximation (results must not be reported as {pkg})."
+        )
+
+    return {
+        'engine': f'python-approx::{method}',
+        'is_approximation': True,
+        'r_available': False,
+        'approximation_note': note,
+        'reporting_guidance': (
+            f'Do not describe these results as {pkg}. Report them as an in-house '
+            f'approximation, or install {pkg} and re-run.'
+        ),
+    }
 
 
 def run_r_script(script_path: Path, args: List[str]) -> subprocess.CompletedProcess:
@@ -104,15 +196,8 @@ def _python_deseq2_fallback(
 
     result_df = pd.DataFrame(results)
     if len(result_df) > 0:
-        from scipy.stats import rankdata
-        pvalues = result_df['pvalue'].values
-        n = len(pvalues)
-        if n > 0:
-            ranks = rankdata(pvalues, method='max')
-            padj = np.minimum(pvalues * n / ranks, 1.0)
-            result_df['padj'] = padj
-        else:
-            result_df['padj'] = pvalues
+        from app.services.analysis_engine import adjust_pvalues
+        result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, p_adjust)
         result_df = result_df.sort_values('pvalue')
     return result_df
 
@@ -157,15 +242,8 @@ def _python_edger_fallback(
 
     result_df = pd.DataFrame(results)
     if len(result_df) > 0:
-        from scipy.stats import rankdata
-        pvalues = result_df['PValue'].values
-        n = len(pvalues)
-        if n > 0:
-            ranks = rankdata(pvalues, method='max')
-            fdr = np.minimum(pvalues * n / ranks, 1.0)
-            result_df['FDR'] = fdr
-        else:
-            result_df['FDR'] = pvalues
+        from app.services.analysis_engine import adjust_pvalues
+        result_df['FDR'] = adjust_pvalues(result_df['PValue'].values, p_adjust)
         result_df = result_df.sort_values('PValue')
     return result_df
 
@@ -829,19 +907,12 @@ def _python_ancombc_fallback(
     result_df = pd.DataFrame(results)
     if len(result_df) > 0:
         # Multiple testing correction
-        pvalues = result_df['pvalue'].values
-        n = len(pvalues)
-        from scipy.stats import rankdata
-        if p_adj_method == 'BH':
-            ranks = rankdata(pvalues, method='max')
-            padj = np.minimum(pvalues * n / ranks, 1.0)
-        elif p_adj_method == 'bonferroni':
-            padj = np.minimum(pvalues * n, 1.0)
-        else:
-            padj = pvalues  # fallback
-        result_df['padj'] = padj
-        result_df['qvalue'] = padj  # simplified
-        result_df['diff_abn'] = (result_df['pvalue'] < 0.05) & (result_df['W'].abs() > 2.0)
+        from app.services.analysis_engine import adjust_pvalues
+        result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, p_adj_method)
+        result_df['qvalue'] = result_df['padj']  # this approximation has no separate q-value
+        # Call features differential on the ADJUSTED p-value; screening on the raw
+        # p-value here made the correction computed above purely decorative.
+        result_df['diff_abn'] = (result_df['padj'] < 0.05) & (result_df['W'].abs() > 2.0)
         result_df = result_df.sort_values('pvalue')
 
     return result_df

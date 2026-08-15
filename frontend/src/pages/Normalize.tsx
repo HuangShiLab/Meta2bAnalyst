@@ -112,7 +112,7 @@ export function Normalize() {
                   <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>缩放将样本总读数归一化，使样本间可比。TSS 最简单，CSS 和 UQ 更稳健。</p>
+                  <p>Scaling normalizes total sample reads for comparability. TSS is simplest; CSS and UQ are more robust.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -167,7 +167,7 @@ export function Normalize() {
                   <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>变换用于使数据分布更接近正态，适合某些统计检验和距离计算。</p>
+                  <p>Transformation makes data distribution closer to normal, suitable for certain statistical tests and distance calculations.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -233,7 +233,7 @@ export function Normalize() {
         <StatusAlert
           status="success"
           title="Normalization Complete"
-          description={`Configuration saved: ${rarefaction !== "none" ? "稀疏化" : "无稀疏化"} → ${scaling !== "none" ? scaling.toUpperCase() : "无缩放"} → ${!scalingSelected && transformation !== "none" ? transformation.toUpperCase() : "无变换"}`}
+          description={`Configuration saved: ${rarefaction !== "none" ? "rarefaction" : "no rarefaction"} → ${scaling !== "none" ? scaling.toUpperCase() : "no scaling"} → ${!scalingSelected && transformation !== "none" ? transformation.toUpperCase() : "no transformation"}`}
         />
       )}
 

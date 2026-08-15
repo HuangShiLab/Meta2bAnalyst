@@ -233,14 +233,8 @@ class StrainAnalyzer:
 
         result_df = pd.DataFrame(results)
         if len(result_df) > 0:
-            from scipy.stats import rankdata
-
-            pvalues = result_df['pvalue'].values
-            n = len(pvalues)
-            if n > 0:
-                ranks = rankdata(pvalues, method='max')
-                padj = np.minimum(pvalues * n / ranks, 1.0)
-                result_df['padj'] = padj
+            from app.services.analysis_engine import adjust_pvalues
+            result_df['padj'] = adjust_pvalues(result_df['pvalue'].values, 'fdr_bh')
             result_df = result_df.sort_values('pvalue')
 
         return result_df

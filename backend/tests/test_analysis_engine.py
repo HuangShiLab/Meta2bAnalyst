@@ -168,12 +168,19 @@ class TestPERMANOVA:
         assert 'n_permutations' in result
 
     def test_permanova_single_group(self, sample_feature_table, sample_metadata):
+        """A single group is a failure, not a result.
+
+        This used to return ``{'error': ...}``, which every endpoint then saved
+        and reported as ``status='completed'`` with HTTP 201.
+        """
+        import pytest
+
         engine = AnalysisEngine()
         dist = engine.beta_diversity(sample_feature_table, distance='braycurtis')
         meta = sample_metadata.copy()
         meta['Treatment'] = 'A'
-        result = engine.permanova(dist, meta, 'Treatment', n_permutations=99)
-        assert 'error' in result
+        with pytest.raises(ValueError, match='at least 2 groups'):
+            engine.permanova(dist, meta, 'Treatment', n_permutations=99)
 
 
 class TestANOSIM:
@@ -188,12 +195,15 @@ class TestANOSIM:
         assert 'n_permutations' in result
 
     def test_anosim_single_group(self, sample_feature_table, sample_metadata):
+        """See test_permanova_single_group: failures must raise."""
+        import pytest
+
         engine = AnalysisEngine()
         dist = engine.beta_diversity(sample_feature_table, distance='braycurtis')
         meta = sample_metadata.copy()
         meta['Treatment'] = 'A'
-        result = engine.anosim(dist, meta, 'Treatment', n_permutations=99)
-        assert 'error' in result
+        with pytest.raises(ValueError, match='at least 2 groups'):
+            engine.anosim(dist, meta, 'Treatment', n_permutations=99)
 
 
 class TestRandomForest:

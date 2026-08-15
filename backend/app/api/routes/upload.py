@@ -18,12 +18,18 @@ from app.database import get_db
 from app.models import DataFile, Session as SessionModel
 from app.schemas import ErrorResponse, UploadListResponse, UploadResponse
 from app.services.data_parser import detect_file_format, parse_data_file
+from app.services.orientation import OrientationError, resolve_feature_table
+from app.utils.file_storage import sanitize_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Chunk upload state storage (in-memory; for production use Redis or DB)
 _chunk_uploads: dict[str, dict] = {}
+
+FEATURE_TABLE_TYPES = (
+    "feature_table", "biom", "shared", "microbiome", "metabolome", "metaphlan", "humann3",
+)
 
 
 def get_file_extension(filename: str) -> str:
@@ -35,6 +41,66 @@ def validate_file_extension(filename: str) -> bool:
     """Check if file extension is allowed."""
     ext = get_file_extension(filename)
     return ext in settings.ALLOWED_EXTENSIONS
+
+
+def _load_session_metadata(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
+    """Load this session's metadata table, if one has already been uploaded."""
+    record = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == "metadata")
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    if not record:
+        return None
+    try:
+        df, _ = parse_data_file(Path(record.file_path), "metadata")
+        return df
+    except Exception as e:  # metadata is advisory here; never block an upload on it
+        logger.warning(f"Could not parse metadata for session {session_id}: {e}")
+        return None
+
+
+def _describe_upload(
+    df: pd.DataFrame,
+    file_type: str,
+    session_id: str,
+    db: DBSession,
+) -> dict:
+    """Derive sample/feature counts and names for a parsed upload.
+
+    Feature tables are first put into canonical features x samples orientation
+    (against the session metadata when available). Without this the recorded
+    sample_names can be taxon names -- e.g. a 261-sample x 44-genus table was
+    stored as "44 samples" named Genus_0..Genus_43.
+    """
+    orientation = None
+    if file_type in FEATURE_TABLE_TYPES:
+        try:
+            df, report = resolve_feature_table(
+                df, _load_session_metadata(session_id, db), name=file_type
+            )
+            orientation = report.to_dict()
+        except OrientationError as e:
+            # Record the file anyway; analyses will re-check and fail loudly.
+            logger.warning(f"Orientation unresolved for {file_type} upload: {e}")
+            orientation = {"confidence": "unresolved", "warnings": [str(e)]}
+
+    if file_type == "metadata":
+        sample_names, feature_names = list(df.index), list(df.columns)
+    else:
+        sample_names, feature_names = list(df.columns), list(df.index)
+
+    return {
+        "row_count": len(df),
+        "column_count": len(df.columns),
+        "sample_count": len(sample_names),
+        "feature_count": len(feature_names),
+        "sample_names": [str(s) for s in sample_names],
+        "feature_names": [str(f) for f in feature_names],
+        "extra_metadata": {"orientation": orientation} if orientation else None,
+    }
 
 
 async def save_upload_file(
@@ -185,12 +251,15 @@ async def complete_chunk_upload(
             detail=f"Incomplete upload. Missing chunks: {missing}",
         )
     
-    # Assemble chunks
+    # Assemble chunks. Both components are attacker-controlled form fields, so
+    # strip any directory part before joining -- otherwise an original_filename
+    # of "../../etc/x" escapes the session directory.
     session_dir = Path(settings.UPLOAD_DIR) / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
-    
-    safe_name = f"{upload_state['file_type']}_{upload_state['original_filename']}"
-    file_path = session_dir / safe_name
+
+    safe_type = sanitize_filename(Path(str(upload_state["file_type"])).name)
+    safe_original = sanitize_filename(Path(str(upload_state["original_filename"])).name)
+    file_path = session_dir / f"{safe_type}_{safe_original}"
     
     try:
         with open(file_path, "wb") as out_f:
@@ -213,40 +282,26 @@ async def complete_chunk_upload(
     
     # Parse and record
     file_size = os.path.getsize(file_path)
-    row_count, column_count, sample_count, feature_count, sample_names, feature_names = None, None, None, None, None, None
+    described = {}
     try:
         df, detected_format = parse_data_file(file_path, upload_state["file_type"], use_chunks=True)
-        row_count = len(df)
-        column_count = len(df.columns)
-        
-        if upload_state["file_type"] in ("feature_table", "biom", "shared", "microbiome", "metabolome"):
-            sample_names = list(df.columns)
-            feature_names = list(df.index)
-            sample_count = len(df.columns)
-            feature_count = len(df.index)
-        elif upload_state["file_type"] == "metadata":
-            sample_names = list(df.index)
-            feature_names = list(df.columns)
-            sample_count = len(df.index)
-            feature_count = len(df.columns)
-        else:
-            sample_names = list(df.columns)
-            feature_names = list(df.index)
+        described = _describe_upload(df, upload_state["file_type"], session_id, db)
     except Exception as parse_error:
         logger.warning(f"File parsing failed for {upload_state['original_filename']}: {parse_error}")
-    
+
     data_file = DataFile(
         session_id=session_id,
         file_type=upload_state["file_type"],
         file_path=str(file_path),
         original_name=upload_state["original_filename"],
         file_size=file_size,
-        row_count=row_count,
-        column_count=column_count,
-        sample_count=sample_count,
-        feature_count=feature_count,
-        sample_names=sample_names,
-        feature_names=feature_names,
+        row_count=described.get("row_count"),
+        column_count=described.get("column_count"),
+        sample_count=described.get("sample_count"),
+        feature_count=described.get("feature_count"),
+        sample_names=described.get("sample_names"),
+        feature_names=described.get("feature_names"),
+        extra_metadata=described.get("extra_metadata"),
     )
     db.add(data_file)
     db.commit()
@@ -261,11 +316,11 @@ async def complete_chunk_upload(
         file_type=upload_state["file_type"],
         original_name=upload_state["original_filename"],
         file_size=file_size,
-        row_count=row_count,
-        column_count=column_count,
-        sample_count=sample_count,
-        feature_count=feature_count,
-        sample_names=sample_names,
+        row_count=described.get("row_count"),
+        column_count=described.get("column_count"),
+        sample_count=described.get("sample_count"),
+        feature_count=described.get("feature_count"),
+        sample_names=described.get("sample_names"),
         status="success",
         message="Chunked upload completed successfully",
     )
@@ -352,31 +407,15 @@ async def upload_file(
         # Save file to disk
         file_path = await save_upload_file(file, session_id, file_type)
         
-        # Parse file to get metadata
-        row_count, column_count, sample_count, feature_count, sample_names, feature_names = None, None, None, None, None, None
+        # Parse file to derive sample/feature structure
+        described = {}
         try:
             df, detected_format = parse_data_file(file_path, file_type)
-            row_count = len(df)
-            column_count = len(df.columns)
-            
-            # For feature tables, rows=features, columns=samples
-            if file_type in ("feature_table", "biom", "shared", "microbiome", "metabolome", "metaphlan", "humann3"):
-                sample_names = list(df.columns)
-                feature_names = list(df.index)
-                sample_count = len(df.columns)
-                feature_count = len(df.index)
-            elif file_type == "metadata":
-                sample_names = list(df.index)
-                feature_names = list(df.columns)
-                sample_count = len(df.index)
-                feature_count = len(df.columns)
-            else:
-                sample_names = list(df.columns)
-                feature_names = list(df.index)
+            described = _describe_upload(df, file_type, session_id, db)
         except Exception as parse_error:
             logger.warning(f"File parsing failed for {file.filename}: {parse_error}")
             # File saved but parsing failed; still record it
-        
+
         # Create database record
         data_file = DataFile(
             session_id=session_id,
@@ -384,12 +423,13 @@ async def upload_file(
             file_path=str(file_path),
             original_name=file.filename,
             file_size=file_size,
-            row_count=row_count,
-            column_count=column_count,
-            sample_count=sample_count,
-            feature_count=feature_count,
-            sample_names=sample_names,
-            feature_names=feature_names,
+            row_count=described.get("row_count"),
+            column_count=described.get("column_count"),
+            sample_count=described.get("sample_count"),
+            feature_count=described.get("feature_count"),
+            sample_names=described.get("sample_names"),
+            feature_names=described.get("feature_names"),
+            extra_metadata=described.get("extra_metadata"),
         )
         db.add(data_file)
         db.commit()
@@ -407,11 +447,11 @@ async def upload_file(
             file_type=file_type,
             original_name=file.filename,
             file_size=file_size,
-            row_count=row_count,
-            column_count=column_count,
-            sample_count=sample_count,
-            feature_count=feature_count,
-            sample_names=sample_names,
+            row_count=described.get("row_count"),
+            column_count=described.get("column_count"),
+            sample_count=described.get("sample_count"),
+            feature_count=described.get("feature_count"),
+            sample_names=described.get("sample_names"),
             status="success",
             message="File uploaded successfully",
         )

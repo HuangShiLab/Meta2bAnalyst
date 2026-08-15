@@ -191,7 +191,7 @@ export function Home() {
             </div>
             <h3 className="mt-4 font-semibold">3. Analysis & Visualization</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              物种/功能/Strain-Level Analysis，出版级图表导出
+              Species / Function / Strain-Level Analysis, publication-ready chart export
             </p>
           </CardContent>
         </Card>

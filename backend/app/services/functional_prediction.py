@@ -553,15 +553,8 @@ def compare_pathway_abundance(
 
     df_res = pd.DataFrame(results)
     # BH-FDR
-    pvals = df_res["pvalue"].values
-    n = len(pvals)
-    if n > 0:
-        from scipy.stats import rankdata
-        ranks = rankdata(pvals, method="max")
-        padj = np.minimum(pvals * n / ranks, 1.0)
-        df_res["padj"] = padj
-    else:
-        df_res["padj"] = pvals
+    from app.services.analysis_engine import adjust_pvalues
+    df_res["padj"] = adjust_pvalues(df_res["pvalue"].values, "fdr_bh")
 
     return df_res.sort_values("pvalue")
 

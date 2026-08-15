@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useRequiredSession } from "@/hooks/useRequiredSession";
+import { useMetadataColumns } from "@/hooks/useMetadataColumns";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
 import type { PlotlyFigure, AnalysisJobResponse } from "@/types";
@@ -32,7 +35,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const metadataColumns = ["Visit", "Treatment", "Group", "Site", "Timepoint", "Gender", "Age"];
 
 function ParameterItem({ label, children, tooltip }: { label: string; children: React.ReactNode; tooltip?: string }) {
   return (
@@ -276,7 +278,10 @@ export function Microbiome() {
   const [enterotypeN, setEnterotypeN] = useState(3);
   const [enterotypeDistance, setEnterotypeDistance] = useState("jaccard");
 
-  const sessionId = sessionStore.analysisResults?.summary ? "mock-session" : "mock-session";
+  const { sessionId, hasSession } = useRequiredSession();
+  // Grouping variables come from the uploaded metadata, not a fixed list.
+  const { groupingColumns } = useMetadataColumns(sessionId);
+  const metadataColumns = groupingColumns.map((c) => c.name);
 
   // ─── Handlers ───
 
@@ -673,6 +678,7 @@ export function Microbiome() {
 
   return (
     <div data-testid="analysis-microbiome-page" className={cn("space-y-6")}>
+      {!hasSession && <NoSessionBanner />}
       <div>
         <h1 data-testid="analysis-title" className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Dna className="h-6 w-6" /> Microbiome Analysis

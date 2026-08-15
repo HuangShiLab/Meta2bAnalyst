@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -37,12 +38,23 @@ class KnowledgeBase:
         return cls._instance
 
     def _init_db(self):
-        self._db = sqlite3.connect(":memory:")
+        # check_same_thread=False plus an explicit lock: FastAPI runs sync route
+        # handlers in a threadpool, so the singleton is created on one worker
+        # thread and then used from others. With the default (True) that raised
+        # "SQLite objects created in a thread can only be used in that same
+        # thread" -- intermittently, and only under concurrency.
+        self._db = sqlite3.connect(":memory:", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
         self._load_taxon_db()
         self._load_method_db()
         self._load_disease_db()
         logger.info("Knowledge base initialized in memory.")
+
+    def _query(self, sql: str, params: tuple = ()) -> List[sqlite3.Row]:
+        """Run a read query under the connection lock."""
+        with self._lock:
+            return self._db.execute(sql, params).fetchall()
 
     # ── Taxon ───────────────────────────────────────────────────────
 
@@ -103,27 +115,20 @@ class KnowledgeBase:
 
     def lookup_taxon(self, name: str) -> Optional[Dict[str, Any]]:
         """Exact match lookup for a taxon name."""
-        cur = self._db.execute("SELECT * FROM taxon WHERE name = ?", (name,))
-        row = cur.fetchone()
-        if not row:
+        rows = self._query("SELECT * FROM taxon WHERE name = ?", (name,))
+        if not rows:
             return None
-        return self._row_to_taxon(row)
+        return self._row_to_taxon(rows[0])
 
     def fuzzy_lookup_taxon(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Fuzzy search: matches if query is a substring of the taxon name."""
-        cur = self._db.execute(
-            "SELECT * FROM taxon WHERE name LIKE ? LIMIT ?",
-            (f"%{query}%", limit),
-        )
-        return [self._row_to_taxon(r) for r in cur.fetchall()]
+        return [self._row_to_taxon(r) for r in self._match_taxon_rows(query, limit)]
 
     def find_taxa_by_function(self, function_keyword: str) -> List[Dict[str, Any]]:
         """Find taxa whose known_functions contain the keyword."""
-        cur = self._db.execute(
-            "SELECT * FROM taxon WHERE known_functions LIKE ?",
-            (f"%{function_keyword}%",),
-        )
-        return [self._row_to_taxon(r) for r in cur.fetchall()]
+        rows = self._query("SELECT * FROM taxon WHERE known_functions LIKE ?",
+                           (f"%{function_keyword}%",))
+        return [self._row_to_taxon(r) for r in rows]
 
     def find_taxa_by_disease(self, disease: str, association: Optional[str] = None) -> List[Dict[str, Any]]:
         """Find taxa associated with a disease (optionally filtered by association type)."""
@@ -147,7 +152,67 @@ class KnowledgeBase:
             )
         return [self._row_to_taxon(r) for r in cur.fetchall()]
 
+    # ── Taxon name matching ─────────────────────────────────────────
+
+    @staticmethod
+    def normalize_taxon_name(name: str) -> str:
+        """Reduce a taxon label to a comparable key.
+
+        Real feature tables label taxa in several conventions that all refer to
+        the same organism::
+
+            Faecalibacterium_prausnitzii                       (KB form)
+            s__Faecalibacterium_prausnitzii                    (MetaPhlAn/2bRAD-M)
+            Faecalibacterium prausnitzii                       (space separated)
+            k__Bacteria|p__Firmicutes|...|s__Faecalibacterium_prausnitzii   (lineage)
+
+        Matching used to be ``KB.name LIKE '%<query>%'``, i.e. it asked whether
+        the KB name *contains* the queried label -- backwards for every prefixed
+        or lineage form, so only the bare underscore spelling ever hit.
+        """
+        text = str(name).strip()
+        if "|" in text:                       # full lineage -> deepest rank
+            text = text.split("|")[-1]
+        if ";" in text:                       # QIIME-style lineage
+            text = text.split(";")[-1]
+        text = text.strip()
+        # Strip a leading rank prefix such as s__ / g__ / k__
+        if len(text) > 3 and text[1:3] == "__":
+            text = text[3:]
+        return text.replace(" ", "_").replace("-", "_").strip("_").lower()
+
+    def _match_taxon_rows(self, query: str, limit: int = 5) -> List[sqlite3.Row]:
+        """Find taxon rows for a label in any common naming convention."""
+        key = self.normalize_taxon_name(query)
+        if not key:
+            return []
+
+        rows = self._query("SELECT * FROM taxon")
+        by_key = {self.normalize_taxon_name(r["name"]): r for r in rows}
+
+        if key in by_key:                                   # exact, after normalising
+            return [by_key[key]]
+
+        # Genus-only query ("Faecalibacterium") should surface its species.
+        prefix = [r for k, r in by_key.items() if k.startswith(key + "_")]
+        if prefix:
+            return prefix[:limit]
+
+        # Species label whose genus we know, or any containment either way.
+        contains = [r for k, r in by_key.items() if key in k or k in key]
+        return contains[:limit]
+
     def _row_to_taxon(self, row: sqlite3.Row) -> Dict[str, Any]:
+        # disease_associations lives in a separate table and was never joined,
+        # so consumers testing `if "disease_associations" in info` were dead code
+        # and no taxon->disease annotation was ever emitted.
+        associations = {
+            r["disease"]: r["association"]
+            for r in self._query(
+                "SELECT disease, association FROM taxon_disease WHERE taxon_name = ?",
+                (row["name"],),
+            )
+        }
         return {
             "name": row["name"],
             "gram_stain": row["gram_stain"],
@@ -156,6 +221,7 @@ class KnowledgeBase:
             "known_functions": json.loads(row["known_functions"]),
             "health_markers": json.loads(row["health_markers"]),
             "notes": row["notes"],
+            "disease_associations": associations,
         }
 
     # ── Method ──────────────────────────────────────────────────────
@@ -201,10 +267,10 @@ class KnowledgeBase:
         self._db.commit()
 
     def lookup_method(self, name: str) -> Optional[Dict[str, Any]]:
-        cur = self._db.execute("SELECT * FROM method WHERE name = ?", (name,))
-        row = cur.fetchone()
-        if not row:
+        rows = self._query("SELECT * FROM method WHERE name = ?", (name,))
+        if not rows:
             return None
+        row = rows[0]
         return {
             "name": row["name"],
             "category": row["category"],
@@ -253,10 +319,10 @@ class KnowledgeBase:
         self._db.commit()
 
     def lookup_disease(self, name: str) -> Optional[Dict[str, Any]]:
-        cur = self._db.execute("SELECT * FROM disease WHERE name = ?", (name,))
-        row = cur.fetchone()
-        if not row:
+        rows = self._query("SELECT * FROM disease WHERE name = ?", (name,))
+        if not rows:
             return None
+        row = rows[0]
         return {
             "name": row["name"],
             "indicators": json.loads(row["indicators"]),
@@ -301,12 +367,10 @@ def lookup_disease(name: str) -> Optional[Dict[str, Any]]:
 def get_all_diseases() -> List[str]:
     """Return all disease names in the knowledge base."""
     kb = get_knowledge_base()
-    cur = kb._db.execute("SELECT name FROM disease")
-    return [row["name"] for row in cur.fetchall()]
+    return [row["name"] for row in kb._query("SELECT name FROM disease")]
 
 
 def get_all_taxa() -> List[str]:
     """Return all taxon names in the knowledge base."""
     kb = get_knowledge_base()
-    cur = kb._db.execute("SELECT name FROM taxon")
-    return [row["name"] for row in cur.fetchall()]
+    return [row["name"] for row in kb._query("SELECT name FROM taxon")]

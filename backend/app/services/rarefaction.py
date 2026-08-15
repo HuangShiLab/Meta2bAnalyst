@@ -75,6 +75,16 @@ def run_rarefaction(
         'simpson': 'simpson',
     }
 
+    def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+        """Convert '#rrggbb' (or '#rgb') to an rgba() string Plotly accepts."""
+        h = hex_color.lstrip('#')
+        if len(h) == 3:
+            h = ''.join(c * 2 for c in h)
+        if len(h) != 6:
+            return f'rgba(153,153,153,{alpha})'
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return f'rgba({r},{g},{b},{alpha})'
+
     def _calc_alpha(counts, metric_name):
         """Calculate alpha diversity for a single sample's counts."""
         counts = np.asarray(counts)
@@ -93,38 +103,48 @@ def run_rarefaction(
         else:
             return float((counts > 0).sum())
 
+    # results[metric][depth] -> flat list of values (all samples pooled)
+    # per_sample[metric][depth][sample_id] -> mean over iterations for that sample
+    #
+    # The per-sample breakdown is what group curves need. Without it the grouping
+    # code below pooled every sample's values together and then re-used that same
+    # pooled list once per group member, so every group's curve came out
+    # identical to the overall mean.
     results = {metric: {} for metric in metrics}
+    per_sample: Dict[str, Dict[int, Dict[str, float]]] = {metric: {} for metric in metrics}
     sample_ids = df_counts.index.tolist()
 
     for depth in depths:
+        depth_key = int(depth)
         for metric in metrics:
-            results[metric][depth] = []
+            results[metric][depth_key] = []
+            per_sample[metric][depth_key] = {}
 
-        for _ in range(iterations):
-            # Subsample each sample to 'depth'
-            for sid in sample_ids:
-                counts = df_counts.loc[sid].values
-                total = counts.sum()
-                if total < depth:
-                    probs = counts / total if total > 0 else np.ones_like(counts) / len(counts)
-                    subsampled_counts = rng.multinomial(depth, probs)
-                else:
-                    probs = counts / total
-                    subsampled_counts = rng.multinomial(depth, probs)
+        for sid in sample_ids:
+            counts = df_counts.loc[sid].values
+            total = counts.sum()
+            probs = counts / total if total > 0 else np.ones_like(counts, dtype=float) / len(counts)
 
+            iteration_values = {metric: [] for metric in metrics}
+            for _ in range(iterations):
+                subsampled_counts = rng.multinomial(depth_key, probs)
                 for metric in metrics:
-                    val = _calc_alpha(subsampled_counts, metric)
-                    results[metric][depth].append(val)
+                    iteration_values[metric].append(_calc_alpha(subsampled_counts, metric))
+
+            for metric in metrics:
+                results[metric][depth_key].extend(iteration_values[metric])
+                per_sample[metric][depth_key][str(sid)] = float(np.mean(iteration_values[metric]))
 
     # Build Plotly figure
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     n_metrics = len(metrics)
-    if n_metrics == 1:
-        fig = go.Figure()
-    else:
-        fig = make_subplots(rows=1, cols=n_metrics, subplot_titles=[m.title() for m in metrics])
+    # Always build a subplot grid, even for a single metric: the traces below are
+    # added with explicit row/col, which raises "you must first use
+    # plotly.tools.make_subplots" on a plain go.Figure -- so requesting exactly
+    # one metric used to fail with a 500.
+    fig = make_subplots(rows=1, cols=n_metrics, subplot_titles=[m.title() for m in metrics])
 
     colors = {
         'default': '#1e40af',
@@ -147,15 +167,14 @@ def run_rarefaction(
                 if not group_samples:
                     continue
 
-                # Average within group
+                # Average across the samples that belong to this group only.
                 mean_vals = []
                 std_vals = []
                 for depth in depths:
-                    vals = []
-                    for sid in group_samples:
-                        vals.extend(results[metric][int(depth)])
-                    mean_vals.append(np.mean(vals))
-                    std_vals.append(np.std(vals))
+                    by_sample = per_sample[metric][int(depth)]
+                    vals = [by_sample[str(sid)] for sid in group_samples if str(sid) in by_sample]
+                    mean_vals.append(float(np.mean(vals)) if vals else float('nan'))
+                    std_vals.append(float(np.std(vals)) if vals else 0.0)
 
                 fig.add_trace(
                     go.Scatter(
@@ -175,7 +194,9 @@ def run_rarefaction(
                         x=list(depths) + list(depths)[::-1],
                         y=[m + s for m, s in zip(mean_vals, std_vals)] + [m - s for m, s in zip(mean_vals[::-1], std_vals[::-1])],
                         fill='toself',
-                        fillcolor=group_colors.get(str(group), '#999') + '20',
+                        # Plotly rejects 8-digit #rrggbbaa hex, so express the
+                        # translucent band as rgba() instead.
+                        fillcolor=_hex_to_rgba(group_colors.get(str(group), '#999999'), 0.13),
                         line=dict(color='rgba(0,0,0,0)'),
                         name=f'{group} (±SD)',
                         showlegend=False,
@@ -215,15 +236,15 @@ def run_rarefaction(
             fig.update_xaxes(title_text='Sequencing Depth', row=1, col=i + 1)
             fig.update_yaxes(title_text='Alpha Diversity', row=1, col=i + 1)
 
-    # Saturation check
+    # Saturation check: how much diversity is still being gained between the
+    # mid-point depth and the deepest depth. A ratio near 1 means the curve has
+    # plateaued. (The list comprehensions here previously recomputed the same
+    # scalar once per sample, which changed nothing but the runtime.)
     saturation = {}
     for metric in metrics:
-        final_vals = [np.mean(results[metric][int(depths[-1])]) for _ in sample_ids]
-        mid_vals = [np.mean(results[metric][int(depths[len(depths) // 2])]) for _ in sample_ids]
-        if final_vals and mid_vals and np.mean(mid_vals) > 0:
-            saturation[metric] = float(np.mean(final_vals) / np.mean(mid_vals))
-        else:
-            saturation[metric] = 1.0
+        final_mean = float(np.mean(results[metric][int(depths[-1])]))
+        mid_mean = float(np.mean(results[metric][int(depths[len(depths) // 2])]))
+        saturation[metric] = float(final_mean / mid_mean) if mid_mean > 0 else 1.0
 
     return {
         'plot_data': fig.to_dict(),

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { NO_SESSION_MESSAGE } from "@/hooks/useRequiredSession";
 import type {
   AnalysisJobResponse,
   AlphaDiversityParams,
@@ -126,6 +127,13 @@ export function useAnalysis() {
         | MultiOmicsParams
         | Record<string, unknown>
     ) => {
+      // Single choke point: an absent session must fail with an explanation
+      // rather than requesting /sessions//analyze/... or a placeholder id.
+      if (!sessionId) {
+        setState({ isLoading: false, error: NO_SESSION_MESSAGE, result: null });
+        throw new Error(NO_SESSION_MESSAGE);
+      }
+
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
       const cacheKey = `${type}-${JSON.stringify(params)}`;
@@ -293,6 +301,10 @@ export function useSectionAnalysis() {
 
   const run = useCallback(
     async (key: string, type: AnalysisType, sessionId: string, params: Record<string, unknown>) => {
+      if (!sessionId) {
+        setErrors((prev) => ({ ...prev, [key]: NO_SESSION_MESSAGE }));
+        throw new Error(NO_SESSION_MESSAGE);
+      }
       setLoading((prev) => ({ ...prev, [key]: true }));
       setErrors((prev) => {
         const next = { ...prev };

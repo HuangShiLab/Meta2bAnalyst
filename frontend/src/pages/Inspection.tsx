@@ -21,7 +21,7 @@ export function Inspection() {
   const [removeConstant, setRemoveConstant] = useState(false);
   const [removeSingleton, setRemoveSingleton] = useState<"none" | "one-sample" | "one-total">("none");
   const [stats, setStats] = useState({
-    dataType: "Species Abundance表",
+    dataType: "Species Abundance Table",
     samples: 34,
     features: 2920,
     totalReads: 180573,
@@ -108,7 +108,7 @@ export function Inspection() {
               </Label>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">移除 Singleton：</span>
+              <span className="text-sm font-medium">Remove Singletons:</span>
               <RadioGroup
                 value={removeSingleton}
                 onValueChange={(v) => setRemoveSingleton(v as typeof removeSingleton)}
@@ -146,14 +146,14 @@ export function Inspection() {
         <DataCard
           title="Sample Name Matching"
           value={stats.sampleMatch ? "Matched" : "Not Matched"}
-          badge={stats.sampleMatch ? "✓ 是" : "✗ 否"}
+          badge={stats.sampleMatch ? "✓ Yes" : "✗ No"}
           badgeVariant={stats.sampleMatch ? "default" : "destructive"}
           icon={stats.sampleMatch ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
         />
         <DataCard
           title="Normalization Check"
           value={stats.normalized ? "Normalized" : "Raw Counts"}
-          badge={stats.normalized ? "✓ 是" : "⚠ 否"}
+          badge={stats.normalized ? "✓ Yes" : "⚠ No"}
           badgeVariant={stats.normalized ? "default" : "secondary"}
           icon={stats.normalized ? <CheckCircle className="h-4 w-4 text-green-500" /> : <AlertTriangle className="h-4 w-4 text-accent" />}
         />

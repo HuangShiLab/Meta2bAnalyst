@@ -155,16 +155,24 @@ class TestAnalysisAPI:
         assert data["status"] == "completed"
 
     def test_taxonomy_bar_analysis(self, client, session_with_data):
-        """Test taxonomy bar analysis endpoint (endpoint not implemented, expects 404)."""
+        """Taxonomy bar chart is computed over samples, not taxa.
+
+        This assertion used to accept 404 and 500 as valid outcomes. The
+        endpoint did in fact fail, because run_taxonomy_bar decided orientation
+        from whether the first index label contained '|' or '__' and so treated
+        plain taxa names as sample IDs.
+        """
         response = client.post(
             f"/api/v1/sessions/{session_with_data}/analyze/taxonomy-bar",
-            json={
-                "analysis_type": "taxonomy_bar",
-                "parameters": {"top_n": 10},
-                "group_column": "Treatment",
-            },
+            json={"parameters": {"top_n": 10}, "group_column": "Treatment"},
         )
-        assert response.status_code in (201, 404, 500)
+        assert response.status_code in (200, 201), response.text
+
+        statistics = response.json()["result_data"]["statistics"]
+        # The fixture's feature table is features x samples; the chart must
+        # describe its samples.
+        assert statistics["n_samples"] > 0
+        assert statistics["n_taxa_shown"] > 0
 
     def test_analysis_invalid_session(self, client):
         """Test analysis on non-existent session."""
@@ -177,16 +185,36 @@ class TestAnalysisAPI:
         )
         assert response.status_code == 404
 
-    def test_analysis_invalid_type(self, client, session_with_data):
-        """Test analysis with invalid analysis type (schema validation handler has JSON serialization bug)."""
-        import pytest
-        # Pydantic validation raises ValueError but validation_exception_handler fails to serialize it,
-        # causing an unhandled TypeError inside the ASGI app that TestClient propagates as an exception.
-        with pytest.raises(Exception):
-            client.post(
-                f"/api/v1/sessions/{session_with_data}/analyze/alpha-diversity",
-                json={
-                    "analysis_type": "invalid_type",
-                    "parameters": {},
-                },
-            )
+    def test_analysis_type_is_informational(self, client, session_with_data):
+        """`analysis_type` no longer gates the request; the URL selects the analysis.
+
+        It used to be required and to use a different naming convention than the
+        routes, so POST /analyze/random-forest rejected
+        ``analysis_type="random-forest"``. Worse, the resulting 422 hit a
+        validation handler that could not serialise Pydantic's error context, so
+        every validation failure surfaced as a body-less 500.
+        """
+        response = client.post(
+            f"/api/v1/sessions/{session_with_data}/analyze/alpha-diversity",
+            json={"analysis_type": "invalid_type", "parameters": {}},
+        )
+        assert response.status_code != 500, response.text
+        assert response.status_code in (200, 201, 400, 404)
+
+    def test_validation_errors_are_readable(self, client, session_with_data):
+        """A genuine schema violation must return a 422 with a JSON body.
+
+        Regression test for the handler crash described above. ``detail`` must
+        also name the offending field: clients that surface only ``detail``
+        used to be told nothing but "Validation error".
+        """
+        response = client.post(
+            f"/api/v1/sessions/{session_with_data}/analyze/alpha-diversity",
+            json={"parameters": "not-a-dict"},
+        )
+        assert response.status_code == 422, response.text
+        payload = response.json()
+        assert payload["detail"].startswith("Validation error")
+        assert "parameters" in payload["detail"], payload["detail"]
+        assert payload["fields"] == ["body.parameters"]
+        assert isinstance(payload["errors"], list) and payload["errors"]

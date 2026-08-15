@@ -273,3 +273,71 @@ async def normalize_data_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to normalize data: {str(e)}",
         )
+
+
+@router.get(
+    "/sessions/{session_id}/metadata/columns",
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_metadata_columns(
+    session_id: str,
+    max_levels: int = 50,
+    db: DBSession = Depends(get_db),
+):
+    """List the session's metadata columns and their distinct values.
+
+    The UI needs this to populate grouping/comparison selectors. Those lists
+    used to be hardcoded in the frontend (["Visit", "Treatment", "Group", ...]),
+    so users could not select their own metadata columns at all.
+
+    Args:
+        session_id: Session identifier.
+        max_levels: Values are only enumerated for columns with at most this
+            many distinct levels; anything wider is reported as continuous.
+
+    Returns:
+        ``{"columns": [{name, dtype, is_categorical, n_levels, values, n_missing}]}``
+    """
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    record = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == "metadata")
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail="No metadata file has been uploaded for this session.",
+        )
+
+    try:
+        meta_df, _ = parse_data_file(Path(record.file_path), "metadata")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse metadata: {e}")
+
+    columns = []
+    for name in meta_df.columns:
+        series = meta_df[name]
+        distinct = series.dropna().unique()
+        is_categorical = len(distinct) <= max_levels
+        columns.append({
+            "name": str(name),
+            "dtype": str(series.dtype),
+            "is_categorical": bool(is_categorical),
+            "n_levels": int(len(distinct)),
+            # Sorted so the UI order is stable and independent of file row order.
+            "values": sorted(str(v) for v in distinct) if is_categorical else [],
+            "n_missing": int(series.isna().sum()),
+        })
+
+    return {
+        "session_id": session_id,
+        "n_samples": int(len(meta_df)),
+        "sample_ids": [str(s) for s in meta_df.index],
+        "columns": columns,
+    }

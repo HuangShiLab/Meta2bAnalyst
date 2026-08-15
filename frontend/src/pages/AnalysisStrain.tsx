@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useRequiredSession } from "@/hooks/useRequiredSession";
+import { useMetadataColumns } from "@/hooks/useMetadataColumns";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV } from "@/utils/api";
 import type { AnalysisJobResponse } from "@/types";
@@ -29,7 +32,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 
-const metadataColumns = ["Treatment", "Group", "Site", "Timepoint", "Gender", "Age"];
 const mockSpecies = [
   "All Species",
   "Escherichia coli",
@@ -225,7 +227,10 @@ export function AnalysisStrain() {
   const [networkCorrThreshold, setNetworkCorrThreshold] = useState(0.3);
   const [networkPvalueThreshold, setNetworkPvalueThreshold] = useState(0.05);
 
-  const sessionId = "mock-session";
+  const { sessionId, hasSession } = useRequiredSession();
+  // Grouping variables come from the uploaded metadata, not a fixed list.
+  const { groupingColumns } = useMetadataColumns(sessionId);
+  const metadataColumns = groupingColumns.map((c) => c.name);
 
   const filteredSpecies = mockSpecies.filter((s) =>
     s.toLowerCase().includes(speciesSearch.toLowerCase())
@@ -334,6 +339,7 @@ export function AnalysisStrain() {
 
   return (
     <div className={cn("space-y-6")}>
+      {!hasSession && <NoSessionBanner />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Strain Analysis ⭐</h1>
         <p className="text-muted-foreground">
