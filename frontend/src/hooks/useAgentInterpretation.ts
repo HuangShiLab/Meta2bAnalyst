@@ -18,7 +18,7 @@ export interface UseAgentInterpretationReturn {
   result: InterpretFullResponse | null;
   loading: boolean;
   error: string | null;
-  interpretFull: (results: Record<string, unknown>, metadataSummary?: Record<string, unknown>) => Promise<void>;
+  interpretFull: (results: Record<string, unknown>, metadataSummary?: Record<string, unknown>) => Promise<InterpretFullResponse | null>;
   clear: () => void;
 }
 
@@ -27,10 +27,13 @@ export function useAgentInterpretation(): UseAgentInterpretationReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Returns the fresh interpretation so callers can use it immediately -
+  // the `result` state only updates on the next render, and awaiting this
+  // promise inside an event handler would otherwise read a stale null.
   const interpretFull = useCallback(async (
     results: Record<string, unknown>,
     metadataSummary?: Record<string, unknown>
-  ) => {
+  ): Promise<InterpretFullResponse | null> => {
     setLoading(true);
     setError(null);
     try {
@@ -48,8 +51,10 @@ export function useAgentInterpretation(): UseAgentInterpretationReturn {
       }
       const data: InterpretFullResponse = await res.json();
       setResult(data);
+      return data;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
+      return null;
     } finally {
       setLoading(false);
     }

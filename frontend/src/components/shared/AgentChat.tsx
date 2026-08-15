@@ -42,13 +42,13 @@ function classifyQuestion(text: string): "full_interpretation" | "specific_contr
   if (lower.includes("why") || lower.includes("what happened") || lower.includes("explain") || lower.includes("contradiction") || lower.includes("contradict")) {
     return "specific_contradiction";
   }
-  if (lower.includes("species") || lower.includes("taxon") || lower.includes("bacteria") || lower.includes("bacteria")) {
+  if (lower.includes("species") || lower.includes("taxon") || lower.includes("bacteria") || lower.includes("genus")) {
     return "taxon_query";
   }
-  if (lower.includes("disease") || lower.includes("disease") || lower.includes("disease") || lower.includes("related")) {
+  if (lower.includes("disease") || lower.includes("disorder") || lower.includes("syndrome") || lower.includes("related")) {
     return "disease_query";
   }
-  if (lower.includes("method") || lower.includes("method") || lower.includes("why用") || lower.includes("assumption")) {
+  if (lower.includes("method") || lower.includes("parameter") || lower.includes("why use") || lower.includes("assumption")) {
     return "method_query";
   }
   if (lower.includes("comprehensive analysis") || lower.includes("overview") || lower.includes("summary") || lower.includes("interpret")) {
@@ -361,9 +361,9 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
         "👋 I'm your **Knowledge-Augmented Analyst**.\n\n" +
         "Ask me anything about your microbiome data — for example:\n" +
         "• \"Comprehensive analysis of my data\"\n" +
-        "• \"whyAlpha多样性不显著但LEfSe找到了差异species？\"\n" +
+        "• \"why is Alpha diversity not significant but LEfSe found differential species?\"\n" +
         "• \"What diseases are these species related to?\"\n" +
-        "• \"我应该下一步做什么分析？\"\n\n" +
+        "• \"What analysis should I do next?\"\n\n" +
         "I'll use the structured knowledge base to give you evidence-based answers.",
       timestamp: new Date(),
       type: "text",
@@ -423,10 +423,12 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
         if (needsInterpretation) {
           addMessage(answerMsgs[0]);
 
-          await interpretFull(availableResults as Record<string, unknown>, { n_samples: 20, data_type: "metagenomics" });
+          const fresh = await interpretFull(availableResults as Record<string, unknown>, { n_samples: 20, data_type: "metagenomics" });
           setHasInterpreted(true);
 
-          const { messages: finalMsgs } = generateAnswer(text, interpResult, true);
+          // Use the freshly returned interpretation - `interpResult` in this
+          // closure is still the pre-await value (null on the first question).
+          const { messages: finalMsgs } = generateAnswer(text, fresh ?? interpResult, true);
           for (const m of finalMsgs) {
             addMessage(m);
           }
@@ -561,7 +563,7 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
           </form>
 
           <p className="text-center text-[10px] text-muted-foreground">
-            Powered by structured knowledge base (60+ taxa, 17 methods, 15 disease signatures). No external LLM API required.
+            Powered by a structured knowledge base (80 taxa, 17 methods, 25 disease signatures), with optional external LLM enhancement.
           </p>
         </div>
       </div>
