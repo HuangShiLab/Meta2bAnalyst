@@ -3,6 +3,7 @@ Meta2bAnalyst - Configuration Settings (Pydantic Settings)
 """
 import os
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 
@@ -39,6 +40,15 @@ class Settings(BaseSettings):
     # Application
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
+
+    # External LLM (Kimi / Moonshot, OpenAI-compatible API)
+    # Used by app.services.llm_client to enhance agent interpretations.
+    # Leave KIMI_API_KEY empty to run KB-only (no external calls).
+    # Note: sk-kimi-* keys use the coding gateway (api.kimi.com/coding/v1);
+    # legacy sk-* platform keys use api.moonshot.cn/v1.
+    KIMI_API_KEY: Optional[str] = None
+    KIMI_BASE_URL: str = "https://api.moonshot.cn/v1"
+    KIMI_MODEL: str = "moonshot-v1-8k"
 
     # CORS (production should be restricted)
     CORS_ORIGINS: list[str] = os.getenv(

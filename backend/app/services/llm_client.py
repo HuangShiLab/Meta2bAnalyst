@@ -25,12 +25,31 @@ logger = logging.getLogger(__name__)
 # ───────────────────────────────────────────────────────────────
 
 class KimiLLMClient:
-    """Lightweight client for Kimi API (OpenAI-compatible)."""
+    """Lightweight client for Kimi API (OpenAI-compatible).
 
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.moonshot.cn/v1"):
-        self.api_key = api_key or os.getenv("KIMI_API_KEY")
-        self.base_url = base_url.rstrip("/")
-        self._available = self.api_key is not None
+    Resolution order for credentials: explicit constructor arg, then the
+    KIMI_API_KEY environment variable, then app.config.settings (which reads
+    backend/.env). Base URL and model are configurable the same way.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        from app.config import settings
+
+        self.api_key = api_key or os.getenv("KIMI_API_KEY") or settings.KIMI_API_KEY
+        self.base_url = (
+            base_url or os.getenv("KIMI_BASE_URL") or settings.KIMI_BASE_URL
+        ).rstrip("/")
+        self.model = model or os.getenv("KIMI_MODEL") or settings.KIMI_MODEL
+        # None = omit temperature from the payload (required by reasoning
+        # models such as kimi-for-coding, which only accept temperature=1).
+        temp_env = os.getenv("KIMI_TEMPERATURE")
+        self.temperature = float(temp_env) if temp_env else None
+        self._available = bool(self.api_key)
 
     @property
     def available(self) -> bool:
@@ -95,17 +114,22 @@ class KimiLLMClient:
 
         try:
             import urllib.request
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                # kimi-for-coding is a reasoning model: it rejects any
+                # temperature other than 1 and its reasoning tokens count
+                # against max_tokens, so omit temperature and keep headroom.
+                "max_tokens": 6000,
+            }
+            if self.temperature is not None:
+                payload["temperature"] = self.temperature
             req = urllib.request.Request(
                 f"{self.base_url}/chat/completions",
-                data=json.dumps({
-                    "model": "moonshot-v1-8k",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 2000,
-                }).encode(),
+                data=json.dumps(payload).encode(),
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {self.api_key}",
@@ -118,7 +142,7 @@ class KimiLLMClient:
                 return {
                     "enhanced_narrative": content,
                     "llm_used": True,
-                    "model": "moonshot-v1-8k",
+                    "model": self.model,
                 }
         except Exception as e:
             logger.warning(f"LLM enhancement failed: {e}. Falling back to KB-only.")
