@@ -15,14 +15,25 @@ import asyncio
 import logging
 import time
 import traceback
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
+
+import pandas as pd
 
 from app.agent.module_registry import get_module_spec, ModuleSpec
 from app.agent.planner import ExecutionPlan, PlanStep
 
 logger = logging.getLogger(__name__)
+
+
+class DataValidationFailed(RuntimeError):
+    """Raised when the data_validator step reports unusable input.
+
+    The plan must not continue on data the validator rejected, so this is
+    surfaced as a failed step rather than a warning attached to a success.
+    """
 
 
 # ───────────────────────────────────────────────────────────────
@@ -65,7 +76,20 @@ def _get_module_function(module_name: str) -> Callable:
             run_pcoa,
             run_nmds,
             run_permanova,
+            run_anosim,
+            run_random_forest,
+            run_heatmap,
         )
+        from app.services.aldex2 import run_aldex2_analysis
+        from app.services.songbird import run_songbird_analysis
+        from app.services.enterotype import run_enterotype_analysis
+        from app.services.rarefaction import run_rarefaction
+        from app.services.taxonomy_bar import run_taxonomy_bar
+        from app.services.mofa import run_mofa_plus
+        from app.services.diablo import run_diablo
+        from app.services.wgcna import run_wgcna
+        from app.services.strain_analyzer import run_strain_profile, parse_strain2bscan_output
+        from app.services.upset_plot import run_upset_analysis
         from app.services.metabolomics_analysis import (
             run_metabolomics_pca,
             run_metabolomics_alpha_diversity,
@@ -91,8 +115,151 @@ def _get_module_function(module_name: str) -> Callable:
         from app.services.rda_analysis import run_rda_analysis
         from app.services.o2pls_analysis import run_o2pls_analysis
 
-        def validate_data(df, metadata_df=None, **kw):
-            return {"valid": True, "report": {}}
+        from app.services.data_validator import DataValidator
+
+        def validate_data(df=None, df2=None, metadata_df=None, **kw):
+            """Run the real validator (app/services/data_validator.py) over every
+            table the session provides.
+
+            ``df``/``df2`` are the microbiome and metabolome feature tables in the
+            project's canonical features x samples orientation, so metadata sample
+            names are matched against the *columns*.
+
+            Returns ``{"valid": bool, "report": {...}, "errors": [...],
+            "warnings": [...]}``.  ``valid=False`` is treated by the executor as a
+            failed step -- see WorkflowExecutor._blocking_failure.
+            """
+            validator = DataValidator()
+            report: Dict[str, Any] = {}
+            errors: List[str] = []
+            warnings: List[str] = []
+
+            def _record(layer: str, res) -> None:
+                report[layer] = {
+                    "is_valid": bool(res.is_valid),
+                    "errors": list(res.errors),
+                    "warnings": list(res.warnings),
+                    "details": res.details,
+                }
+                errors.extend(f"{layer}: {m}" for m in res.errors)
+                warnings.extend(f"{layer}: {m}" for m in res.warnings)
+
+            tables = [
+                (layer, table)
+                for layer, table in (("microbiome", df), ("metabolome", df2))
+                if table is not None and not table.empty
+            ]
+
+            if not tables:
+                return {
+                    "valid": False,
+                    "report": {},
+                    "errors": [
+                        "session: no feature table could be loaded, so no analysis "
+                        "step in this plan can run."
+                    ],
+                    "warnings": [],
+                    "validated": [],
+                }
+
+            for layer, table in tables:
+                _record(layer, validator.validate_abundance_data(table))
+
+            has_metadata = metadata_df is not None and not metadata_df.empty
+            if has_metadata:
+                _record("metadata", validator.validate_metadata(metadata_df))
+                for layer, table in tables:
+                    _record(
+                        f"{layer}_vs_metadata",
+                        validator.validate_feature_metadata_match(table, metadata_df),
+                    )
+                group_column = kw.get("group_column")
+                if group_column and group_column not in metadata_df.columns:
+                    errors.append(
+                        f"metadata: grouping column '{group_column}' is not in the "
+                        f"metadata (available: {list(metadata_df.columns)[:10]})"
+                    )
+            else:
+                warnings.append(
+                    "metadata: no metadata table in this session; grouped tests "
+                    "(PERMANOVA, marker discovery) cannot run."
+                )
+
+            return {
+                "valid": not errors,
+                "report": report,
+                "errors": errors,
+                "warnings": warnings,
+                "validated": [layer for layer, _ in tables] + (["metadata"] if has_metadata else []),
+            }
+
+        def _run_report_generator(results=None, session_id=None, **kw):
+            """Render the completed steps into a real PDF via export_service.
+
+            Honesty contract: this never returns a ``report_path`` for a file that
+            does not exist.  A format the backend cannot render, or an absent
+            reporting dependency, comes back as ``status="unavailable"`` with the
+            reason; a genuine generation failure raises so the step is recorded as
+            failed.
+            """
+            fmt = str(kw.get("format") or "pdf").lower()
+            title = kw.get("title", "Multi-omics Analysis Report")
+            analyses = list(results or [])
+
+            def _unavailable(reason: str) -> Dict[str, Any]:
+                return {
+                    "status": "unavailable",
+                    "report_path": None,
+                    "format": fmt,
+                    "reason": reason,
+                    "n_analyses": len(analyses),
+                }
+
+            if fmt != "pdf":
+                return _unavailable(
+                    f"Report format '{fmt}' is not implemented; app.services."
+                    "export_service only renders PDF."
+                )
+            if not analyses:
+                return _unavailable("No completed analysis steps to report on.")
+
+            try:
+                from app.services.export_service import generate_comprehensive_report
+            except ImportError as e:  # reportlab / plotly stack not installed
+                return _unavailable(f"PDF reporting dependency missing: {e}")
+
+            from app.config import settings
+
+            export_dir = (Path(settings.UPLOAD_DIR) / (session_id or "agent") / "exports").resolve()
+            export_dir.mkdir(parents=True, exist_ok=True)
+            export_path = export_dir / "agent_report.pdf"
+
+            generate_comprehensive_report(
+                session_id=session_id or "agent-session",
+                export_path=str(export_path),
+                analysis_results=analyses,
+            )
+
+            if not export_path.exists() or export_path.stat().st_size == 0:
+                raise RuntimeError(
+                    f"Report generation completed without writing a file to {export_path}"
+                )
+
+            out = {
+                "status": "generated",
+                "report_path": str(export_path),
+                "format": "pdf",
+                "title": title,
+                "size_bytes": export_path.stat().st_size,
+                "n_analyses": len(analyses),
+                "modules": [a.get("job_type") for a in analyses],
+            }
+            if session_id:
+                out["report_url"] = (
+                    f"/api/v1/sessions/{session_id}/export/download"
+                    f"?export_id={export_path.name}"
+                )
+            return out
 
         def _run_microbiome_marker(df, metadata_df, **kw):
             """Microbiome marker discovery: CLR + Wilcoxon (Mann-Whitney U).
@@ -189,6 +356,95 @@ def _get_module_function(module_name: str) -> Callable:
                 "fixed_effects": fixed_effects,
             }
 
+        def _run_volcano(df, metadata_df, **kw):
+            """Volcano plot view over microbiome marker discovery.
+
+            A volcano plot is a visualisation of a differential test, so this
+            runs the CLR + Wilcoxon marker discovery and surfaces its volcano
+            figure as the primary output.
+            """
+            result = _run_microbiome_marker(df, metadata_df, **kw)
+            if isinstance(result, dict):
+                plot = result.get("volcano_plot") or result.get("plot_data")
+                out = dict(result)
+                out["plot_data"] = plot
+                return out
+            return {"plot_data": None, "error": "marker discovery returned no result"}
+
+        def _run_heatmap(df, metadata_df=None, **kw):
+            """Heatmap wrapper: build the Plotly figure from the matrix result.
+
+            analysis_engine.run_heatmap returns the clustered matrix only; the
+            agent contract needs a renderable plot_data payload.
+            """
+            from app.utils.plotly_generator import create_heatmap_plot
+
+            result = run_heatmap(df, metadata_df, parameters={
+                "top_n": kw.get("top_n", 50),
+                "cluster_rows": kw.get("cluster_rows", True),
+                "cluster_cols": kw.get("cluster_cols", True),
+                "normalize": kw.get("normalize", "zscore"),
+                "group_column": kw.get("group_column"),
+            })
+            if isinstance(result, dict) and result.get("matrix"):
+                matrix_df = pd.DataFrame(result["matrix"])
+                result["plot_data"] = create_heatmap_plot(
+                    matrix_df,
+                    row_labels=[str(i) for i in matrix_df.index],
+                    col_labels=[str(c) for c in matrix_df.columns],
+                    group_metadata=result.get("group_metadata"),
+                    title=f"Top {len(matrix_df)} features heatmap",
+                )
+            return result
+
+        def _run_unifrac(df, metadata_df=None, **kw):
+            """UniFrac wrapper: promote the PCoA plot to plot_data."""
+            result = run_phylogenetic_analysis(df, metadata_df, parameters={
+                "weighted": kw.get("weighted", True),
+                "group_column": kw.get("group_column"),
+                "n_permutations": kw.get("n_permutations", 999),
+                "nmds_components": kw.get("n_components", 2),
+            })
+            if isinstance(result, dict) and isinstance(result.get("plots"), dict):
+                result["plot_data"] = result["plots"].get("unifrac_pcoa")
+            return result
+
+        def _run_source_tracking(df, metadata_df=None, **kw):
+            """Source tracking wrapper: promote the proportions plot."""
+            result = run_source_tracking_analysis(df, metadata_df, parameters={
+                "source_column": kw.get("source_column", "source_type"),
+                "method": kw.get("method", "nnls"),
+                "sink_samples": kw.get("sink_samples", []),
+                "source_samples": kw.get("source_samples", []),
+            })
+            if isinstance(result, dict) and isinstance(result.get("plots"), dict):
+                result["plot_data"] = result["plots"].get("source_proportions")
+            return result
+
+        def _run_strain_analyzer(df, metadata_df=None, **kw):
+            """Strain profile for one species.
+
+            Strain profiling is per-species; when the plan does not name one,
+            the wrapper picks the species with the most strain records instead
+            of failing - the choice is reported back in the result.
+            """
+            species = kw.get("species")
+            params = {k: v for k, v in kw.items() if k in ("min_ani", "min_coverage")}
+            if not species:
+                parsed = parse_strain2bscan_output(df)
+                species_col = [c for c in parsed.columns if 'species' in c]
+                if not species_col:
+                    return {
+                        "error": "No species column found in the strain table; "
+                                 "pass an explicit 'species' parameter.",
+                        "plot_data": None,
+                    }
+                species = str(parsed[species_col[0]].value_counts().idxmax())
+            result, strain_count = run_strain_profile(df, species, params)
+            result["species_analyzed"] = species
+            result["strain_count"] = strain_count
+            return result
+
         _MODULE_FUNCTIONS = {
             "data_validator": validate_data,
             "microbiome_pcoa": lambda df, metadata_df=None, **kw: run_pcoa(
@@ -252,7 +508,84 @@ def _get_module_function(module_name: str) -> Callable:
             "tsne": _run_tsne,
             "umap": _run_umap,
             "maaslin3": _run_maaslin3,
-            "report_generator": lambda results, **kw: {"report_path": "/tmp/report.pdf", "format": kw.get("format", "pdf")},
+            "report_generator": _run_report_generator,
+            # ── Previously pending modules (see module_registry history) ──────
+            # Orientation contract: session tables are features x samples;
+            # services documented as samples x features get df.T.
+            "anosim": lambda df, metadata_df=None, **kw: run_anosim(
+                df, metadata_df, parameters={
+                    "metric": kw.get("distance_metric", "braycurtis"),
+                    "group_column": kw.get("group_column"),
+                    "n_permutations": kw.get("n_permutations", 999),
+                }
+            ),
+            "random_forest": lambda df, metadata_df=None, **kw: run_random_forest(
+                df, metadata_df, parameters={
+                    "group_column": kw.get("group_column"),
+                    "n_estimators": kw.get("n_estimators", 500),
+                }
+            ),
+            "heatmap": _run_heatmap,
+            "volcano": _run_volcano,
+            "aldex2": lambda df, metadata_df=None, **kw: run_aldex2_analysis(
+                df.T, metadata_df,
+                group_column=kw.get("group_column"),
+                test_method=kw.get("test_method", "welch"),
+                effect_threshold=kw.get("effect_threshold", 1.0),
+                alpha=kw.get("pvalue_threshold", 0.05),
+            ),
+            "songbird": lambda df, metadata_df=None, **kw: run_songbird_analysis(
+                df.T, metadata_df,
+                group_column=kw.get("group_column"),
+                epochs=kw.get("epochs", 1000),
+                top_n=kw.get("top_n", 50),
+            ),
+            "enterotype": lambda df, metadata_df=None, **kw: run_enterotype_analysis(
+                df.T, metadata_df,
+                n_clusters=kw.get("n_clusters", 3),
+                distance_metric=kw.get("distance_metric", "jaccard"),
+                clustering_method=kw.get("clustering_method", "pam"),
+                group_column=kw.get("group_column"),
+            ),
+            "rarefaction": lambda df, metadata_df=None, **kw: run_rarefaction(
+                df.T, metadata_df,
+                group_column=kw.get("group_column"),
+                metrics=kw.get("metrics"),
+                max_depth=kw.get("max_depth"),
+                steps=kw.get("steps", 20),
+                iterations=kw.get("iterations", 10),
+            ),
+            "taxonomy_bar": lambda df, metadata_df=None, **kw: run_taxonomy_bar(
+                df, metadata_df,
+                group_column=kw.get("group_column"),
+                tax_level=kw.get("tax_level", "genus"),
+                top_n=kw.get("top_n", 15),
+            ),
+            "mofa": lambda df, df2=None, metadata_df=None, **kw: run_mofa_plus(
+                df.T, df2.T if df2 is not None else None, metadata_df,
+                n_factors=kw.get("n_factors", 5),
+                group_column=kw.get("group_column"),
+            ),
+            "diablo": lambda df, df2=None, metadata_df=None, **kw: run_diablo(
+                df, df2, metadata_df,
+                group_column=kw.get("group_column"),
+                n_components=kw.get("n_components", 2),
+            ),
+            "wgcna": lambda df, metadata_df=None, **kw: run_wgcna(
+                df, metadata_df,
+                power=kw.get("power", 6),
+                min_module_size=kw.get("min_module_size", 10),
+                merge_cut_height=kw.get("merge_cut_height", 0.25),
+            ),
+            "source_tracking": _run_source_tracking,
+            "unifrac": _run_unifrac,
+            "strain_analyzer": _run_strain_analyzer,
+            "upset": lambda df, metadata_df=None, **kw: run_upset_analysis(
+                df, metadata_df,
+                group_column=kw.get("group_column"),
+                prevalence_threshold=kw.get("prevalence_threshold", 0.25),
+                top_n=kw.get("top_n", 20),
+            ),
         }
 
     return _MODULE_FUNCTIONS.get(module_name)
@@ -265,11 +598,17 @@ def _get_module_function(module_name: str) -> Callable:
 class WorkflowExecutor:
     """Executes analysis plans with parallelization and streaming."""
 
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         self.state: Dict[str, Any] = {}  # step_id -> result
         self.session_data: Dict[str, Any] = {}  # microbiome_df, metabolome_df, metadata_df
         self.completed_steps: set = set()
         self.failed_steps: set = set()
+        self.session_id: Optional[str] = session_id
+        # step_id -> module name / params, so a report can name what produced each
+        # result and so completed results keep their plan order.
+        self.step_modules: Dict[str, str] = {}
+        self.step_params: Dict[str, Dict[str, Any]] = {}
+        self.step_order: List[str] = []
 
     def set_session_data(self, microbiome_df=None, metabolome_df=None, metadata_df=None):
         """Set the input data for the workflow."""
@@ -377,9 +716,18 @@ class WorkflowExecutor:
                 else:
                     kwargs["df"] = self.session_data.get("microbiome")
 
+        # The validator inspects every table the session has, so hand it both
+        # feature tables explicitly instead of relying on the generic df/df2
+        # wiring above (which only fills df2 for integration modules).
+        if step.module == "data_validator":
+            kwargs["df"] = self.session_data.get("microbiome")
+            kwargs["df2"] = self.session_data.get("metabolome")
+            kwargs["metadata_df"] = self.session_data.get("metadata")
+
         # Special handling for report_generator
         if step.module == "report_generator":
-            kwargs["results"] = {sid: self.state[sid] for sid in self.completed_steps if sid in self.state}
+            kwargs["results"] = self._completed_results_for_report()
+            kwargs["session_id"] = self.session_id
 
         # Execute
         logger.info(f"Executing step {step.id}: {step.module}")
@@ -398,6 +746,53 @@ class WorkflowExecutor:
             "module": step.module,
             "step_id": step.id,
         }
+
+    def _completed_results_for_report(self) -> List[Dict[str, Any]]:
+        """Flatten completed step results into the shape export_service expects.
+
+        app.services.export_service.generate_comprehensive_report consumes a list
+        of flat dicts keyed by 'test_method'/'job_type' with an optional
+        'plot_data'; analysis modules name their figure differently
+        (volcano_plot, heatmap), so the first one present is promoted.
+        """
+        entries: List[Dict[str, Any]] = []
+        for sid in self.step_order:
+            if sid not in self.completed_steps or sid not in self.state:
+                continue
+            module = self.step_modules.get(sid, sid)
+            entry: Dict[str, Any] = {}
+            result = self.state[sid]
+            if isinstance(result, dict):
+                entry.update(result)
+                if not entry.get("plot_data"):
+                    for alt in ("volcano_plot", "heatmap", "plot"):
+                        if isinstance(result.get(alt), dict):
+                            entry["plot_data"] = result[alt]
+                            break
+            else:
+                entry["value"] = result
+            # Module identity wins over anything the result carries, so report
+            # sections are titled by the step that produced them.
+            entry["job_type"] = module
+            entry["test_method"] = module
+            entry["step_id"] = sid
+            entry["parameters"] = self.step_params.get(sid, {})
+            entries.append(entry)
+        return entries
+
+    @staticmethod
+    def _blocking_failure(step: PlanStep, result: Any) -> Optional[str]:
+        """Return a message if a module completed but reported unusable data.
+
+        The validator returns a report instead of raising, so the executor is
+        what decides that ``valid: False`` means the step failed.
+        """
+        if step.module != "data_validator" or not isinstance(result, dict):
+            return None
+        if result.get("valid", True):
+            return None
+        errors = result.get("errors") or ["data validation reported the input unusable"]
+        return "Data validation failed -- " + "; ".join(str(e) for e in errors[:10])
 
     async def _execute_batch(self, batch: List[PlanStep]) -> List[ExecutionEvent]:
         """Execute a batch of independent steps in parallel."""
@@ -426,6 +821,13 @@ class WorkflowExecutor:
         """Execute a step and return a list of events."""
         events = []
 
+        # execute() records these from the plan; keep them here too so a step run
+        # outside execute() (tests, ad-hoc calls) is still attributable.
+        self.step_modules.setdefault(step.id, step.module)
+        self.step_params.setdefault(step.id, dict(step.params or {}))
+        if step.id not in self.step_order:
+            self.step_order.append(step.id)
+
         # Start event
         events.append(ExecutionEvent(
             event_type="step_start",
@@ -435,7 +837,14 @@ class WorkflowExecutor:
 
         try:
             result = await self._execute_step(step)
+            # Keep the result even if it turns out to be a rejection report, so
+            # the caller can see *why* validation failed.
             self.state[step.id] = result["result"]
+
+            blocking = self._blocking_failure(step, result["result"])
+            if blocking:
+                raise DataValidationFailed(blocking)
+
             self.completed_steps.add(step.id)
 
             # Complete event
@@ -462,7 +871,11 @@ class WorkflowExecutor:
             events.append(ExecutionEvent(
                 event_type="step_error",
                 step_id=step.id,
-                payload={"error": str(e), "traceback": traceback.format_exc()},
+                payload={
+                    "module": step.module,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                },
             ))
 
         return events
@@ -497,6 +910,15 @@ class WorkflowExecutor:
         Yields:
             ExecutionEvent: Progress events (step_start, step_complete, step_error, etc.)
         """
+        # Record plan order up front: steps in a batch finish in whatever order
+        # asyncio schedules them, and a report whose sections shuffle between
+        # runs is not reproducible.
+        for step in plan.steps:
+            self.step_modules[step.id] = step.module
+            self.step_params[step.id] = dict(step.params or {})
+            if step.id not in self.step_order:
+                self.step_order.append(step.id)
+
         # Yield plan accepted event
         yield ExecutionEvent(
             event_type="plan_accepted",
@@ -560,6 +982,7 @@ async def run_agent_workflow(
     microbiome_df=None,
     metabolome_df=None,
     metadata_df=None,
+    session_id: Optional[str] = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Convenience function to run a complete agent workflow.
@@ -568,7 +991,7 @@ async def run_agent_workflow(
         async for event in run_agent_workflow(plan, mb_df, met_df, meta_df):
             print(event.to_dict())
     """
-    executor = WorkflowExecutor()
+    executor = WorkflowExecutor(session_id=session_id)
     executor.set_session_data(microbiome_df, metabolome_df, metadata_df)
 
     async for event in executor.execute(plan):

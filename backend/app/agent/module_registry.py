@@ -24,6 +24,35 @@ class ModuleSpec:
 
 
 # ───────────────────────────────────────────────────────────────
+# REGISTRATION CONTRACT
+# ───────────────────────────────────────────────────────────────
+#
+# A module is only usable by the Agent when it has BOTH:
+#   1. a ModuleSpec in MODULE_REGISTRY (below), and
+#   2. an entry in app.agent.executor._MODULE_FUNCTIONS.
+#
+# Registering a spec without the executor mapping produces plans whose steps
+# die with "Unknown module" at run time, which is worse than not offering the
+# module at all (tests/test_agent_executor.py::test_all_modules_have_functions
+# guards this). app.agent.planner.MODULE_KEYWORDS can therefore route to more
+# names than are registered; the planner tells the user those are unavailable
+# rather than emitting an unrunnable step
+# (see planner.unregistered_keyword_modules()).
+#
+# PENDING_EXECUTOR_WIRING lists the keyword-routable modules that already have
+# a real service behind them and are waiting only on the executor mapping.
+# Add the executor entry FIRST, then move the module into MODULE_REGISTRY.
+#
+# 2026-08-15: all previously pending modules (aldex2, anosim, diablo,
+# enterotype, heatmap, mofa, random_forest, rarefaction, songbird,
+# source_tracking, strain_analyzer, taxonomy_bar, unifrac, upset, volcano,
+# wgcna) are now wired in executor._MODULE_FUNCTIONS and registered below.
+# 'upset' required a new service (app.services.upset_plot); 'volcano' is a
+# plot view over microbiome marker discovery. Keep this list empty.
+PENDING_EXECUTOR_WIRING: Dict[str, str] = {}
+
+
+# ───────────────────────────────────────────────────────────────
 # MODULE REGISTRY
 # ───────────────────────────────────────────────────────────────
 
@@ -321,9 +350,225 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         output_spec={"significant_associations": "dataframe", "volcano_plot": "plotly"},
     ),
 
+    # ── Community Statistics & ML ───────────────────────────────
+    "anosim": ModuleSpec(
+        name="anosim",
+        description="Analysis of Similarities to test whether groups differ in community composition",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "distance_metric": {"type": "enum", "options": ["braycurtis", "jaccard"], "default": "braycurtis"},
+            "n_permutations": {"type": "int", "default": 999},
+        },
+        output_spec={"statistics": "dict", "r_statistic": "float", "pvalue": "float"},
+        constraints=["Requires metadata with at least 2 groups"],
+    ),
+
+    "random_forest": ModuleSpec(
+        name="random_forest",
+        description="Random Forest classification with feature importance to identify discriminative taxa/features",
+        category="marker",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "n_estimators": {"type": "int", "default": 500, "range": [50, 2000]},
+        },
+        output_spec={"feature_importance": "dataframe", "accuracy": "float", "plot_data": "plotly"},
+        constraints=["Requires metadata with a grouping variable"],
+    ),
+
+    "aldex2": ModuleSpec(
+        name="aldex2",
+        description="ALDEx2-style differential abundance: CLR transform + Welch t-test / Mann-Whitney / Kruskal-Wallis with effect sizes",
+        category="marker",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "test_method": {"type": "enum", "options": ["welch", "mannwhitney", "kruskal"], "default": "welch"},
+            "effect_threshold": {"type": "float", "default": 1.0},
+            "pvalue_threshold": {"type": "float", "default": 0.05},
+        },
+        output_spec={"volcano_plot": "plotly", "significant_features": "dataframe", "statistics": "dict"},
+    ),
+
+    "songbird": ModuleSpec(
+        name="songbird",
+        description="Songbird-style multinomial regression differential abundance with rank-based feature comparisons",
+        category="marker",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "epochs": {"type": "int", "default": 1000},
+            "top_n": {"type": "int", "default": 50},
+        },
+        output_spec={"rankings": "dataframe", "plot_data": "plotly", "statistics": "dict"},
+    ),
+
+    "enterotype": ModuleSpec(
+        name="enterotype",
+        description="Enterotype clustering (PAM/K-means on Jaccard or Bray-Curtis distances) with PCoA visualisation",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "n_clusters": {"type": "int", "default": 3, "range": [2, 10]},
+            "distance_metric": {"type": "enum", "options": ["jaccard", "braycurtis"], "default": "jaccard"},
+            "clustering_method": {"type": "enum", "options": ["pam", "kmeans", "auto"], "default": "pam"},
+            "group_column": {"type": "string", "default": "Visit"},
+        },
+        output_spec={"plot_data": "plotly", "cluster_assignments": "dataframe", "statistics": "dict"},
+    ),
+
+    # ── Visualisation ───────────────────────────────────────────
+    "rarefaction": ModuleSpec(
+        name="rarefaction",
+        description="Rarefaction curves to assess sequencing depth sufficiency per sample or group",
+        category="visualization",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "group_column": {"type": "string", "default": None},
+            "metrics": {"type": "array", "default": ["observed", "shannon"]},
+            "max_depth": {"type": "int", "default": None},
+            "steps": {"type": "int", "default": 20},
+            "iterations": {"type": "int", "default": 10},
+        },
+        output_spec={"plot_data": "plotly", "curves": "dataframe"},
+    ),
+
+    "taxonomy_bar": ModuleSpec(
+        name="taxonomy_bar",
+        description="Stacked bar chart of community composition at phylum/genus/species level",
+        category="visualization",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "group_column": {"type": "string", "default": None},
+            "tax_level": {"type": "enum", "options": ["phylum", "genus", "species"], "default": "genus"},
+            "top_n": {"type": "int", "default": 15, "range": [5, 50]},
+        },
+        output_spec={"plot_data": "plotly", "composition_table": "dataframe"},
+    ),
+
+    "heatmap": ModuleSpec(
+        name="heatmap",
+        description="Clustered heatmap of the top variable features across samples",
+        category="visualization",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "top_n": {"type": "int", "default": 50, "range": [10, 200]},
+            "normalize": {"type": "enum", "options": ["zscore", "log", "none"], "default": "zscore"},
+            "group_column": {"type": "string", "default": None},
+        },
+        output_spec={"plot_data": "plotly"},
+    ),
+
+    "volcano": ModuleSpec(
+        name="volcano",
+        description="Volcano plot of differential abundance (effect size vs significance) from marker discovery",
+        category="visualization",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "reference_group": {"type": "string", "default": "T4"},
+            "pvalue_threshold": {"type": "float", "default": 0.05},
+            "fc_threshold": {"type": "float", "default": 1.5},
+        },
+        output_spec={"plot_data": "plotly", "significant_features": "dataframe"},
+        depends_on=[],
+    ),
+
+    "upset": ModuleSpec(
+        name="upset",
+        description="UpSet plot of feature-set intersections across groups (shared vs group-specific prevalent features)",
+        category="visualization",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "prevalence_threshold": {"type": "float", "default": 0.25, "range": [0.0, 1.0]},
+            "top_n": {"type": "int", "default": 20},
+        },
+        output_spec={"plot_data": "plotly", "intersections": "dataframe", "set_sizes": "dict"},
+    ),
+
+    # ── Integration (additional) ────────────────────────────────
+    "mofa": ModuleSpec(
+        name="mofa",
+        description="MOFA+ style multi-omics factor analysis extracting latent factors shared across microbiome and metabolome",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "optional"},
+        parameters={
+            "n_factors": {"type": "int", "default": 5, "range": [2, 15]},
+            "group_column": {"type": "string", "default": "Visit"},
+        },
+        output_spec={"plot_data": "plotly", "factors": "dataframe", "variance_explained": "dict"},
+    ),
+
+    "diablo": ModuleSpec(
+        name="diablo",
+        description="DIABLO-style supervised integration (sparse PLS-DA) discriminating groups from combined omics blocks",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "default": "Visit"},
+            "n_components": {"type": "int", "default": 2, "range": [2, 5]},
+        },
+        output_spec={"plot_data": "plotly", "loadings": "dict", "classification": "dict"},
+    ),
+
+    # ── Network / Phylogenetic / Strain / Source ────────────────
+    "wgcna": ModuleSpec(
+        name="wgcna",
+        description="WGCNA-style co-occurrence module detection with module-trait correlation",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "power": {"type": "int", "default": 6, "range": [1, 20]},
+            "min_module_size": {"type": "int", "default": 10},
+            "merge_cut_height": {"type": "float", "default": 0.25},
+        },
+        output_spec={"plot_data": "plotly", "modules": "dataframe", "statistics": "dict"},
+    ),
+
+    "unifrac": ModuleSpec(
+        name="unifrac",
+        description="UniFrac phylogenetic diversity: weighted/unweighted UniFrac distances, Faith's PD, NMDS and PERMANOVA",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "weighted": {"type": "bool", "default": True},
+            "group_column": {"type": "string", "default": "Visit"},
+            "n_permutations": {"type": "int", "default": 999},
+        },
+        output_spec={"plot_data": "plotly", "distance_matrix": "dataframe", "faith_pd": "dataframe"},
+    ),
+
+    "strain_analyzer": ModuleSpec(
+        name="strain_analyzer",
+        description="Strain-level profiling for a target species from Strain2bScan output (ANI/coverage filtered)",
+        category="individual_omics",
+        input_requirements={"microbiome": "required"},
+        parameters={
+            "species": {"type": "string", "default": None},
+            "min_ani": {"type": "float", "default": 95.0},
+            "min_coverage": {"type": "float", "default": 0.8},
+        },
+        output_spec={"strain_profile": "dict", "strain_count": "int"},
+        constraints=["Requires Strain2bScan-format strain table; picks the most recorded species when none is named"],
+    ),
+
+    "source_tracking": ModuleSpec(
+        name="source_tracking",
+        description="Source tracking (FEAST-style NNLS/EM) estimating source contributions to sink samples",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "optional"},
+        parameters={
+            "source_column": {"type": "string", "default": "source_type"},
+            "method": {"type": "enum", "options": ["nnls", "em"], "default": "nnls"},
+        },
+        output_spec={"plot_data": "plotly", "source_proportions": "dataframe"},
+    ),
+
     # ── Report Generation ───────────────────────────────────────
-    "report_generator": ModuleSpec(
-        name="report_generator",
+    "report_generator": ModuleSpec(        name="report_generator",
         description="Combine all analysis results into a unified PDF or HTML report with figures and tables",
         category="visualization",
         input_requirements={"results": "required"},
