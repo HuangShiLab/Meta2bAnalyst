@@ -123,3 +123,7 @@ poster_*.svg
 
 # Frontend git backup
 frontend_git_backup/
+
+# Literature mining staging (regenerable working data)
+backend/knowledge_staging/
+sample_data/literature_test/
