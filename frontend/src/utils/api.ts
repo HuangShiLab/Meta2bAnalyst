@@ -120,7 +120,7 @@ export const runPCoA = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockBetaResponse({ ...params, ordinationMethod: 'pcoa' });
   }
 };
@@ -135,7 +135,7 @@ export const runNMDS = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockBetaResponse({ ...params, ordinationMethod: 'nmds' });
   }
 };
@@ -150,7 +150,7 @@ export const runDifferential = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockDifferentialResponse(params);
   }
 };
@@ -165,7 +165,7 @@ export const runPERMANOVA = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockStatResponse('PERMANOVA', params);
   }
 };
@@ -180,7 +180,7 @@ export const runANOSIM = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockStatResponse('ANOSIM', params);
   }
 };
@@ -195,7 +195,7 @@ export const runRandomForest = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockMLResponse(params);
   }
 };
@@ -210,7 +210,7 @@ export const runHeatmap = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockHeatmapResponse(params);
   }
 };
@@ -225,7 +225,7 @@ export const runStackedBar = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockStackedBarResponse();
   }
 };
@@ -240,7 +240,7 @@ export const runVolcano = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockVolcanoResponse(params);
   }
 };
@@ -402,7 +402,7 @@ export const runStrainComposition = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockStrainCompositionResponse(params);
   }
 };
@@ -417,7 +417,7 @@ export const runStrainAlpha = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockAlphaResponse({
       indices: params.indices || ['Shannon', 'Simpson'],
       groupColumn: params.groupColumn,
@@ -436,7 +436,7 @@ export const runStrainBeta = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockBetaResponse({
       distanceMethod: params.distanceMethod || 'bray-curtis',
       ordinationMethod: params.ordinationMethod || 'pcoa',
@@ -456,7 +456,7 @@ export const runStrainDifferential = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockDifferentialResponse({
       method: params.method,
       groupColumn: params.groupColumn,
@@ -476,7 +476,7 @@ export const runStrainDominance = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockStackedBarResponse();
   }
 };
@@ -491,7 +491,7 @@ export const runStrainReplacement = async (
       params
     );
     return response.data;
-  } catch (error) {
+  } catch {
     return getMockNetworkResponse();
   }
 };
@@ -1083,7 +1083,10 @@ function getMockWGCNAResponse(_params: Record<string, unknown>): AnalysisJobResp
   
   // Assign modules
   const moduleAssignments = features.map((_, i) => modules[i % modules.length]);
-  
+  const moduleSizes = Object.fromEntries(
+    modules.map((m) => [m, moduleAssignments.filter((a) => a === m).length])
+  );
+
   return {
     success: true,
     job_id: 'mock-wgcna-' + Date.now(),
@@ -1101,7 +1104,7 @@ function getMockWGCNAResponse(_params: Record<string, unknown>): AnalysisJobResp
       n_modules: modules.length,
       n_features: features.length,
       power: _params.power || 6,
-      module_sizes: { turquoise: 10, blue: 10, brown: 10, yellow: 10, green: 10 },
+      module_sizes: moduleSizes,
     },
   };
 }

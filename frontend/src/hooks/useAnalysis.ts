@@ -535,6 +535,10 @@ export function usePagedResults<T = Record<string, string | number>>(
 
   useEffect(() => {
     fetchPage();
+    // Intentionally not keyed on fetchPage: its identity changes with
+    // page/pageSize, and goToPage already fetches explicitly — keying on it
+    // would double-fetch on every page turn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, sortBy, sortOrder]);
 
   const goToPage = useCallback(

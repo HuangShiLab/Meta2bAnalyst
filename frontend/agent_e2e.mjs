@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync } from 'fs';
 
 const API = 'http://localhost:8000/api/v1';
 const SID = '7ada3f06-f4c3-429a-8416-d87204934f03';

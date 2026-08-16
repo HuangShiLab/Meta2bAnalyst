@@ -269,7 +269,7 @@ export function MultiSite() {
         shapeBy: comparisonShapeBy,
       },
     });
-  }, [comparisonType, comparisonDistance, comparisonShapeBy, siteColumn, runAnalysis, sessionId, clearResult, sessionStore]);
+  }, [comparisonType, comparisonDistance, comparisonShapeBy, siteColumn, subjectColumn, runAnalysis, sessionId, clearResult, sessionStore]);
 
   const handleRunMarkers = useCallback(async () => {
     clearResult();
@@ -299,7 +299,7 @@ export function MultiSite() {
         correctionMethod: markerCorrection,
       },
     });
-  }, [markerMethod, siteColumn, referenceSite, markerComparison, markerPvalue, markerCorrection, runAnalysis, sessionId, clearResult, sessionStore]);
+  }, [markerMethod, siteColumn, subjectColumn, referenceSite, markerComparison, markerPvalue, markerCorrection, runAnalysis, sessionId, clearResult, sessionStore]);
 
   const handleRunTemporal = useCallback(async () => {
     clearResult();
