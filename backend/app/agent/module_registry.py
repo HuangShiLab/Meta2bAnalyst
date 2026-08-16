@@ -221,6 +221,73 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         depends_on=[],
     ),
 
+    # ── Cross-site / cross-omics (Zhang et al., Microbiome 2026) ──────────
+
+    "cross_site_permanova": ModuleSpec(
+        name="cross_site_permanova",
+        description="Distance-based variance estimation: per-site microbiome explanatory power (cumulative R2) over a target omics layer, via univariate feature PERMANOVA screen + multivariable model (adonis2-style)",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "required"},
+        parameters={
+            "site_column": {"type": "string", "default": None, "description": "Metadata column with body site (auto-detected if omitted)"},
+            "subject_column": {"type": "string", "default": None, "description": "Metadata column with subject id (auto-detected if omitted)"},
+            "p_threshold": {"type": "float", "default": 0.05},
+            "n_permutations": {"type": "int", "default": 999},
+            "max_features_per_site": {"type": "int", "default": 200},
+        },
+        output_spec={"sites": "dict of per-site cumulative_r2 + per-feature results"},
+        constraints=["Longitudinal repeats are collapsed to per-subject means before testing"],
+        depends_on=[],
+    ),
+
+    "cross_omics_gbdt": ModuleSpec(
+        name="cross_omics_gbdt",
+        description="Per-target GBDT/LASSO predictive screen with nested CV, in-fold Spearman feature pre-selection, bootstrap R2 distribution with 95% CI and feature reproducibility - identifies which microbial features carry cross-omics associations",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required"},
+        parameters={
+            "method": {"type": "enum", "options": ["gbdt", "lasso"], "default": "gbdt"},
+            "site": {"type": "string", "default": None, "description": "Restrict predictors to one body site"},
+            "r_threshold": {"type": "float", "default": 0.3},
+            "p_threshold": {"type": "float", "default": 0.05},
+            "n_bootstrap": {"type": "int", "default": 20},
+            "cv_folds": {"type": "int", "default": 5},
+        },
+        output_spec={"results": "per-target mean_r2, ci95, t_padj, top_features with reproducibility"},
+        constraints=["Feature selection happens inside each training fold - no leakage"],
+        depends_on=[],
+    ),
+
+    "cross_site_network": ModuleSpec(
+        name="cross_site_network",
+        description="Spearman correlation network between each body site's features and target omics features, with hub detection (degree/betweenness) and shared-target identification across sites",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "required"},
+        parameters={
+            "r_threshold": {"type": "float", "default": 0.3},
+            "p_threshold": {"type": "float", "default": 0.05},
+            "top_hubs": {"type": "int", "default": 5},
+        },
+        output_spec={"site_hubs": "dict", "shared_targets": "list", "n_edges": "int"},
+        constraints=["FDR correction applied within each site"],
+        depends_on=[],
+    ),
+
+    "cross_site_concordance": ModuleSpec(
+        name="cross_site_concordance",
+        description="Find features disease-associated in the SAME direction across multiple body sites/omics layers (per-layer Mann-Whitney + FDR, concordance = significant in >= min_sites layers with same sign)",
+        category="integration",
+        input_requirements={"microbiome": "required", "metadata": "required", "metabolome": "optional"},
+        parameters={
+            "group_column": {"type": "string", "required": True, "description": "Two-level metadata column (e.g. disease status)"},
+            "min_sites": {"type": "int", "default": 2},
+            "p_threshold": {"type": "float", "default": 0.05},
+        },
+        output_spec={"concordant_features": "list with layers, directions, concordant_direction flag"},
+        constraints=["Requires exactly two groups in group_column"],
+        depends_on=[],
+    ),
+
     "sparse_cca": ModuleSpec(
         name="sparse_cca",
         description="Sparse Canonical Correlation Analysis to find sparse linear combinations of taxa and metabolites maximizing cross-correlation",

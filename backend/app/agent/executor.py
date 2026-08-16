@@ -445,6 +445,104 @@ def _get_module_function(module_name: str) -> Callable:
             result["strain_count"] = strain_count
             return result
 
+        # ── Cross-site / cross-omics wrappers (Zhang et al. 2026) ─────────
+        def _site_tables(df, metadata_df, kw):
+            """Session microbiome table (features x samples) -> per-site
+            subject-level samples x features tables."""
+            if metadata_df is None:
+                raise ValueError("cross-site analysis requires metadata with site/subject columns")
+            from app.services.cross_site_omics import subject_site_tables
+            return subject_site_tables(
+                df.T, metadata_df,
+                site_column=kw.get("site_column"),
+                subject_column=kw.get("subject_column"),
+            )
+
+        def _subject_level(df2, metadata_df, kw):
+            """Metabolome table (features x samples) -> subject-level samples x features."""
+            from app.services.multisite_analysis import _detect_subject_column
+            t = df2.T
+            if metadata_df is None:
+                return t
+            subj = kw.get("subject_column") or _detect_subject_column(metadata_df)
+            common = t.index.intersection(metadata_df.index)
+            if subj and len(common):
+                return t.loc[common].groupby(metadata_df.loc[common, subj]).mean(numeric_only=True)
+            return t
+
+        def _run_cross_site_permanova(df, df2=None, metadata_df=None, **kw):
+            from app.services.cross_site_omics import cross_site_explained_variance
+            if df2 is None:
+                raise ValueError("cross_site_permanova needs a target omics (metabolome) table")
+            sites = _site_tables(df, metadata_df, kw)
+            target = _subject_level(df2, metadata_df, kw)
+            return cross_site_explained_variance(
+                sites, target,
+                p_threshold=kw.get("p_threshold", 0.05),
+                n_perm=kw.get("n_permutations", 999),
+                max_features_per_site=kw.get("max_features_per_site", 200),
+            )
+
+        def _run_cross_omics_gbdt(df, df2=None, metadata_df=None, **kw):
+            from app.services.cross_site_omics import cross_omics_gbdt_screen, subject_site_tables
+            if df2 is None:
+                raise ValueError("cross_omics_gbdt needs a target omics (metabolome) table")
+            target = _subject_level(df2, metadata_df, kw)
+            # Which site's features to model with; default: all subjects' table
+            site = kw.get("site")
+            if site and metadata_df is not None:
+                sites = subject_site_tables(df.T, metadata_df, kw.get("site_column"),
+                                            kw.get("subject_column"))
+                feats = sites.get(site)
+                if feats is None:
+                    raise ValueError(f"site '{site}' not found; available: {list(sites)}")
+            else:
+                feats = df.T
+            common = feats.index.intersection(target.index)
+            return cross_omics_gbdt_screen(
+                feats.loc[common], target.loc[common],
+                method=kw.get("method", "gbdt"),
+                r_threshold=kw.get("r_threshold", 0.3),
+                p_threshold=kw.get("p_threshold", 0.05),
+                n_bootstrap=kw.get("n_bootstrap", 20),
+                cv_folds=kw.get("cv_folds", 5),
+                n_targets=kw.get("n_targets"),
+            )
+
+        def _run_cross_site_network(df, df2=None, metadata_df=None, **kw):
+            from app.services.cross_site_omics import cross_site_correlation_network
+            if df2 is None:
+                raise ValueError("cross_site_network needs a target omics (metabolome) table")
+            sites = _site_tables(df, metadata_df, kw)
+            target = _subject_level(df2, metadata_df, kw)
+            return cross_site_correlation_network(
+                sites, target,
+                r_threshold=kw.get("r_threshold", 0.3),
+                p_threshold=kw.get("p_threshold", 0.05),
+                top_hubs=kw.get("top_hubs", 5),
+            )
+
+        def _run_cross_site_concordance(df, df2=None, metadata_df=None, **kw):
+            from app.services.cross_site_omics import cross_site_concordance
+            group_column = kw.get("group_column")
+            if not group_column:
+                raise ValueError("cross_site_concordance needs params.group_column")
+            layers = _site_tables(df, metadata_df, kw)
+            if df2 is not None:
+                layers["metabolome"] = _subject_level(df2, metadata_df, kw)
+            # metadata must be subject-level to match the layer indices
+            from app.services.multisite_analysis import _detect_subject_column
+            subj = kw.get("subject_column") or _detect_subject_column(metadata_df)
+            if subj:
+                md = metadata_df.drop_duplicates(subset=[subj]).set_index(subj)
+            else:
+                md = metadata_df
+            return cross_site_concordance(
+                layers, md, group_column,
+                min_sites=kw.get("min_sites", 2),
+                p_threshold=kw.get("p_threshold", 0.05),
+            )
+
         _MODULE_FUNCTIONS = {
             "data_validator": validate_data,
             "microbiome_pcoa": lambda df, metadata_df=None, **kw: run_pcoa(
@@ -586,6 +684,11 @@ def _get_module_function(module_name: str) -> Callable:
                 prevalence_threshold=kw.get("prevalence_threshold", 0.25),
                 top_n=kw.get("top_n", 20),
             ),
+            # ── Cross-site / cross-omics (Zhang et al. 2026 framework) ──
+            "cross_site_permanova": _run_cross_site_permanova,
+            "cross_omics_gbdt": _run_cross_omics_gbdt,
+            "cross_site_network": _run_cross_site_network,
+            "cross_site_concordance": _run_cross_site_concordance,
         }
 
     return _MODULE_FUNCTIONS.get(module_name)
