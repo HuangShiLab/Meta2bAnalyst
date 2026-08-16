@@ -103,7 +103,7 @@ def plan_from_text(paper_text: str, max_chars: int = MAX_TEXT_CHARS) -> Dict[str
         for name, spec in MODULE_REGISTRY.items()
     )
     content = client.chat(_SYSTEM_PROMPT.format(modules=modules),
-                          text, max_tokens=8000, timeout=180)
+                          text, max_tokens=16000, timeout=180)
     if not content:
         raise ValueError("LLM returned no content")
 
@@ -112,7 +112,17 @@ def plan_from_text(paper_text: str, max_chars: int = MAX_TEXT_CHARS) -> Dict[str
         stripped = stripped.split("```")[1]
         if stripped.startswith("json"):
             stripped = stripped[4:]
-    data = json.loads(stripped)
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        # Reasoning models can exhaust max_tokens mid-payload. Salvage the
+        # complete step objects (shared with the planner fallback); the
+        # analyses_found lists are best-effort and may be lost.
+        from app.agent.planner import _parse_llm_plan
+        salvaged = _parse_llm_plan(stripped)
+        if not salvaged:
+            raise ValueError("LLM output was truncated beyond recovery; try again")
+        data = {"steps": salvaged["steps"], "analyses_found": [], "unmatched_analyses": []}
 
     steps = AnalysisPlanner._validate_llm_steps(data.get("steps") or [])
     if not steps:
