@@ -218,7 +218,8 @@ export function Agent() {
         "Just tell me what you want to analyze — for example:\n" +
         "• \"Run the full multi-omics pipeline\"\n" +
         "• \"Find differential markers between Day 0 and Day 21\"\n" +
-        "• \"Compare microbiome and metabolome with Procrustes and Mantel test\"\n\n" +
+        "• \"Compare microbiome and metabolome with Procrustes and Mantel test\"\n" +
+        "• \"我们口腔和肠道两个位点在治疗前后的变化是否同向？应该做哪些分析？\" (free-form — LLM-assisted planning)\n\n" +
         "Or select a quick template below to get started.",
       timestamp: new Date(),
     },

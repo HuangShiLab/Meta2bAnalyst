@@ -12,13 +12,17 @@ export interface InterpretFullResponse {
     description: string;
     indicators: string[];
   }>;
+  /** True when the narrative was rewritten by the external LLM (facts still
+   * come from the results + KB); false means deterministic KB-only output. */
+  llm_enhanced: boolean;
+  llm_model: string | null;
 }
 
 export interface UseAgentInterpretationReturn {
   result: InterpretFullResponse | null;
   loading: boolean;
   error: string | null;
-  interpretFull: (results: Record<string, unknown>, metadataSummary?: Record<string, unknown>) => Promise<InterpretFullResponse | null>;
+  interpretFull: (results: Record<string, unknown>, metadataSummary?: Record<string, unknown>, useLlm?: boolean) => Promise<InterpretFullResponse | null>;
   clear: () => void;
 }
 
@@ -32,7 +36,8 @@ export function useAgentInterpretation(): UseAgentInterpretationReturn {
   // promise inside an event handler would otherwise read a stale null.
   const interpretFull = useCallback(async (
     results: Record<string, unknown>,
-    metadataSummary?: Record<string, unknown>
+    metadataSummary?: Record<string, unknown>,
+    useLlm: boolean = true
   ): Promise<InterpretFullResponse | null> => {
     setLoading(true);
     setError(null);
@@ -43,6 +48,7 @@ export function useAgentInterpretation(): UseAgentInterpretationReturn {
         body: JSON.stringify({
           results,
           metadata_summary: metadataSummary,
+          use_llm: useLlm,
         }),
       });
       if (!res.ok) {

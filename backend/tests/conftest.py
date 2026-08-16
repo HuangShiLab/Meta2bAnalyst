@@ -18,6 +18,25 @@ from app.main import app
 # ─────────────────────────────── Database fixtures
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _disable_llm_for_tests():
+    """Hermetic tests: the real Kimi gateway must never be called from pytest.
+
+    With LLM planner fallback now enabled by default, a clarification query in
+    a dev shell (where backend/.env carries a real KIMI_API_KEY) would
+    otherwise hit the network and make tests flaky and slow. Force the shared
+    client into its unavailable state; tests that exercise the LLM path mock
+    it explicitly.
+    """
+    from app.services import llm_client as lc
+
+    client = lc.get_llm_client()
+    client.api_key = None
+    client._available = False
+    yield
+
+
+
 @pytest.fixture(scope="session")
 def test_engine():
     """Create a temporary SQLite database for testing."""

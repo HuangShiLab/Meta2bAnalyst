@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 import { useAgentInterpretation, type InterpretFullResponse } from "@/hooks/useAgentInterpretation";
 
 // ───────────────────────────────────────────────────────────────
@@ -41,11 +42,13 @@ function classifyQuestion(text: string): "full_interpretation" | "specific_contr
   if (lower.includes("why") || lower.includes("what happened") || lower.includes("explain") || lower.includes("contradiction") || lower.includes("contradict")) {
     return "specific_contradiction";
   }
-  if (lower.includes("species") || lower.includes("taxon") || lower.includes("bacteria") || lower.includes("genus")) {
-    return "taxon_query";
-  }
-  if (lower.includes("disease") || lower.includes("disorder") || lower.includes("syndrome") || lower.includes("related")) {
+  // Disease intent wins over taxon intent: "what diseases are these species
+  // related to?" mentions both, and the user is asking about disease.
+  if (lower.includes("disease") || lower.includes("disorder") || lower.includes("syndrome") || lower.includes("related") || lower.includes("疾病") || lower.includes("相关")) {
     return "disease_query";
+  }
+  if (lower.includes("species") || lower.includes("taxon") || lower.includes("bacteria") || lower.includes("genus") || lower.includes("菌")) {
+    return "taxon_query";
   }
   if (lower.includes("method") || lower.includes("parameter") || lower.includes("why use") || lower.includes("assumption")) {
     return "method_query";
@@ -371,6 +374,11 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [hasInterpreted, setHasInterpreted] = useState(false);
+  // LLM narrative switch (interpret-full): on by default, degrades to
+  // deterministic KB-only output when no API key is configured server-side.
+  const [useLlm, setUseLlm] = useState(true);
+  const [llmEnhanced, setLlmEnhanced] = useState(false);
+  const [llmModel, setLlmModel] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { result: interpResult, interpretFull } = useAgentInterpretation();
@@ -422,8 +430,10 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
         if (needsInterpretation) {
           addMessage(answerMsgs[0]);
 
-          const fresh = await interpretFull(availableResults as Record<string, unknown>, { n_samples: 20, data_type: "metagenomics" });
+          const fresh = await interpretFull(availableResults as Record<string, unknown>, { n_samples: 20, data_type: "metagenomics" }, useLlm);
           setHasInterpreted(true);
+          setLlmEnhanced(fresh?.llm_enhanced ?? false);
+          setLlmModel(fresh?.llm_model ?? null);
 
           // Use the freshly returned interpretation - `interpResult` in this
           // closure is still the pre-await value (null on the first question).
@@ -446,7 +456,7 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
         setIsThinking(false);
       }
     },
-    [isThinking, externalResults, interpResult, hasInterpreted, interpretFull, addMessage]
+    [isThinking, externalResults, interpResult, hasInterpreted, interpretFull, useLlm, addMessage]
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -454,10 +464,13 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
     handleSend(input);
   };
 
+  // Concrete demo scenarios, one per answer mode:
+  // full narrative / contradiction explainer / KB disease lookup / next steps.
   const quickQuestions = [
     "Comprehensive analysis of my data",
     "Why is alpha not significant but LEfSe found differences?",
     "What diseases are these species related to?",
+    "哪些菌种与炎症性肠病相关？",
     "What should I do next?",
   ];
 
@@ -561,9 +574,29 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
             </Button>
           </form>
 
-          <p className="text-center text-[10px] text-muted-foreground">
-            Powered by a structured knowledge base (80 taxa, 17 methods, 25 disease signatures), with optional external LLM enhancement.
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] text-muted-foreground">
+              {llmEnhanced
+                ? `✨ Narrative enhanced by ${llmModel ?? "external LLM"} — facts from your results + KB.`
+                : useLlm
+                  ? "LLM enhancement on (falls back to KB-only narrative if the gateway is unavailable)."
+                  : "KB-only deterministic interpretation (LLM off)."}
+            </p>
+            <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+              <Switch
+                checked={useLlm}
+                onCheckedChange={(v) => {
+                  setUseLlm(v);
+                  if (!v) {
+                    setLlmEnhanced(false);
+                    setLlmModel(null);
+                  }
+                }}
+                className="scale-75"
+              />
+              LLM
+            </label>
+          </div>
         </div>
       </div>
     </div>

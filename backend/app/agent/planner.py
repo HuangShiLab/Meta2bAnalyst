@@ -718,6 +718,50 @@ def _estimate_time(n_steps: int) -> str:
 
 CLARIFICATION_PREFIX = "CLARIFICATION NEEDED"
 
+
+def _parse_llm_plan(text: str) -> Optional[Dict[str, Any]]:
+    """Parse the LLM planner's JSON, salvaging truncated output if needed.
+
+    Reasoning models (kimi-for-coding) count reasoning tokens against
+    max_tokens, so the visible JSON can be cut off mid-string. When a strict
+    parse fails, recover every *complete* step object by brace matching and
+    drop the incomplete tail - a partial plan is still useful once validated
+    against the module registry.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    anchor = text.find('"steps"')
+    if anchor < 0:
+        return None
+    # Scanning starts *inside* the outer object, so top-level braces from the
+    # anchor onward are the step objects themselves (nested params sit deeper).
+    steps: List[Dict[str, Any]] = []
+    depth = 0
+    start: Optional[int] = None
+    for j in range(anchor, len(text)):
+        c = text[j]
+        if c == "{":
+            if depth == 0:
+                start = j
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    obj = json.loads(text[start : j + 1])
+                    if isinstance(obj, dict) and obj.get("module"):
+                        steps.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    if not steps:
+        return None
+    logger.info("Salvaged %d complete step(s) from truncated LLM plan JSON", len(steps))
+    return {"steps": steps}
+
 # Some unregistered keyword names are plot views that a registered module
 # already emits (see its output_spec), so asking for them is satisfied by
 # planning that module - do not report those as unavailable.
@@ -959,7 +1003,7 @@ def _build_plan(
 class AnalysisPlanner:
     """Main planner class. Supports rule-based and LLM-based planning."""
 
-    def __init__(self, use_llm: bool = False, openai_api_key: Optional[str] = None):
+    def __init__(self, use_llm: bool = True, openai_api_key: Optional[str] = None):
         self.use_llm = use_llm
         self.openai_api_key = openai_api_key
 
@@ -1125,7 +1169,7 @@ Rules:
 6. Output ONLY the JSON object: {{"steps": [...]}} - no markdown, no commentary.
 """
         try:
-            content = client.chat(system_prompt, query, max_tokens=8000, timeout=120)
+            content = client.chat(system_prompt, query, max_tokens=16000, timeout=120)
             if not content:
                 return None
             text = content.strip()
@@ -1133,7 +1177,9 @@ Rules:
                 text = text.split("```")[1]
                 if text.startswith("json"):
                     text = text[4:]
-            plan_json = json.loads(text)
+            plan_json = _parse_llm_plan(text)
+            if not plan_json:
+                return None
             steps = self._validate_llm_steps(plan_json.get("steps") or [])
             if not steps:
                 return None
@@ -1183,7 +1229,7 @@ Rules:
 _default_planner: Optional[AnalysisPlanner] = None
 
 
-def get_planner(use_llm: bool = False, api_key: Optional[str] = None) -> AnalysisPlanner:
+def get_planner(use_llm: bool = True, api_key: Optional[str] = None) -> AnalysisPlanner:
     """Get or create the default planner instance.
 
     The singleton used to freeze ``use_llm`` from whichever request created

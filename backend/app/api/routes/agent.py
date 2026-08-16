@@ -56,7 +56,7 @@ class PlanRequest(BaseModel):
     """Request to generate an analysis plan."""
     query: str = Field(..., description="Natural language description of desired analysis")
     session_id: Optional[str] = Field(None, description="Session ID for data context")
-    use_llm: bool = Field(False, description="Use LLM-based planner (requires API key)")
+    use_llm: bool = Field(True, description="Allow the LLM planner as fallback when the rule engine cannot map the query (requires API key; degrades gracefully to rule-only)")
     explain: bool = Field(False, description="Include a natural-language explanation of the planned workflow")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
 
@@ -83,7 +83,7 @@ class AnalyzeRequest(BaseModel):
     """One-shot analyze request (plan + execute, non-streaming)."""
     query: str = Field(..., description="Natural language analysis request")
     session_id: str = Field(..., description="Session ID with uploaded data")
-    use_llm: bool = Field(False, description="Use LLM planner")
+    use_llm: bool = Field(True, description="Allow LLM planner fallback when the rule engine cannot map the query")
     generate_report: bool = Field(True, description="Generate integrated report")
 
 

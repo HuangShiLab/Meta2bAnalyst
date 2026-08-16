@@ -66,6 +66,51 @@ class TestLLMFallbackRouting:
         plan = await planner.plan("xyzzy quux frobnicate")
         assert plan.clarification_needed
 
+    @pytest.mark.asyncio
+    async def test_use_llm_default_is_on(self, monkeypatch):
+        """P1: LLM fallback is the default posture - a bare AnalysisPlanner()
+        must consult the LLM when the rule engine needs clarification."""
+        planner = AnalysisPlanner()
+        assert planner.use_llm is True
+        called = []
+
+        async def fake_llm(query, context=None):
+            called.append(query)
+            return None
+
+        monkeypatch.setattr(planner, "_llm_plan", fake_llm)
+        await planner.plan("xyzzy quux frobnicate")
+        assert called, "LLM fallback should be consulted by default"
+
+
+class TestTruncatedPlanSalvage:
+    """Reasoning models can exhaust max_tokens mid-JSON; the parser must
+    recover every complete step object and drop the truncated tail."""
+
+    def test_recovers_complete_steps_from_truncated_json(self):
+        from app.agent.planner import _parse_llm_plan
+
+        text = (
+            '{"steps": ['
+            '{"id": "step1_validate", "module": "data_validator", "params": {}, "depends_on": []}, '
+            '{"id": "step2_alpha", "module": "microbiome_alpha", "params": {}, "depends_on": ["step1_validate"]}, '
+            '{"id": "step3_mar'  # cut off mid-string
+        )
+        plan = _parse_llm_plan(text)
+        assert plan is not None
+        assert [s["module"] for s in plan["steps"]] == ["data_validator", "microbiome_alpha"]
+
+    def test_strict_parse_still_preferred(self):
+        from app.agent.planner import _parse_llm_plan
+
+        plan = _parse_llm_plan('{"steps": [{"module": "microbiome_alpha"}]}')
+        assert plan == {"steps": [{"module": "microbiome_alpha"}]}
+
+    def test_unsalvageable_returns_none(self):
+        from app.agent.planner import _parse_llm_plan
+
+        assert _parse_llm_plan("not json at all") is None
+
 
 class TestLLMStepValidation:
     def test_unknown_modules_dropped(self):

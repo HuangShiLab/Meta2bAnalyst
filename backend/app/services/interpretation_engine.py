@@ -129,16 +129,24 @@ class EnhancedInterpreter:
         """Build a coherent story from all analyses."""
         paragraphs = []
 
-        # Extract key stats safely
-        alpha = self._get_nested(results, "alpha-diversity", "result_data")
+        # Extract key stats safely. Result keys vary by caller: the frontend
+        # sends analysis "type" strings ("alpha", "permanova", ...), other
+        # callers use hyphenated or underscored variants.
+        alpha = self._get_nested(results, "alpha-diversity", "result_data") or \
+                self._get_nested(results, "alpha_diversity", "result_data") or \
+                self._get_nested(results, "alpha", "result_data")
         beta = self._get_nested(results, "permanova", "result_data") or \
                self._get_nested(results, "anosim", "result_data")
         diff = self._get_nested(results, "differential", "result_data") or \
                self._get_nested(results, "lefse", "result_data") or \
                self._get_nested(results, "ancom", "result_data")
 
-        # Overall summary
-        n_analyses = len([k for k in results if results[k].get("status") == "completed"])
+        # Overall summary. The frontend sends bare {"result_data": ...} entries
+        # with no status field, so counting only status=="completed" yields 0.
+        n_analyses = len([
+            k for k, v in results.items()
+            if isinstance(v, dict) and (v.get("status") == "completed" or v.get("result_data"))
+        ])
         paragraphs.append(
             f"A comprehensive microbiome analysis was performed using {n_analyses} analytical modules. "
         )
