@@ -83,7 +83,9 @@ def run_tsne(
         n_components=n_components,
         perplexity=effective_perplexity,
         learning_rate=learning_rate,
-        n_iter=n_iter,
+        # sklearn >= 1.7 renamed n_iter to max_iter; keep our public parameter
+        # name stable and translate here.
+        max_iter=n_iter,
         random_state=random_state,
         init="pca",
     )

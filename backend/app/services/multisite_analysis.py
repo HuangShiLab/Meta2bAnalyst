@@ -496,8 +496,11 @@ def run_multisite_temporal(
 
     fig.update_layout(
         title=f'Temporal Trajectory ({distance_metric})',
-        xaxis_title=f'PC1 ({pcoa_result.proportion_explained[0]*100:.1f}%)',
-        yaxis_title=f'PC2 ({pcoa_result.proportion_explained[1]*100:.1f}%)',
+        # skbio >= 0.6 returns proportion_explained as a Series labelled by
+        # axis name ('PC1', ...), so [0] is a *label* lookup and raises
+        # KeyError: 0. Use positional .iloc.
+        xaxis_title=f'PC1 ({pcoa_result.proportion_explained.iloc[0]*100:.1f}%)',
+        yaxis_title=f'PC2 ({pcoa_result.proportion_explained.iloc[1]*100:.1f}%)',
         template='plotly_white',
         width=800, height=600,
     )

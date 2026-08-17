@@ -85,10 +85,12 @@ celery_app.conf.update(
         "app.tasks.analysis_tasks.*": {"queue": "analysis"},
     },
     
-    # Task annotations
+    # Task annotations. NOTE: do not put "bind" here - annotations overwrite
+    # task attributes, so "bind": True replaces the Task.bind *method* with a
+    # bool and the worker crashes in finalize() with "'bool' object is not
+    # callable". bind=True belongs on the @task decorator (and is set there).
     task_annotations={
         "*": {
-            "bind": True,
             "max_retries": 3,
             "default_retry_delay": 60,
         }

@@ -25,7 +25,9 @@ COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
+# 127.0.0.1, not localhost: in the alpine image localhost can resolve to ::1
+# while nginx listens on IPv4 only, so the healthcheck connection is refused.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost/nginx-health || exit 1
+    CMD wget -qO- http://127.0.0.1/nginx-health || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

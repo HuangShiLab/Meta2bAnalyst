@@ -220,7 +220,9 @@ def main() -> int:
     st, payload = _request("POST", f"{api}/sessions/{sid}/analyze/differential", {
         "group_column": GROUP, "comparisons": ["T4", "T9"],
         "parameters": {"test_method": "ancombc"}})
-    check("guard:ancombc-refused", st, payload, expect=(400,))
+    # 400 on a no-R image (honest refusal), 201 on the full-R image where
+    # ANCOMBC really runs. Both are correct behaviour; anything else is a bug.
+    check("guard:ancombc-refused-or-real", st, payload, expect=(400, 201))
     st, payload = _request("POST", f"{api}/sessions/{sid}/analyze/differential",
                            {"group_column": GROUP, "parameters": {"test_method": "wilcoxon"}})
     check("guard:ambiguous-groups", st, payload, expect=(400,))

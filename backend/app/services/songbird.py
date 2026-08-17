@@ -127,8 +127,9 @@ def _fit_sklearn_multinomial(
         solver = 'lbfgs'
         l1_ratio = None
     
+    # sklearn >= 1.7 removed the multi_class kwarg (lbfgs/saga have defaulted
+    # to multinomial since 0.22), so passing it broke on current sklearn.
     model = LogisticRegression(
-        multi_class='multinomial',
         solver=solver,
         penalty=penalty,
         C=C,

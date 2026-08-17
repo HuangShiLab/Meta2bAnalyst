@@ -13,15 +13,30 @@ FROM bioconductor/bioconductor_docker:RELEASE_3_20
 WORKDIR /app
 
 # curl is used by the HEALTHCHECK below; do not assume the base image has it.
+# libgsl-dev: the R package 'energy' (ANCOMBC dep) links against GSL.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libgsl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Rust toolchain: clarabel (CVXR -> ANCOMBC dep) compiles a Rust library and
+# the distro rustc is too old for its crates. rustup minimal profile.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal \
+    && /root/.cargo/bin/rustc --version
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # ── R packages ───────────────────────────────────────────────────────────────
 # Done before the Python layer so that editing application code does not
-# invalidate the (expensive) R layer.
+# invalidate the (expensive) R layer. Split into three layers by install
+# cost/fragility so a heavy-group failure does not rebuild the core group.
 COPY docker/install_r_packages.R /tmp/install_r_packages.R
-RUN Rscript /tmp/install_r_packages.R && rm /tmp/install_r_packages.R
+RUN Rscript /tmp/install_r_packages.R core
+# Version pins (gsl, CVXR) in their own layer: editing the pin list must not
+# invalidate the core layer. See pin_r_packages.R for why each pin exists.
+COPY docker/pin_r_packages.R /tmp/pin_r_packages.R
+RUN Rscript /tmp/pin_r_packages.R && rm /tmp/pin_r_packages.R
+RUN Rscript /tmp/install_r_packages.R heavy
+RUN Rscript /tmp/install_r_packages.R optional && rm /tmp/install_r_packages.R
 
 # ── Python ───────────────────────────────────────────────────────────────────
 # The base image's python3 is externally managed (PEP 668), so use a venv rather

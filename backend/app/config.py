@@ -1,11 +1,13 @@
 """
 Meta2bAnalyst - Configuration Settings (Pydantic Settings)
 """
+import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
@@ -51,10 +53,24 @@ class Settings(BaseSettings):
     KIMI_MODEL: str = "moonshot-v1-8k"
 
     # CORS (production should be restricted)
-    CORS_ORIGINS: list[str] = os.getenv(
+    # NoDecode: pydantic-settings would otherwise JSON-decode this list field
+    # at the env-source level, before validators run, crashing on a plain
+    # comma-separated value (the docker-compose style).
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = os.getenv(
         "CORS_ORIGINS",
         "http://localhost,http://localhost:5173,http://localhost:80,http://localhost:3000",
     ).split(",")
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, v):
+        # Accept both JSON arrays and comma-separated strings.
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("["):
+                return json.loads(s)
+            return [o.strip() for o in s.split(",") if o.strip()]
+        return v
 
     class Config:
         env_file = ".env"
