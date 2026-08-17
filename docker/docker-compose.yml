@@ -1,10 +1,24 @@
+# Meta2bAnalyst - local single-user test deployment.
+#
+# Usage (from the repository root):
+#     docker compose -f docker/docker-compose.yml up --build
+#     open http://localhost:8080
+#
+# ⚠ THERE IS NO AUTHENTICATION. `GET /api/v1/sessions` lists every session on
+# the server and `DELETE /api/v1/sessions/{id}` erases its files. That is
+# acceptable for the intended use -- one container per person, bound to
+# localhost -- and is why the ports below are published on 127.0.0.1 only.
+# Do NOT expose this to a network without adding authentication first.
+
+name: meta2banalyst
+
 services:
   redis:
     image: redis:7-alpine
-    container_name: meta2b-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Not published: only the backend and worker need it.
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -16,84 +30,82 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: ../docker/backend.Dockerfile
-    container_name: meta2b-backend
+      # Context is the repo root so the Dockerfile can reach both backend/ and
+      # docker/install_r_packages.R.
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    image: meta2banalyst-backend:local
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./meta2bAnalyst.db}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - CELERY_RESULT_BACKEND=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - UPLOAD_DIR=/app/uploads
-      - LOG_DIR=/app/logs
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-104857600}
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:80}
-      - DEBUG=${DEBUG:-false}
-      - ENVIRONMENT=${ENVIRONMENT:-production}
+      DATABASE_URL: sqlite:////app/data/meta2banalyst.db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+      LOG_DIR: /app/logs
+      MAX_FILE_SIZE: "104857600"
+      # The frontend is served from :8080 and proxies /api itself, so browser
+      # requests are same-origin; this list only matters for direct API calls.
+      CORS_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      ENVIRONMENT: production
+      DEBUG: "false"
     volumes:
       - uploads_data:/app/uploads
       - logs_data:/app/logs
+      - db_data:/app/data
     depends_on:
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
 
   # Celery worker. Without it, any analysis large enough to take the async path
-  # was queued and never executed: the API accepted the task and the job sat at
-  # "pending" forever while the client polled. The backend now probes for a live
-  # worker and falls back to synchronous execution when none answers, so this
-  # service is what actually enables background processing.
+  # is queued and never executed. The backend probes for a live worker and falls
+  # back to running synchronously, so this service is what actually enables
+  # background processing.
   worker:
     build:
-      context: ../backend
-      dockerfile: ../docker/backend.Dockerfile
-    container_name: meta2b-worker
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    image: meta2banalyst-backend:local
     restart: unless-stopped
     command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
     environment:
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./meta2bAnalyst.db}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - CELERY_RESULT_BACKEND=${CELERY_BROKER_URL:-redis://redis:6379/0}
-      - UPLOAD_DIR=/app/uploads
-      - LOG_DIR=/app/logs
-      - ENVIRONMENT=${ENVIRONMENT:-production}
+      DATABASE_URL: sqlite:////app/data/meta2banalyst.db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+      LOG_DIR: /app/logs
+      ENVIRONMENT: production
     volumes:
-      # Must share the uploads volume with the backend: tasks read the session's
-      # files from disk by path.
+      # Must share uploads and the database with the backend: tasks read the
+      # session's files from disk by path.
       - uploads_data:/app/uploads
       - logs_data:/app/logs
+      - db_data:/app/data
     depends_on:
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "celery", "-A", "app.celery_app.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      backend:
+        condition: service_started
 
   frontend:
     build:
-      context: ../frontend
-      dockerfile: ../docker/frontend.Dockerfile
-    container_name: meta2b-frontend
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    image: meta2banalyst-frontend:local
     restart: unless-stopped
     ports:
-      - "80:80"
+      # 8080 rather than 80: no root privileges needed, and it does not collide
+      # with whatever else the tester runs locally.
+      - "127.0.0.1:8080:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   redis_data:
   uploads_data:
   logs_data:
+  db_data:

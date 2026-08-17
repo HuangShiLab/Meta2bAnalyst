@@ -1,54 +1,75 @@
-FROM python:3.11-slim
+# Meta2bAnalyst backend, with R so the R-backed methods actually run.
+#
+# Base image choice: bioconductor_docker ships R plus the long tail of system
+# libraries (libxml2, libcurl, gsl, glpk, ...) that DESeq2 / ANCOMBC / mixOmics /
+# WGCNA need in order to compile. Starting from python:slim and apt-installing
+# r-base means discovering those dependencies one failed compile at a time.
+#
+# The build is slow (R packages compile from source; budget 30-60 min on first
+# build) and the image is large (~4-5 GB). That is the cost of the R methods
+# being real rather than silently approximated -- see app/services/r_analysis.py.
+FROM bioconductor/bioconductor_docker:RELEASE_3_20
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first for better layer caching
-COPY requirements.txt .
+# curl is used by the HEALTHCHECK below; do not assume the base image has it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# ── R packages ───────────────────────────────────────────────────────────────
+# Done before the Python layer so that editing application code does not
+# invalidate the (expensive) R layer.
+COPY docker/install_r_packages.R /tmp/install_r_packages.R
+RUN Rscript /tmp/install_r_packages.R && rm /tmp/install_r_packages.R
 
-# Copy application code
-COPY app/ ./app/
-COPY scripts/ ./scripts/
+# ── Python ───────────────────────────────────────────────────────────────────
+# The base image's python3 is externally managed (PEP 668), so use a venv rather
+# than --break-system-packages.
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv "$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# NOTE: R integration (DESeq2 / edgeR / vegan / phyloseq / ANCOMBC / ALDEx2 /
-# MaAsLin3 / mixOmics / WGCNA) is NOT installed in this image. Those methods
-# refuse to run rather than silently substituting a Python approximation, so the
-# image is honest about what it can compute. To enable them, extend this stage:
-#
-#   RUN apt-get update && apt-get install -y --no-install-recommends \
-#         r-base r-base-dev libcurl4-openssl-dev libssl-dev libxml2-dev \
-#       && rm -rf /var/lib/apt/lists/*
-#   RUN pip install --no-cache-dir rpy2==3.5.15
-#   RUN python scripts/install_r_packages.py
-#
-# This adds roughly 1.5 GB and a long build; keep it in a separate image tag if
-# most users only need the Python analyses.
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Create uploads and logs directories
-RUN mkdir -p uploads logs
+# rpy2 is optional in requirements.txt (it needs a working R, which only this
+# image has). Installing it here is what turns "R::DESeq2" on.
+RUN pip install --no-cache-dir "rpy2==3.5.15"
 
-# Set environment variables
+# ── Application ──────────────────────────────────────────────────────────────
+COPY backend/app/ ./app/
+COPY backend/scripts/ ./scripts/
+COPY backend/examples/ ./examples/
+
+# Worked-example datasets (Huang mBio 2021: 261 samples x 44 genera + 1125
+# metabolites + metadata). Bundled so a tester can exercise the whole pipeline,
+# and so `python scripts/pipeline_smoke.py` runs inside the container.
+COPY Huang_mBio_microbiome.tsv Huang_mBio_metabolome.tsv Huang_mBio_metadata.tsv ./examples/
+
+# `data` holds the SQLite file. SQLAlchemy will not create a missing parent
+# directory, so a bind/volume mount target must exist before first start.
+RUN mkdir -p uploads logs data
+
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UPLOAD_DIR=/app/uploads \
+    LOG_DIR=/app/logs
 
-# Expose port
+# Fail the build if the wiring is broken, rather than shipping an image that
+# starts and then 500s on the first request.
+RUN python -c "import app.main; print('app imports OK')" \
+    && python -c "from app.services.r_analysis import rpy2_available, rpackage_available; \
+assert rpy2_available(), 'rpy2 not usable'; \
+missing=[p for p in ('DESeq2','edgeR','ANCOMBC','ALDEx2','mixOmics','WGCNA') if not rpackage_available(p)]; \
+assert not missing, f'R packages unusable from Python: {missing}'; \
+print('R integration OK')"
+
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
-    CMD curl -f http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=5 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Start the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

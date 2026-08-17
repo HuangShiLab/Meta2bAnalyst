@@ -84,7 +84,10 @@ APPROXIMATION_NOTES: Dict[str, tuple] = {
                        'negative-binomial model or TMM normalisation.'),
     'ancombc': ('ANCOMBC', 'CLR transform plus per-feature testing; no bias correction '
                            'or structural-zero handling.'),
-    'maaslin3': ('MaAsLin3', 'Per-feature linear models; no MaAsLin3 normalisation, '
+    # Bioconductor names this package 'maaslin3' (lowercase). R's
+    # requireNamespace is case-sensitive, so probing for 'MaAsLin3' reported it
+    # unavailable even on an image where it is installed.
+    'maaslin3': ('maaslin3', 'Per-feature linear models; no MaAsLin3 normalisation, '
                              'prevalence/abundance joint modelling or random effects.'),
     'aldex2': ('ALDEx2', 'Single CLR point estimate; no Monte-Carlo Dirichlet sampling.'),
     'lefse': ('lefser', 'Kruskal-Wallis screen with a standardised mean difference in '
@@ -955,7 +958,7 @@ def run_ancombc(
         Columns: feature, lfc, se, W, pvalue, padj, qvalue, diff_abn
         (lfc = log fold change, W = W statistic, diff_abn = differentially abundant flag).
     """
-    if not R_AVAILABLE or not R_PACKAGES.get('ANCOMBC'):
+    if not R_AVAILABLE or not rpackage_available('ANCOMBC'):
         logger.warning("ANCOMBC not available via rpy2, using Python fallback")
         return _python_ancombc_fallback(count_df, metadata_df, group_var, zero_cut, lib_cut, struc_zero, p_adj_method)
 
@@ -1171,7 +1174,7 @@ def run_maaslin3(
     pd.DataFrame
         Columns: feature, metadata, value, coefficient, stderr, pvalue, padj, qvalue.
     """
-    if not R_AVAILABLE or not R_PACKAGES.get('MaAsLin3'):
+    if not R_AVAILABLE or not rpackage_available('maaslin3'):
         logger.warning("MaAsLin3 not available via rpy2, using Python fallback")
         return _python_maaslin3_fallback(count_df, metadata_df, fixed_effects, random_effects, group_var, normalization, transform, reference)
 

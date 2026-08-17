@@ -1,0 +1,70 @@
+# Build context is the repository root (see docker/docker-compose.yml), and
+# Docker only reads the .dockerignore at the context root -- the per-directory
+# backend/.dockerignore and frontend/.dockerignore do NOT apply to these builds
+# and are kept only for standalone `docker build backend/` style use.
+#
+# Without this file the context is ~1.5 GB (venv 503M + node_modules 448M +
+# uploads 159M + .git 88M) and every build re-uploads all of it.
+
+# ── Never ship: environments and installed dependencies ──────────────────────
+backend/venv/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ── Never ship: runtime and user data ────────────────────────────────────────
+backend/uploads/
+backend/logs/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+celerydb.sqlite
+*.pid
+report_output/
+report_images/
+
+# ── Version control and CI ───────────────────────────────────────────────────
+.git/
+.github/
+.gitignore
+
+# ── Caches / test output ─────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vite/
+**/*.tsbuildinfo
+
+# ── Local scratch, editor, OS ────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.log
+.env
+.env.local
+
+# ── Large artefacts not needed to build or run ───────────────────────────────
+# Generated figures and reports from past local runs.
+*.pdf
+*.png
+*.pptx
+# Ad-hoc scripts left at the repo root during development.
+fix_*.py
+test_*.py
+generate_*.py
+run_demo*.py
+analysis_results*.json
+demo_results.json
+test_payload.json
+
+# NOTE: the Huang_mBio_*.tsv example datasets are deliberately NOT excluded --
+# testers use them as the worked example (see QUICKSTART.md).
