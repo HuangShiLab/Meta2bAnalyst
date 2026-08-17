@@ -91,7 +91,10 @@
    "Roseburia",
    "Eubacterium",
    "Bifidobacterium",
-   "Prevotella"
+   "Prevotella",
+   "Actinomyces",
+   "Alloprevotella",
+   "Selenomonas"
   ],
   "functional_shift": [
    "butyrate_decreased",
@@ -100,7 +103,41 @@
    "LPS_bioactivity_increased",
    "bile_acid_signaling_impaired"
   ],
-  "description": "T2D microbiome is characterized by reduced butyrate producers, increased LPS biosynthesis, and elevated branched-chain amino acid production. Akkermansia depletion is a consistent finding."
+  "description": "T2D microbiome is characterized by reduced butyrate producers, increased LPS biosynthesis, and elevated branched-chain amino acid production. Akkermansia depletion is a consistent finding.",
+  "literature_evidence": {
+   "actinomyces": [
+    {
+     "pmid": "28993578",
+     "year": "2017",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "alloprevotella": [
+    {
+     "pmid": "28993578",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "bacteroidetes": [
+    {
+     "pmid": "28993578",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "selenomonas": [
+    {
+     "pmid": "28993578",
+     "year": "2017",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ]
+  }
  },
  "colorectal_cancer": {
   "indicators": [
@@ -425,14 +462,70 @@
    "Prevotella",
    "Klebsiella",
    "Faecalibacterium",
-   "Roseburia"
+   "Roseburia",
+   "Staphylococcus",
+   "Butyrivibrio",
+   "Eggerthia",
+   "Fastidiosphila",
+   "Pedobacter",
+   "Ruminococcaceae"
   ],
   "functional_shift": [
    "SCFA_profile_shifted",
    "TMAO_pathway_altered",
    "LPS_translocation_increased"
   ],
-  "description": "Hypertension cohorts show reduced SCFA-producing taxa and enrichment of Prevotella/Klebsiella; acetate and butyrate signalling via GPR41/43/109A modulates blood pressure."
+  "description": "Hypertension cohorts show reduced SCFA-producing taxa and enrichment of Prevotella/Klebsiella; acetate and butyrate signalling via GPR41/43/109A modulates blood pressure.",
+  "literature_evidence": {
+   "Staphylococcus_aureus": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "butyrivibrio": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "eggerthia": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "fastidiosphila": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "pedobacter": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "ruminococcaceae_[g_2]": [
+    {
+     "pmid": "38292856",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ]
+  }
  },
  "autism_spectrum_disorder": {
   "indicators": [
@@ -542,14 +635,1590 @@
    "Porphyromonas",
    "Fusobacterium",
    "Treponema",
-   "Tannerella"
+   "Tannerella",
+   "Akkermansia",
+   "Campylobacter",
+   "Hungatella",
+   "Methanobrevibacter",
+   "Prevotella",
+   "Staphylococcus",
+   "Streptococcus",
+   "Veillonella",
+   "Abiotrophia",
+   "Actinomyces",
+   "Aggregatibacter",
+   "Allobucalum",
+   "Alloprevotella",
+   "Atopobium",
+   "Bacillus",
+   "Candida",
+   "Capnocytophaga",
+   "Catenibacterium",
+   "Catonella",
+   "Coprococcus",
+   "Corynebacterium",
+   "Desulfobulbus",
+   "Eggerthia",
+   "Filifactor",
+   "Fretibacterium",
+   "Frigovirgula",
+   "Gemella",
+   "Granulicatella",
+   "Haemophilus",
+   "Holdemania",
+   "Kingella",
+   "Lachnoanaerobaculum",
+   "Lachnospiraceae",
+   "Lactobacillus",
+   "Leptotrichia",
+   "Ligilactobacillus",
+   "Moraxella",
+   "Muribacter",
+   "Mycoplasma",
+   "Neisseria",
+   "Novel",
+   "Parvimonas",
+   "Peptostreptococcus",
+   "Rhodococcus",
+   "Rodentibacter",
+   "Rothia",
+   "Selenomonas",
+   "Solobacterium",
+   "Synergistes",
+   "Tm7"
   ],
   "functional_shift": [
    "proteolysis_increased",
    "gingival_inflammation",
    "biofilm_dysbiosis"
   ],
-  "description": "Periodontitis features a keystone-pathogen-driven dysbiotic biofilm (red complex: P. gingivalis, T. forsythia, T. denticola) sustained by inflammation-derived nutrients."
+  "description": "Periodontitis features a keystone-pathogen-driven dysbiotic biofilm (red complex: P. gingivalis, T. forsythia, T. denticola) sustained by inflammation-derived nutrients.",
+  "literature_evidence": {
+   "Akkermansia_muciniphila": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "Campylobacter_jejuni": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "Fusobacterium_nucleatum": [
+    {
+     "pmid": "29860637",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "Hungatella_hathewayi": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "Methanobrevibacter_smithii": [
+    {
+     "pmid": "34593021",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "Porphyromonas_gingivalis": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "review"
+    },
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "Prevotella_copri": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "Staphylococcus_aureus": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "Streptococcus_mutans": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "Veillonella_sp": [
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "abiotrophia_defectiva": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "actinobacteria": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "actinobacteriota": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "actinomyces": [
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "actinomyces_dentalis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "actinomyces_naeslundii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "actinomyces_oris": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "actinomyces_viscosus": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "aggregatibacter": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "allobucalum": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "alloprevotella": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "alloprevotella_tannerae": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "atopobium_parvulum": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "bacillus": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "bacteroidales": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "bacteroidetes": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "bacteroidota": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "campylobacter_concisus": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "campylobacter_curvus": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "campylobacter_gracilis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "campylobacter_showae": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "candida_albicans": [
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "candidatus_saccharibacteria": [
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "capnocytophaga": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "capnocytophaga_endodontalis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "capnocytophaga_leadbetteri": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "capnocytophaga_ochracea": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "catenibacterium": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "catonella": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "clostridiales": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "coprococcus": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "corynebacterium": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "corynebacterium_matruchotii": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "desulfobulbus": [
+    {
+     "pmid": "34593021",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "desulfobulbus_oralis": [
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "eggerthia": [
+    {
+     "pmid": "34873157",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "erysipelotrichaceae_cot_381": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "filifactor_alocis": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "firmicutes": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "fretibacterium_species_hmt_362": [
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "frigovirgula_sp._cot_032": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "fusobacteria": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "fusobacterium_hwasookii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "fusobacterium_nucleatum_subspecies_vincentii": [
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "fusobacterium_sp_oral_taxon_370": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "gemella_morbillorum": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "granulicatella_adiacens": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "haemophilus": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "haemophilus_parahaemolyticus": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "review"
+    }
+   ],
+   "haemophilus_parainfluenzae": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "holdemania": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "kingella": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "lachnoanaerobaculum_orale": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "lachnoanaerobaculum_saburreum": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "lachnospiraceae": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "lachnospiraceae_cot_099": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "lachnospiraceae_ucg_001": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "lactobacillaceae": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "lactobacillus": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "lactobacillus_gasseri": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "leptotrichia": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "leptotrichia_buccalis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_goodfellowii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_hofstadii": [
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_massiliensis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_shahii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_sp_oral_taxon_215": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "leptotrichia_trevisanii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "leptotrichia_wadei": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "ligilactobacillus": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "moraxella_sp._fot_087": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "muribacter": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "muribaculaceae": [
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "mycoplasma_faucium": [
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "neisseria": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "neisseria_flavescens": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "neisseria_meningitidis": [
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "mixed",
+     "study_type": "case_control"
+    }
+   ],
+   "novel_treponema_1": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "novel_treponema_2": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "parvimonas_micra": [
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "pasteurellaceae_cot_080": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "peptostreptococcaceae_cot_021": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "peptostreptococcaceae_cot_077": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "peptostreptococcaceae_cot_129": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "peptostreptococcaceae_cot_307/fot_060": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "peptostreptococcus_stomatis": [
+    {
+     "pmid": "33425781",
+     "year": "2020",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "porphyromonas_canoris": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "porphyromonas_gingivalis_atcc33277_381": [
+    {
+     "pmid": "38485747",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "cohort"
+    }
+   ],
+   "porphyromonas_gingivalis_w83_w50": [
+    {
+     "pmid": "38485747",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "prevotella_2": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotella_7": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotella_intermedia": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "prevotella_melaninogenica": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "prevotella_oralis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "prevotella_sp._oral_taxon_304": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotella_sp._oral_taxon_314": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotellaceae": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "proteobacteria": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "rhodococcus": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "rodentibacter": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "rothia": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "ruminococcaceae": [
+    {
+     "pmid": "39227984",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39487211",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "animal"
+    }
+   ],
+   "selenomonas": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "solobacterium_moorei": [
+    {
+     "pmid": "33425781",
+     "year": "2020",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "spirochaetes": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "streptococcus": [
+    {
+     "pmid": "36160195",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "animal"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "streptococcus_gordonii": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_halitosis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_intermedius": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_mitis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_sanguinis": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_sinensis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_symci": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "streptococcus_vestibularis": [
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "review"
+    }
+   ],
+   "synergistales_bacterium_cot_244": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "synergistes": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "synergistes_oral_taxon_362": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "synergistes_oral_taxon_363": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "synergistetes": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "tannerella": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "tannerella_forsythia": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34593021",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "tm7": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "tm7_g.1_sp_oral_taxon_347": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "tm7_sp._oral_taxon_a56": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "treponema": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "treponema_2": [
+    {
+     "pmid": "36530443",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "treponema_denticola": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34556654",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "34593021",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "39748343",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "treponema_sp._cot_355": [
+    {
+     "pmid": "40295989",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "animal"
+    }
+   ],
+   "treponema_sp._human_microbial_taxon_(hmt)_253": [
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "treponema_sp._omz_838": [
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "treponema_sp._oral_taxon_237": [
+    {
+     "pmid": "31681625",
+     "year": "2019",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "treponema_species_hmt_237": [
+    {
+     "pmid": "41050751",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "treponema_vincentii": [
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "veillonella_dispar": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    },
+    {
+     "pmid": "40625831",
+     "year": "2025",
+     "direction": "depleted",
+     "study_type": "review"
+    }
+   ],
+   "veillonella_infantium": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "veillonella_parvula": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ],
+   "veillonella_tobetsuensis": [
+    {
+     "pmid": "38760758",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "RCT"
+    }
+   ]
+  }
  },
  "dental_caries": {
   "indicators": [
@@ -561,12 +2230,542 @@
    "Streptococcus",
    "Lactobacillus",
    "Scardovia",
-   "Prevotella"
+   "Prevotella",
+   "Campylobacter",
+   "Veillonella",
+   "Actinomyces",
+   "Aggregatibacter",
+   "Alloprevotella",
+   "Bifidobacterium",
+   "Candida",
+   "Capnocytophaga",
+   "Catonella",
+   "Centipeda",
+   "Corynebacterium",
+   "Filifactor",
+   "Fusobacterium",
+   "Haemophilus",
+   "Human",
+   "Leptotrichia",
+   "Megasphaera",
+   "Neisseria",
+   "Oribacterium",
+   "Peptococcus",
+   "Propionibacterium",
+   "Rikenellaceae",
+   "Rothia",
+   "Schaalia",
+   "Streptobacillus",
+   "Treponema",
+   "Unclassified",
+   "Uncultured"
   ],
   "functional_shift": [
    "acid_production_increased",
    "enamel_deminineralisation"
   ],
-  "description": "Carious lesions are dominated by acidogenic/aciduric taxa (S. mutans, Lactobacillus, Scardovia) whose fermentation acids demineralise enamel."
+  "description": "Carious lesions are dominated by acidogenic/aciduric taxa (S. mutans, Lactobacillus, Scardovia) whose fermentation acids demineralise enamel.",
+  "literature_evidence": {
+   "Campylobacter_jejuni": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "Prevotella_copri": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "Streptococcus_mutans": [
+    {
+     "pmid": "33226500",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "33827534",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41091378",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "Streptococcus_salivarius": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "Veillonella_sp": [
+    {
+     "pmid": "35782115",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "review"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "actinomyces": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "aggregatibacter": [
+    {
+     "pmid": "38547181",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "alloprevotella": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "bifidobacterium": [
+    {
+     "pmid": "35782115",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "candida": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "candida_albicans": [
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "capnocytophaga": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "38547181",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "catonella": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "centipeda": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "corynebacterium": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "f0058": [
+    {
+     "pmid": "41479542",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "filifactor": [
+    {
+     "pmid": "41479542",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "fusobacterium_periodonticum": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "haemophilus": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "haemophilus_parainfluenzae": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "human_herpesvirus_4": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "lactobacillus": [
+    {
+     "pmid": "33226500",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "35782115",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "review"
+    },
+    {
+     "pmid": "41091378",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "leptotrichia": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "leptotrichia_wadei": [
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "megasphaera": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "neisseria": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "oribacterium": [
+    {
+     "pmid": "38012587",
+     "year": "2023",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "peptococcus": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "depleted",
+     "study_type": "cohort"
+    }
+   ],
+   "prevotella_histicola": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotella_salivae": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotellaceae": [
+    {
+     "pmid": "38605085",
+     "year": "2024",
+     "direction": "enriched",
+     "study_type": "cohort"
+    }
+   ],
+   "propionibacterium_acidifaciens": [
+    {
+     "pmid": "37179329",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "rikenellaceae_rc9_gut_group": [
+    {
+     "pmid": "41479542",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "rothia": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "saccharibacteria": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "scardovia_wiggsiae": [
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "41091378",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "schaalia_odontolytica": [
+    {
+     "pmid": "41091378",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "streptobacillus": [
+    {
+     "pmid": "35480234",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "streptococcus_sobrinus": [
+    {
+     "pmid": "41800013",
+     "year": "2026",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ],
+   "treponema": [
+    {
+     "pmid": "41479542",
+     "year": "2025",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "unclassified_lactobacillales": [
+    {
+     "pmid": "38012587",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "unclassified_veillonellaceae": [
+    {
+     "pmid": "38012587",
+     "year": "2023",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "uncultured_selenomonadaceae": [
+    {
+     "pmid": "38012587",
+     "year": "2023",
+     "direction": "depleted",
+     "study_type": "case_control"
+    }
+   ],
+   "veillonella_atypica": [
+    {
+     "pmid": "33239396",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "case_control"
+    },
+    {
+     "pmid": "35048071",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "review"
+    }
+   ],
+   "veillonella_dispar": [
+    {
+     "pmid": "35048071",
+     "year": "2021",
+     "direction": "depleted",
+     "study_type": "review"
+    },
+    {
+     "pmid": "36567334",
+     "year": "2022",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "veillonella_parvula": [
+    {
+     "pmid": "35048071",
+     "year": "2021",
+     "direction": "enriched",
+     "study_type": "review"
+    }
+   ]
+  }
  }
 }

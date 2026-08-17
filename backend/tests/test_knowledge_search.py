@@ -44,14 +44,25 @@ class TestTaxonSchemaBackwardCompat:
     def test_lookup_taxon_has_evidence_fields(self, kb):
         taxon = kb.lookup_taxon("Faecalibacterium_prausnitzii")
         assert taxon is not None
-        assert taxon["disease_evidence"] == {}
+        # Shape, not emptiness: curated entries may carry merged literature
+        # evidence as the staging pipeline grows.
+        assert isinstance(taxon["disease_evidence"], dict)
         assert taxon["auto_generated"] is False
-        assert taxon["rank"] is None
+        assert taxon["rank"] is None or isinstance(taxon["rank"], str)
 
     def test_lookup_disease_has_literature_evidence(self, kb):
         disease = kb.lookup_disease("periodontal_disease")
         assert disease is not None
-        assert disease["literature_evidence"] == {}
+        assert isinstance(disease["literature_evidence"], dict)
+
+    def test_merged_literature_evidence_present(self, kb):
+        """The literature merge must be visible: F. nucleatum is the classic
+        periodontal pathogen and the mined oral-microbiome corpus covers it."""
+        taxon = kb.lookup_taxon("Fusobacterium_nucleatum")
+        assert taxon is not None
+        evidence = taxon["disease_evidence"].get("periodontal_disease")
+        assert evidence, "expected merged literature evidence for F. nucleatum / periodontal_disease"
+        assert all("pmid" in e for e in evidence)
 
 
 class TestKnowledgeSearchEndpoint:
