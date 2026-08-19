@@ -92,6 +92,12 @@ test_payload.json
 *.tsv
 !backend/examples/*.tsv
 !backend/app/knowledge/**/*.tsv
+# Worked-example datasets at repo root: bundled into the backend image
+# (docker/backend.Dockerfile COPY) and used by scripts/pipeline_smoke.py.
+# Without these tracked, a fresh clone cannot build the image.
+!/Huang_mBio_microbiome.tsv
+!/Huang_mBio_metabolome.tsv
+!/Huang_mBio_metadata.tsv
 *.biom
 
 # Temporary scripts (repo root only - do NOT ignore backend/tests/)
