@@ -235,17 +235,19 @@ def main() -> int:
     logger.info("LLM endpoint: %s model=%s", client_cfg["base_url"], client_cfg["model"])
 
     pdfs = sorted(args.pdf_dir.glob("*.pdf"))
+    # filter out already-mined so --limit advances through the queue
+    papers_dir = args.out_dir / "papers"
+    papers_dir.mkdir(parents=True, exist_ok=True)
+    pdfs = [p for p in pdfs if not (papers_dir / f"{p.stem}.json").exists()]
     if args.limit:
         pdfs = pdfs[: args.limit]
     logger.info("%d PDFs to process from %s", len(pdfs), args.pdf_dir)
 
-    papers_dir = args.out_dir / "papers"
-    papers_dir.mkdir(parents=True, exist_ok=True)
     failed: List[Dict[str, str]] = []
     n_ok = 0
 
     assoc_path = args.out_dir / "associations.jsonl"
-    with assoc_path.open("w") as assoc_f:
+    with assoc_path.open("a") as assoc_f:
         for i, pdf in enumerate(pdfs, 1):
             out_path = papers_dir / f"{pdf.stem}.json"
             if out_path.exists():

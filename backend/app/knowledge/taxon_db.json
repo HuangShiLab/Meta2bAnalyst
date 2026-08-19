@@ -2597,6 +2597,16 @@
      "direction": "enriched",
      "quote_verified": true,
      "evidence_quote": "P. gingivalis is a keystone pathogen in periodontitis and a member of the red complex."
+    },
+    {
+     "pmid": "24489768",
+     "year": "2014",
+     "journal": "PLoS ONE",
+     "study_type": "cohort",
+     "cohort_size": 11,
+     "direction": "enriched",
+     "quote_verified": true,
+     "evidence_quote": "In a study with the periodontal pathogen Porphyromonas gingivalis, Shelbourne et al. demonstrated a clear correlation between periodontal disease status and elevated expression of dnaK and htpG encoding general stress response proteins [27]."
     }
    ],
    "poor_oral_health": [
@@ -8007,7 +8017,8 @@
   "known_functions": [],
   "rank": "species",
   "disease_associations": {
-   "endodontic_infection": "enriched"
+   "endodontic_infection": "enriched",
+   "periodontal_disease": "enriched"
   },
   "health_markers": [],
   "notes": "[CURATE] auto-generated from literature mining; gram_stain/oxygen/functions need manual curation.",
@@ -8023,6 +8034,18 @@
      "direction": "enriched",
      "quote_verified": true,
      "evidence_quote": "Porphyromonas endodontalis : This Gram-negative anaerobic bacterium is often found in primary endodontic infections."
+    }
+   ],
+   "periodontal_disease": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "journal": "Microbiome",
+     "study_type": "case_control",
+     "cohort_size": 24,
+     "direction": "enriched",
+     "quote_verified": true,
+     "evidence_quote": "Examining results at the species level highlighted classic periodontal disease-associated OTUs in each of the three sites. These included T. forsythia, Filifactor alocis, and Porphyromonas endodontalis"
     }
    ]
   }
@@ -9825,7 +9848,8 @@
    "edta_decontamination": "enriched",
    "periodontal_disease": "mixed",
    "sodium_hypochlorite_decontamination": "enriched",
-   "uv_naclo_decontamination": "enriched"
+   "uv_naclo_decontamination": "enriched",
+   "progressing_periodontitis": "depleted"
   },
   "health_markers": [],
   "notes": "[CURATE] auto-generated from literature mining; gram_stain/oxygen/functions need manual curation.",
@@ -9899,6 +9923,18 @@
      "direction": "enriched",
      "quote_verified": true,
      "evidence_quote": "A few species were also absent in both the untreated and UV-only groups, but present in the other three decontamination methods (e.g., Streptococcus sanguinis, Rothia aeria, Leptotrichia sp. oral taxon 212, Streptococcus oralis, and Neisseria sp. oral taxon 014)."
+    }
+   ],
+   "progressing_periodontitis": [
+    {
+     "pmid": "28198672",
+     "year": "2017",
+     "journal": "BMC Genomics",
+     "study_type": "case_control",
+     "cohort_size": 43,
+     "direction": "depleted",
+     "quote_verified": true,
+     "evidence_quote": "Among them, Lactobacillus gasseri was more abundant in progressing samples, while Campylobacter showae and Streptococcus sanguinis were more abundant in healthy samples."
     }
    ]
   }
@@ -11187,6 +11223,60 @@
      "direction": "enriched",
      "quote_verified": true,
      "evidence_quote": "A detailed low-level comparison of individual bacteria demonstrated that 36 species were significantly more abundant in subjects with gingivitis than in healthy subjects (Table 3)."
+    }
+   ]
+  }
+ },
+ "prevotella": {
+  "gram_stain": null,
+  "oxygen": null,
+  "main_products": [],
+  "known_functions": [],
+  "rank": "genus",
+  "disease_associations": {
+   "periodontal_disease": "enriched"
+  },
+  "health_markers": [],
+  "notes": "[CURATE] auto-generated from literature mining; gram_stain/oxygen/functions need manual curation.",
+  "auto_generated": true,
+  "disease_evidence": {
+   "periodontal_disease": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "journal": "PLoS ONE",
+     "study_type": "case_control",
+     "cohort_size": 5,
+     "direction": "enriched",
+     "quote_verified": true,
+     "evidence_quote": "On one hand, our findings recapitulate prior results that indicate that the gram-negative genera Selenomonas [33,34], Prevotella [35], Treponema [36], Tannerella [36], Haemophilus [37] and Catonella [38] are significantly enriched in periodontal disease."
+    }
+   ]
+  }
+ },
+ "selenomonas_artemidis": {
+  "gram_stain": null,
+  "oxygen": null,
+  "main_products": [],
+  "known_functions": [],
+  "rank": "species",
+  "disease_associations": {
+   "periodontal_disease": "depleted"
+  },
+  "health_markers": [],
+  "notes": "[CURATE] auto-generated from literature mining; gram_stain/oxygen/functions need manual curation.",
+  "auto_generated": true,
+  "disease_evidence": {
+   "periodontal_disease": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "journal": "Microbiome",
+     "study_type": "case_control",
+     "cohort_size": 24,
+     "direction": "depleted",
+     "quote_verified": true,
+     "evidence_quote": "Health-associated taxa included unclassified Fusobacteria and Corynebacterium matruchotii in the SubG site, Granulicatella adiacens and Selenomonas artemidis in SupG, and S. artemidis and unclassified Porphyromonas in tongue samples"
     }
    ]
   }

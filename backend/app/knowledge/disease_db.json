@@ -794,6 +794,12 @@
      "year": "2026",
      "direction": "enriched",
      "study_type": "review"
+    },
+    {
+     "pmid": "24489768",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "cohort"
     }
    ],
    "Prevotella_copri": [
@@ -2216,6 +2222,30 @@
      "year": "2024",
      "direction": "enriched",
      "study_type": "RCT"
+    }
+   ],
+   "porphyromonas_endodontalis": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "prevotella": [
+    {
+     "pmid": "22675498",
+     "year": "2012",
+     "direction": "enriched",
+     "study_type": "case_control"
+    }
+   ],
+   "selenomonas_artemidis": [
+    {
+     "pmid": "25225610",
+     "year": "2014",
+     "direction": "depleted",
+     "study_type": "case_control"
     }
    ]
   }
