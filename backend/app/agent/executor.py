@@ -24,6 +24,10 @@ import pandas as pd
 
 from app.agent.module_registry import get_module_spec, ModuleSpec
 from app.agent.planner import ExecutionPlan, PlanStep
+from app.services.normalization import run_normalization
+from app.services.outlier_detection import run_outlier_detection
+from app.services.normalization import run_normalization
+from app.services.outlier_detection import run_outlier_detection
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +118,10 @@ def _get_module_function(module_name: str) -> Callable:
         from app.services.sparse_cca import run_sparse_cca_analysis
         from app.services.rda_analysis import run_rda_analysis
         from app.services.o2pls_analysis import run_o2pls_analysis
+
+        from app.services.normalization import run_normalization
+
+        from app.services.data_validator import DataValidator
 
         from app.services.data_validator import DataValidator
 
@@ -689,6 +697,20 @@ def _get_module_function(module_name: str) -> Callable:
             "cross_omics_gbdt": _run_cross_omics_gbdt,
             "cross_site_network": _run_cross_site_network,
             "cross_site_concordance": _run_cross_site_concordance,
+            # ── Preprocessing ────────────────────────────────────────
+            "normalization": lambda df, metadata_df=None, **kw: run_normalization(
+                df,
+                data_type=kw.get("data_type", "microbiome"),
+                method=kw.get("method", "clr"),
+                reference_samples=kw.get("reference_samples"),
+            ),
+            "outlier_detection": lambda df, metadata_df=None, **kw: run_outlier_detection(
+                df,
+                metadata_df=metadata_df,
+                method=kw.get("method", "aitchison"),
+                group_column=kw.get("group_column"),
+                threshold=kw.get("threshold", 0.05),
+            ),
         }
 
     return _MODULE_FUNCTIONS.get(module_name)

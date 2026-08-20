@@ -68,6 +68,42 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         constraints=["Must run before any analysis module"],
     ),
 
+    "normalization": ModuleSpec(
+        name="normalization",
+        description="Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome",
+        category="preprocessing",
+        input_requirements={"data": "required"},
+        parameters={
+            "data_type": {"type": "enum", "options": ["microbiome", "metabolome"]},
+            "method": {"type": "enum", "options": ["tss", "css", "clr", "ilr", "tmm", "rarefaction", "none", "zscore", "pareto", "quantile", "sum", "log1p"]},
+            "reference_samples": {"type": "array", "default": None},
+        },
+        output_spec={"normalized_matrix": "dataframe", "scaling_factors": "dict", "plot_data": "plotly"},
+        constraints=["Must run before any analysis that requires standardized data"],
+    ),
+
+    "outlier_detection": ModuleSpec(
+        name="outlier_detection",
+        description="Aitchison distance / Mahalanobis PCA / Isolation Forest / Cook's distance outlier detection",
+        category="preprocessing",
+        input_requirements={"data": "required", "metadata": "optional"},
+        parameters={
+            "method": {"type": "enum", "options": ["aitchison", "mahalanobis_pca", "isolation_forest", "cooks_distance"], "default": "aitchison"},
+            "group_column": {"type": "string", "default": None},
+            "threshold": {"type": "float", "default": 0.05},
+        },
+        output_spec={"outlier_flags": "dataframe", "plot_data": "plotly", "report": "dict"},
+    ),
+    "data_validator": ModuleSpec(
+        name="data_validator",
+        description="Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment",
+        category="preprocessing",
+        input_requirements={"microbiome": "optional", "metabolome": "optional", "metadata": "optional"},
+        parameters={},
+        output_spec={"report": "dict", "valid": "bool"},
+        constraints=["Must run before any analysis module"],
+    ),
+
     # ── Individual Omics: Microbiome ────────────────────────────
     "microbiome_pcoa": ModuleSpec(
         name="microbiome_pcoa",

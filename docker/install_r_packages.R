@@ -31,7 +31,8 @@ CORE <- c(
   "DESeq2",     # differential abundance
   "edgeR",      # differential abundance
   "ALDEx2",     # compositional differential abundance
-  "WGCNA"       # co-expression / co-occurrence modules
+  "WGCNA",      # co-expression / co-occurrence modules
+  "sva"         # ComBat / ComBat_seq batch correction (Phase 1)
 )
 # Heavy/fragile: ANCOMBC needs CVXR -> clarabel (Rust toolchain) and energy
 # (GSL); mixOmics pulls rgl (headless GL). Kept in their own layer so a
@@ -47,7 +48,10 @@ OPTIONAL <- c(
   "lefser",     # LEfSe
   "maaslin3",   # note: lowercase is the Bioconductor package name
   "pheatmap",
-  "ggplot2"
+  "ggplot2",
+  "missForest", # missing-value imputation (random forest)
+  "imputeLCMD", # QRILC imputation for LC-MS metabolomics
+  "SpiecEasi"   # Phase 3 sparse inverse covariance / network (heavy compile)
 )
 
 args <- commandArgs(trailingOnly = TRUE)

@@ -25,7 +25,7 @@ try:
     logger.info("rpy2 is available for R integration")
 
     # Check which R packages are installed
-    for pkg in ['DESeq2', 'edgeR', 'vegan', 'phyloseq', 'ggplot2', 'pheatmap']:
+    for pkg in ['DESeq2', 'edgeR', 'vegan', 'phyloseq', 'ggplot2', 'pheatmap', 'sva']:
         try:
             importr(pkg)
             R_PACKAGES[pkg] = True
