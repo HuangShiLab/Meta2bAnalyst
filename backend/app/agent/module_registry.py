@@ -753,6 +753,117 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         depends_on=["data_validator"],
     ),
 
+    # ── Phase 3: Multi-omics Integration ──────────────────────
+    "rgcca": ModuleSpec(
+        name="rgcca",
+        description="Regularized Generalized CCA for >2 omics blocks with design matrix and sparse variable selection",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required"},
+        parameters={
+            "blocks": {"type": "dict", "description": "{'microbiome': df1, 'metabolome': df2, ...}"},
+            "design_matrix": {"type": "array", "default": None},
+            "sparsity": {"type": "bool", "default": True},
+            "n_components": {"type": "int", "default": 2, "range": [1, 10]},
+        },
+        output_spec={"components": "dict", "loadings": "dict", "plot_data": "plotly", "circos": "plotly"},
+        constraints=["Requires >=2 omics blocks with aligned samples"],
+        depends_on=["data_validator"],
+    ),
+
+    "mefisto": ModuleSpec(
+        name="mefisto",
+        description="MEFISTO: Spatiotemporal extension of MOFA+ for longitudinal multi-omics with continuous covariates",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "required"},
+        parameters={
+            "time_column": {"type": "string", "required": True},
+            "subject_column": {"type": "string", "required": True},
+            "n_factors": {"type": "int", "default": 5},
+            "smoothness": {"type": "float", "default": 0.5},
+        },
+        output_spec={"factors": "dataframe", "time_trends": "plotly", "variance_explained": "dict"},
+        constraints=["Requires longitudinal design with time_column and subject_column"],
+        depends_on=["data_validator"],
+    ),
+
+    "mmvec": ModuleSpec(
+        name="mmvec",
+        description="mmvec: Neural network estimation of microbe-metabolite conditional co-occurrence probabilities",
+        category="integration",
+        input_requirements={"microbiome": "required", "metabolome": "required"},
+        parameters={
+            "epochs": {"type": "int", "default": 1000},
+            "latent_dim": {"type": "int", "default": 50},
+            "learning_rate": {"type": "float", "default": 0.001},
+        },
+        output_spec={"conditional_prob_matrix": "dataframe", "embeddings_u": "dataframe", "embeddings_v": "dataframe", "biplot": "plotly"},
+        constraints=["Requires aligned microbiome + metabolome samples"],
+        depends_on=["data_validator"],
+    ),
+
+    # ── Phase 3: Network Inference ──────────────────────────────
+    "spiec_easi": ModuleSpec(
+        name="spiec_easi",
+        description="SPIEC-EASI: Sparse Inverse Covariance Estimation for ecological association inference (CLR + glasso/MB + StARS)",
+        category="individual_omics",
+        input_requirements={"microbiome": "required"},
+        parameters={
+            "method": {"type": "enum", "options": ["glasso", "mb", "slr"], "default": "mb"},
+            "lambda_min_ratio": {"type": "float", "default": 0.01},
+            "nlambda": {"type": "int", "default": 100},
+            "rep_num": {"type": "int", "default": 20},
+        },
+        output_spec={"adjacency_matrix": "dataframe", "network_data": "dict", "stability_scores": "array", "plot_data": "plotly"},
+        constraints=["Infers conditional dependencies, not marginal correlations"],
+        depends_on=["data_validator"],
+    ),
+
+    # ── Phase 4: Multi-site Analysis ────────────────────────────
+    "spatial_gradient": ModuleSpec(
+        name="spatial_gradient",
+        description="Distance-decay curves, Mantel correlograms, and gradient forest for anatomical site gradients",
+        category="integration",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "site_column": {"type": "string", "required": True},
+            "spatial_distance_matrix": {"type": "array", "default": None},
+            "method": {"type": "enum", "options": ["distance_decay", "mantel_correlogram", "gradient_forest"]},
+        },
+        output_spec={"decay_plot": "plotly", "correlogram_plot": "plotly", "gradient_importance": "dataframe"},
+        constraints=["Requires multi-site data with site_column or explicit distance matrix"],
+        depends_on=["data_validator"],
+    ),
+
+    "dmi": ModuleSpec(
+        name="dmi",
+        description="DMI (Degree of Microbial Individuality): Quantify per-taxon individual specificity from longitudinal paired distances",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "subject_column": {"type": "string", "required": True},
+            "time_column": {"type": "string", "default": None},
+            "n_bootstrap": {"type": "int", "default": 20},
+        },
+        output_spec={"dmi_values": "dataframe", "bootstrap_ci": "dataframe", "plot_data": "plotly"},
+        constraints=["Requires longitudinal data with repeated measures per subject"],
+        depends_on=["data_validator"],
+    ),
+
+    "icc_stability": ModuleSpec(
+        name="icc_stability",
+        description="Intraclass Correlation Coefficient for microbiome temporal stability: decomposes variance into between-subject and within-subject components",
+        category="individual_omics",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "subject_column": {"type": "string", "required": True},
+            "time_column": {"type": "string", "default": None},
+            "transformation": {"type": "enum", "options": ["clr", "log", "sqrt", "asinh", "none"], "default": "clr"},
+        },
+        output_spec={"icc_values": "dataframe", "stability_grade": "dict", "plot_data": "plotly"},
+        constraints=["Requires >=2 timepoints per subject"],
+        depends_on=["data_validator"],
+    ),
+
     # ── Report Generation ───────────────────────────────────────
     "report_generator": ModuleSpec(        name="report_generator",
         description="Combine all analysis results into a unified PDF or HTML report with figures and tables",

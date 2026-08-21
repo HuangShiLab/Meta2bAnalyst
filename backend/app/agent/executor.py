@@ -31,6 +31,21 @@ from app.services.imputation import run_imputation
 from app.services.paired_differential_test import run_paired_differential_test
 from app.services.ancom_bc import run_ancom_bc
 from app.services.permanova_strata import run_permanova_strata
+from app.services.rgcca import run_rgcca
+from app.services.spiec_easi import run_spiec_easi
+from app.services.mefisto import run_mefisto
+from app.services.mmvec import run_mmvec
+from app.services.spatial_gradient import run_spatial_gradient
+from app.services.dmi import run_dmi
+from app.services.icc_stability import run_icc_stability
+from app.agent.planner import ExecutionPlan, PlanStep
+from app.services.normalization import run_normalization
+from app.services.outlier_detection import run_outlier_detection
+from app.services.batch_correction import run_batch_correction
+from app.services.imputation import run_imputation
+from app.services.paired_differential_test import run_paired_differential_test
+from app.services.ancom_bc import run_ancom_bc
+from app.services.permanova_strata import run_permanova_strata
 from app.agent.planner import ExecutionPlan, PlanStep
 from app.services.normalization import run_normalization
 from app.services.outlier_detection import run_outlier_detection
@@ -758,6 +773,55 @@ def _get_module_function(module_name: str) -> Callable:
                 covariates=kw.get("covariates"),
                 distance_metric=kw.get("distance_metric", "braycurtis"),
                 n_permutations=kw.get("n_permutations", 999),
+            ),
+            "rgcca": lambda df, metadata_df=None, **kw: run_rgcca(
+                blocks=kw.get("blocks"),
+                design_matrix=kw.get("design_matrix"),
+                sparsity=kw.get("sparsity", True),
+                n_components=kw.get("n_components", 2),
+            ),
+            "spiec_easi": lambda df, metadata_df=None, **kw: run_spiec_easi(
+                df,
+                method=kw.get("method", "mb"),
+                lambda_min_ratio=kw.get("lambda_min_ratio", 0.01),
+                nlambda=kw.get("nlambda", 100),
+                rep_num=kw.get("rep_num", 20),
+            ),
+            "mefisto": lambda df, metadata_df=None, **kw: run_mefisto(
+                blocks=kw.get("blocks"),
+                metadata_df=metadata_df,
+                time_column=kw.get("time_column"),
+                subject_column=kw.get("subject_column"),
+                n_factors=kw.get("n_factors", 5),
+                smoothness=kw.get("smoothness", 0.5),
+            ),
+            "mmvec": lambda df, metadata_df=None, **kw: run_mmvec(
+                microbiome_df=kw.get("microbiome_df"),
+                metabolome_df=kw.get("metabolome_df"),
+                epochs=kw.get("epochs", 1000),
+                latent_dim=kw.get("latent_dim", 50),
+                learning_rate=kw.get("learning_rate", 0.001),
+            ),
+            "spatial_gradient": lambda df, metadata_df=None, **kw: run_spatial_gradient(
+                df,
+                metadata_df=metadata_df,
+                site_column=kw.get("site_column"),
+                spatial_distance_matrix=kw.get("spatial_distance_matrix"),
+                method=kw.get("method", "distance_decay"),
+            ),
+            "dmi": lambda df, metadata_df=None, **kw: run_dmi(
+                df,
+                metadata_df=metadata_df,
+                subject_column=kw.get("subject_column"),
+                time_column=kw.get("time_column"),
+                n_bootstrap=kw.get("n_bootstrap", 20),
+            ),
+            "icc_stability": lambda df, metadata_df=None, **kw: run_icc_stability(
+                df,
+                metadata_df=metadata_df,
+                subject_column=kw.get("subject_column"),
+                time_column=kw.get("time_column"),
+                transformation=kw.get("transformation", "clr"),
             ),
         }
 
