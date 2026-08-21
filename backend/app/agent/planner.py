@@ -16,6 +16,10 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 
+import pandas as pd
+
+from app.agent.module_registry import MODULE_REGISTRY, get_module_spec, get_module_names
+
 from app.agent.module_registry import MODULE_REGISTRY, get_module_spec, get_module_names
 
 logger = logging.getLogger(__name__)
@@ -475,6 +479,12 @@ MODULE_KEYWORDS = {
     # ALDEx2 / Songbird
     "aldex2": ["aldex2", "aldex", "compositional.*test"],
     "songbird": ["songbird", "qurro", "differential.*rank"],
+    
+    # Experimental Design Aware
+    "batch_correction": ["batch", "batch.*effect", "批次.*效应"],
+    "paired_differential_test": ["paired", "配对", "成对", "paired.*test"],
+    "outlier_detection": ["outlier", "异常值", "离群", "outlier.*detect"],
+    "normalization": ["normalize", "normalization", "standardize", "标准化", "归一化"],
 }
 
 
@@ -709,6 +719,219 @@ def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[
     return steps
 
 
+# ───────────────────────────────────────────────────────────────
+# EXPERIMENTAL DESIGN AWARENESS
+# ───────────────────────────────────────────────────────────────
+
+CATEGORY_ORDER = ["preprocessing", "individual_omics", "integration", "marker", "visualization"]
+
+
+def infer_experimental_design(metadata_df: pd.DataFrame) -> dict:
+    """
+    从 metadata 推断实验设计特征。
+    返回: {"paired": bool, "longitudinal": bool, "multibatch": bool, "multisite": bool}
+    """
+    design = {
+        "paired": False,
+        "longitudinal": False,
+        "multibatch": False,
+        "multisite": False,
+    }
+
+    if metadata_df is None or metadata_df.empty:
+        return design
+
+    # paired: 存在 subject 列，且每个 subject 恰好出现在 2 个 group 中
+    if "subject" in metadata_df.columns and "group" in metadata_df.columns:
+        subject_groups = metadata_df.groupby("subject")["group"].nunique()
+        if len(subject_groups) > 0 and (subject_groups == 2).all():
+            design["paired"] = True
+
+    # longitudinal: 存在 subject 列和 time 列，且每个 subject 有 >1 个时间点
+    if "subject" in metadata_df.columns and "time" in metadata_df.columns:
+        subject_times = metadata_df.groupby("subject")["time"].nunique()
+        if len(subject_times) > 0 and (subject_times > 1).all():
+            design["longitudinal"] = True
+
+    # multibatch: 存在 batch 列，且唯一值 > 1
+    if "batch" in metadata_df.columns:
+        if metadata_df["batch"].nunique() > 1:
+            design["multibatch"] = True
+
+    # multisite: 存在 site 列，且唯一值 > 1
+    if "site" in metadata_df.columns:
+        if metadata_df["site"].nunique() > 1:
+            design["multisite"] = True
+
+    return design
+
+
+def apply_design_best_practices(
+    steps: list,
+    design: dict,
+    metadata_df: pd.DataFrame,
+) -> list:
+    """
+    根据实验设计自动调整分析计划。
+    """
+    steps = [dict(s) for s in steps]
+
+    # 1. multibatch=True 且步骤中没有 batch_correction → 在 validation 后插入 batch_correction
+    if design.get("multibatch") and not any(s["module"] == "batch_correction" for s in steps):
+        validator_idx = next((i for i, s in enumerate(steps) if s["module"] == "data_validator"), -1)
+        if validator_idx >= 0:
+            validator_id = steps[validator_idx]["id"]
+            existing_ids = {s["id"] for s in steps}
+            batch_id = "step_batch_correction"
+            if batch_id in existing_ids:
+                batch_id += "_auto"
+            steps.insert(validator_idx + 1, {
+                "module": "batch_correction",
+                "id": batch_id,
+                "depends_on": [validator_id],
+            })
+
+    # 2. paired=True 且步骤中有 microbiome_marker/aldex2 → 替换为 paired_differential_test
+    if design.get("paired"):
+        for i, s in enumerate(steps):
+            if s["module"] in ("microbiome_marker", "aldex2"):
+                steps[i] = dict(s)
+                steps[i]["module"] = "paired_differential_test"
+
+    # 3. longitudinal=True 且步骤中没有 mixed_effects_diversity → 追加 mixed_effects_diversity（如已实现）
+    if design.get("longitudinal") and not any(s["module"] == "mixed_effects_diversity" for s in steps):
+        validator_id = next((s["id"] for s in steps if s["module"] == "data_validator"), None)
+        if validator_id:
+            existing_ids = {s["id"] for s in steps}
+            me_id = "step_mixed_effects_diversity"
+            if me_id in existing_ids:
+                me_id += "_auto"
+            steps.append({
+                "module": "mixed_effects_diversity",
+                "id": me_id,
+                "depends_on": [validator_id],
+            })
+
+    # 4. 所有分析模块前自动插入 normalization（如果尚未存在）
+    has_normalization = any(s["module"] == "normalization" for s in steps)
+    if not has_normalization:
+        validator_id = next((s["id"] for s in steps if s["module"] == "data_validator"), None)
+        if validator_id:
+            first_analysis_idx = next((
+                i for i, s in enumerate(steps)
+                if s["module"] not in ("data_validator", "batch_correction", "outlier_detection")
+            ), len(steps))
+            existing_ids = {s["id"] for s in steps}
+            norm_id = "step_normalization"
+            if norm_id in existing_ids:
+                norm_id += "_auto"
+            steps.insert(first_analysis_idx, {
+                "module": "normalization",
+                "id": norm_id,
+                "depends_on": [validator_id],
+            })
+
+    # 5. multisite=True → 在 diversity 分析后追加 cross_site_permanova
+    if design.get("multisite"):
+        diversity_modules = ("microbiome_alpha", "metabolome_alpha", "microbiome_pcoa", "metabolome_pca")
+        last_diversity_idx = -1
+        for i, s in enumerate(steps):
+            if s["module"] in diversity_modules:
+                last_diversity_idx = i
+        if last_diversity_idx >= 0:
+            diversity_id = steps[last_diversity_idx]["id"]
+            existing_ids = {s["id"] for s in steps}
+            csp_id = "step_cross_site_permanova"
+            if csp_id in existing_ids:
+                csp_id += "_auto"
+            steps.insert(last_diversity_idx + 1, {
+                "module": "cross_site_permanova",
+                "id": csp_id,
+                "depends_on": [diversity_id],
+            })
+
+    return steps
+
+
+def auto_resolve_dependencies(steps: list) -> list:
+    """
+    根据模块类别和显式依赖规则自动推导 depends_on。
+    """
+    module_categories = {}
+    for s in steps:
+        spec = get_module_spec(s["module"])
+        module_categories[s["module"]] = spec.category if spec else "unknown"
+
+    validator_id = next((s["id"] for s in steps if s["module"] == "data_validator"), None)
+    normalization_ids = [s["id"] for s in steps if s["module"] == "normalization"]
+    normalization_id = normalization_ids[-1] if normalization_ids else None
+    pcoa_ids = [s["id"] for s in steps if s["module"] == "microbiome_pcoa"]
+    pca_ids = [s["id"] for s in steps if s["module"] == "metabolome_pca"]
+
+    last_in_category: Dict[str, str] = {}
+
+    for i, s in enumerate(steps):
+        module = s["module"]
+        cat = module_categories.get(module, "unknown")
+        deps = set(s.get("depends_on", []))
+
+        if module == "data_validator":
+            last_in_category[cat] = s["id"]
+            continue
+
+        # preprocessing 模块通常不依赖其他模块（除 data_validator）
+        if cat == "preprocessing":
+            if validator_id:
+                deps.add(validator_id)
+            if module == "batch_correction" and normalization_id:
+                deps.add(normalization_id)
+            elif "preprocessing" in last_in_category and last_in_category["preprocessing"] != s["id"]:
+                deps.add(last_in_category["preprocessing"])
+            last_in_category[cat] = s["id"]
+            s["depends_on"] = list(deps)
+            continue
+
+        # 分析模块依赖 data_validator
+        if validator_id:
+            deps.add(validator_id)
+
+        # normalization 模块如果被使用，所有后续分析模块自动依赖它
+        if normalization_id and module not in ("data_validator", "normalization", "batch_correction"):
+            deps.add(normalization_id)
+
+        # batch_correction 依赖 normalization
+        if module == "batch_correction" and normalization_id:
+            deps.add(normalization_id)
+
+        # procrustes 依赖 microbiome_pcoa 和 metabolome_pca
+        if module == "procrustes":
+            for pid in pcoa_ids:
+                deps.add(pid)
+            for pid in pca_ids:
+                deps.add(pid)
+
+        # CATEGORY_ORDER 顺序推导依赖
+        if cat in CATEGORY_ORDER:
+            if cat in last_in_category and last_in_category[cat] != s["id"]:
+                deps.add(last_in_category[cat])
+            cat_idx = CATEGORY_ORDER.index(cat)
+            for prev_cat in reversed(CATEGORY_ORDER[:cat_idx]):
+                if prev_cat in last_in_category:
+                    deps.add(last_in_category[prev_cat])
+                    break
+        else:
+            if i > 0:
+                prev_step = steps[i - 1]
+                if prev_step["id"] != s["id"]:
+                    deps.add(prev_step["id"])
+
+        deps.discard(s["id"])
+        s["depends_on"] = list(deps)
+        last_in_category[cat] = s["id"]
+
+    return steps
+
+
 def _estimate_time(n_steps: int) -> str:
     """Rough wall-clock estimate for a plan of n_steps."""
     if n_steps > 8:
@@ -870,6 +1093,7 @@ def _build_plan(
     template: Optional[Dict[str, Any]] = None,
     detected: Optional[List[Tuple[str, float]]] = None,
     unavailable: Optional[List[str]] = None,
+    metadata_df: Optional[pd.DataFrame] = None,
 ) -> ExecutionPlan:
     """Build execution plan from template and/or keyword detection.
 
@@ -921,6 +1145,21 @@ def _build_plan(
     # Drop steps whose module has no registered spec (templates still reference
     # modules that were never registered) and repair the dependency edges.
     steps_raw, dropped = _drop_unrunnable_steps(steps_raw)
+    
+    # Experimental design-aware adjustment
+    if isinstance(metadata_df, pd.DataFrame) and not metadata_df.empty:
+        design = infer_experimental_design(metadata_df)
+        if any(design.values()):
+            steps_raw = apply_design_best_practices(steps_raw, design, metadata_df)
+            steps_raw = auto_resolve_dependencies(steps_raw)
+            steps_raw, _ = _drop_unrunnable_steps(steps_raw)
+            notes.append(
+                f"Experimental design detected: paired={design['paired']}, "
+                f"longitudinal={design['longitudinal']}, "
+                f"multibatch={design['multibatch']}, "
+                f"multisite={design['multisite']}"
+            )
+    
     if dropped:
         notes.append(
             "Skipped (no executable module registered): " + ", ".join(sorted(dropped))
@@ -1045,6 +1284,16 @@ class AnalysisPlanner:
 
         steps = _get_recommended_steps(data_info)
         steps, dropped = _drop_unrunnable_steps(steps)
+        
+        # Experimental design-aware adjustment
+        metadata_df = context.get("metadata")
+        if isinstance(metadata_df, pd.DataFrame) and not metadata_df.empty:
+            design = infer_experimental_design(metadata_df)
+            if any(design.values()):
+                steps = apply_design_best_practices(steps, design, metadata_df)
+                steps = auto_resolve_dependencies(steps)
+                steps, _ = _drop_unrunnable_steps(steps)
+        
         steps = _apply_best_practices(steps, query)
 
         plan_steps = []
@@ -1104,7 +1353,8 @@ class AnalysisPlanner:
                 logger.info("Data-aware plan generated: %d steps", len(data_plan.steps))
                 return data_plan
 
-        plan = _build_plan(query, template, detected, unavailable)
+        metadata_df = context.get("metadata") if context else None
+        plan = _build_plan(query, template, detected, unavailable, metadata_df)
 
         # Drop steps whose data the session does not actually hold.
         available = _available_omics_from_context(context)
@@ -1183,11 +1433,48 @@ Rules:
             steps = self._validate_llm_steps(plan_json.get("steps") or [])
             if not steps:
                 return None
+            
+            # Experimental design-aware adjustment
+            notes = ["Generated by LLM planner (kimi-for-coding)"]
+            metadata_df = context.get("metadata") if context else None
+            if isinstance(metadata_df, pd.DataFrame) and not metadata_df.empty:
+                design = infer_experimental_design(metadata_df)
+                if any(design.values()):
+                    step_dicts = [
+                        {
+                            "id": s.id,
+                            "module": s.module,
+                            "params": dict(s.params),
+                            "depends_on": list(s.depends_on),
+                        }
+                        for s in steps
+                    ]
+                    step_dicts = apply_design_best_practices(step_dicts, design, metadata_df)
+                    step_dicts = auto_resolve_dependencies(step_dicts)
+                    step_dicts, _ = _drop_unrunnable_steps(step_dicts)
+                    steps = [
+                        PlanStep(
+                            id=s["id"],
+                            module=s["module"],
+                            params=s.get("params", {}),
+                            depends_on=s.get("depends_on", []),
+                            description=get_module_spec(s["module"]).description if get_module_spec(s["module"]) else "",
+                        )
+                        for s in step_dicts
+                    ]
+                    _prune_dangling_dependencies(steps)
+                    notes.append(
+                        f"Experimental design detected: paired={design['paired']}, "
+                        f"longitudinal={design['longitudinal']}, "
+                        f"multibatch={design['multibatch']}, "
+                        f"multisite={design['multisite']}"
+                    )
+            
             return ExecutionPlan(
                 query=query,
                 steps=steps,
                 estimated_time=_estimate_time(len(steps)),
-                notes=["Generated by LLM planner (kimi-for-coding)"],
+                notes=notes,
             )
         except Exception as e:
             logger.warning(f"LLM planning failed: {e}; keeping rule-based result")

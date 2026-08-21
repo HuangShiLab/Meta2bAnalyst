@@ -670,6 +670,89 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         output_spec={"plot_data": "plotly", "source_proportions": "dataframe"},
     ),
 
+    # ── Preprocessing (R-dependent) ───────────────────────────
+    "batch_correction": ModuleSpec(
+        name="batch_correction",
+        description="ComBat-seq/ComBat/MMUPHin batch effect correction with biological covariate preservation",
+        category="preprocessing",
+        input_requirements={"data": "required", "metadata": "required"},
+        parameters={
+            "batch_column": {"type": "string", "required": True},
+            "biological_covariates": {"type": "array", "default": []},
+            "method": {"type": "enum", "options": ["combat_seq", "combat", "mmuphin"], "default": "combat_seq"},
+            "data_type": {"type": "enum", "options": ["microbiome", "metabolome"]},
+        },
+        output_spec={"corrected_matrix": "dataframe", "combat_params": "dict", "plot_data": "plotly"},
+        constraints=["Requires metadata with batch_column"],
+        depends_on=["data_validator"],
+    ),
+
+    "imputation": ModuleSpec(
+        name="imputation",
+        description="KNN/random forest/QRILC/half-min/min missing value imputation for MNAR and MAR",
+        category="preprocessing",
+        input_requirements={"data": "required"},
+        parameters={
+            "method": {"type": "enum", "options": ["knn", "rf", "qrilc", "half_min", "min"], "default": "knn"},
+            "missing_threshold": {"type": "float", "default": 0.5, "range": [0.1, 0.9]},
+            "data_type": {"type": "enum", "options": ["microbiome", "metabolome"]},
+        },
+        output_spec={"imputed_matrix": "dataframe", "imputation_summary": "dict", "plot_data": "plotly"},
+        constraints=["Features with missing rate > threshold are removed"],
+        depends_on=["data_validator"],
+    ),
+
+    # ── Advanced Statistical Tests ──────────────────────────────
+    "paired_differential_test": ModuleSpec(
+        name="paired_differential_test",
+        description="Paired differential abundance test for before-after or matched designs (Wilcoxon signed-rank or ALDEx2)",
+        category="marker",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "required": True},
+            "subject_column": {"type": "string", "required": True},
+            "method": {"type": "enum", "options": ["paired_wilcoxon", "paired_aldex2"], "default": "paired_wilcoxon"},
+            "transformation": {"type": "enum", "options": ["clr", "ilr", "none"], "default": "clr"},
+            "pvalue_threshold": {"type": "float", "default": 0.05},
+        },
+        output_spec={"significant_features": "dataframe", "volcano_plot": "plotly", "statistics": "dict"},
+        constraints=["Requires exactly 2 groups and subject_column for pairing"],
+        depends_on=["data_validator"],
+    ),
+
+    "ancom_bc": ModuleSpec(
+        name="ancom_bc",
+        description="ANCOM-BC: bias-corrected differential abundance with covariate adjustment and multi-group support",
+        category="marker",
+        input_requirements={"microbiome": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "required": True},
+            "covariates": {"type": "array", "default": []},
+            "random_effects": {"type": "string", "default": None},
+            "pvalue_threshold": {"type": "float", "default": 0.05},
+        },
+        output_spec={"significant_features": "dataframe", "volcano_plot": "plotly", "sensitivity_plot": "plotly"},
+        constraints=["Requires raw count matrix (not normalized)"],
+        depends_on=["data_validator"],
+    ),
+
+    "permanova_strata": ModuleSpec(
+        name="permanova_strata",
+        description="PERMANOVA with strata for paired or block designs (adonis2), supporting multiple covariates",
+        category="individual_omics",
+        input_requirements={"data": "required", "metadata": "required"},
+        parameters={
+            "group_column": {"type": "string", "required": True},
+            "strata_column": {"type": "string", "default": None},
+            "covariates": {"type": "array", "default": []},
+            "distance_metric": {"type": "enum", "options": ["braycurtis", "euclidean", "unweighted_unifrac", "weighted_unifrac", "jaccard"]},
+            "n_permutations": {"type": "int", "default": 999},
+        },
+        output_spec={"statistics": "dict", "significant_variables": "list", "plot_data": "plotly"},
+        constraints=["strata_column enables paired/block design correction"],
+        depends_on=["data_validator"],
+    ),
+
     # ── Report Generation ───────────────────────────────────────
     "report_generator": ModuleSpec(        name="report_generator",
         description="Combine all analysis results into a unified PDF or HTML report with figures and tables",

@@ -26,6 +26,14 @@ from app.agent.module_registry import get_module_spec, ModuleSpec
 from app.agent.planner import ExecutionPlan, PlanStep
 from app.services.normalization import run_normalization
 from app.services.outlier_detection import run_outlier_detection
+from app.services.batch_correction import run_batch_correction
+from app.services.imputation import run_imputation
+from app.services.paired_differential_test import run_paired_differential_test
+from app.services.ancom_bc import run_ancom_bc
+from app.services.permanova_strata import run_permanova_strata
+from app.agent.planner import ExecutionPlan, PlanStep
+from app.services.normalization import run_normalization
+from app.services.outlier_detection import run_outlier_detection
 from app.services.normalization import run_normalization
 from app.services.outlier_detection import run_outlier_detection
 
@@ -710,6 +718,46 @@ def _get_module_function(module_name: str) -> Callable:
                 method=kw.get("method", "aitchison"),
                 group_column=kw.get("group_column"),
                 threshold=kw.get("threshold", 0.05),
+            ),
+            "batch_correction": lambda df, metadata_df=None, **kw: run_batch_correction(
+                df,
+                metadata_df=metadata_df,
+                batch_column=kw.get("batch_column"),
+                biological_covariates=kw.get("biological_covariates"),
+                method=kw.get("method", "combat_seq"),
+                data_type=kw.get("data_type", "microbiome"),
+            ),
+            "imputation": lambda df, metadata_df=None, **kw: run_imputation(
+                df,
+                method=kw.get("method", "knn"),
+                missing_threshold=kw.get("missing_threshold", 0.5),
+                data_type=kw.get("data_type", "microbiome"),
+            ),
+            "paired_differential_test": lambda df, metadata_df=None, **kw: run_paired_differential_test(
+                df,
+                metadata_df=metadata_df,
+                group_column=kw.get("group_column"),
+                subject_column=kw.get("subject_column"),
+                method=kw.get("method", "paired_wilcoxon"),
+                transformation=kw.get("transformation", "clr"),
+                pvalue_threshold=kw.get("pvalue_threshold", 0.05),
+            ),
+            "ancom_bc": lambda df, metadata_df=None, **kw: run_ancom_bc(
+                df,
+                metadata_df=metadata_df,
+                group_column=kw.get("group_column"),
+                covariates=kw.get("covariates"),
+                random_effects=kw.get("random_effects"),
+                pvalue_threshold=kw.get("pvalue_threshold", 0.05),
+            ),
+            "permanova_strata": lambda df, metadata_df=None, **kw: run_permanova_strata(
+                df,
+                metadata_df=metadata_df,
+                group_column=kw.get("group_column"),
+                strata_column=kw.get("strata_column"),
+                covariates=kw.get("covariates"),
+                distance_metric=kw.get("distance_metric", "braycurtis"),
+                n_permutations=kw.get("n_permutations", 999),
             ),
         }
 
