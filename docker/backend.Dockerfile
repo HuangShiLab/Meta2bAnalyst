@@ -78,7 +78,7 @@ ENV PYTHONPATH=/app \
 RUN python -c "import app.main; print('app imports OK')" \
     && python -c "from app.services.r_analysis import rpy2_available, rpackage_available; \
 assert rpy2_available(), 'rpy2 not usable'; \
-missing=[p for p in ('DESeq2','edgeR','ANCOMBC','ALDEx2','mixOmics','WGCNA','sva') if not rpackage_available(p)]; \\
+missing=[p for p in ('DESeq2','edgeR','ANCOMBC','ALDEx2','mixOmics','WGCNA','sva') if not rpackage_available(p)]; \
 assert not missing, f'R packages unusable from Python: {missing}'; \
 print('R integration OK')"
 
