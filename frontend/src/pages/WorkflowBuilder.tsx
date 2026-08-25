@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,9 +16,7 @@ import {
   Zap,
   LayoutGrid,
   ArrowDown,
-  X,
   Loader2,
-  Save,
   RotateCcw,
 } from "lucide-react";
 
@@ -37,7 +34,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 // MODULE PALETTE (left sidebar)
 // ───────────────────────────────────────────────────────────────
 function ModulePalette() {
-  const { moduleRegistry, categories, addNode } = useWorkflowStore();
+  const { moduleRegistry, categories } = useWorkflowStore();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const modulesByCategory = categories.map((cat) => ({
@@ -226,7 +223,7 @@ function ParamPanel() {
 // DAG CANVAS (center)
 // ───────────────────────────────────────────────────────────────
 function DAGCanvas() {
-  const { nodes, edges, selectedNodeId, selectNode, moveNode, autoLayout } = useWorkflowStore();
+  const { nodes, edges, selectedNodeId, selectNode, moveNode } = useWorkflowStore();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
@@ -268,8 +265,10 @@ function DAGCanvas() {
     setDragging(null);
   }, []);
 
-  // Auto-layout on first mount if nodes exist
+  // Auto-layout on first mount if nodes exist (mount-only: read store
+  // non-reactively so the effect does not re-fire on node changes).
   useEffect(() => {
+    const { nodes, autoLayout } = useWorkflowStore.getState();
     if (nodes.length > 0 && nodes[0].x === 0 && nodes[0].y === 0) {
       autoLayout();
     }
@@ -379,7 +378,6 @@ function DAGCanvas() {
 // MAIN PAGE
 // ───────────────────────────────────────────────────────────────
 export default function WorkflowBuilder() {
-  const navigate = useNavigate();
   const {
     nodes,
     setRegistry,
