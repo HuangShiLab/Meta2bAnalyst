@@ -67,6 +67,7 @@ STUDY_TYPE_WEIGHT = {
 
 # Common condition spellings seen in mining -> disease_db keys.
 CONDITION_ALIASES = {
+    # Periodontal diseases
     "periodontitis": "periodontal_disease",
     "periodontal_disease": "periodontal_disease",
     "gum_disease": "periodontal_disease",
@@ -76,31 +77,127 @@ CONDITION_ALIASES = {
     "dental_periodontitis": "periodontal_disease",
     "stage_iii_periodontitis": "periodontal_disease",
     "aggressive_periodontitis": "periodontal_disease",
+    "molar_incisor_pattern_periodontitis": "periodontal_disease",
+    "periodontitis_progression": "periodontal_disease",
+    "periodontitis_progression_baseline": "periodontal_disease",
+    "resolved_periodontitis": "periodontal_disease",
+    "non_progressing_periodontitis": "periodontal_disease",
+    "progressing_periodontitis": "periodontal_disease",
+    "periodontitis_stage_i": "periodontal_disease",
+    "periodontitis_stage_iv": "periodontal_disease",
+    "stage_i_periodontitis": "periodontal_disease",
+    "severe_chronic_periodontitis": "periodontal_disease",
+
+    # Dental caries
     "caries": "dental_caries",
     "dental_caries": "dental_caries",
     "tooth_decay": "dental_caries",
     "early_childhood_caries": "dental_caries",
     "untreated_dental_caries": "dental_caries",
     "root_caries": "dental_caries",
-    "high_blood_pressure": "hypertension",
+    "rampant_caries": "dental_caries",
+    "severe_early_childhood_caries": "dental_caries",
+    "extensive_cavitated_caries": "dental_caries",
+    "moderate_caries_risk": "dental_caries",
+    "caries_experience": "dental_caries",
+
+    # Cancer
     "oral_cancer": "oral_cancer",
     "oral_squamous_cell_carcinoma": "oral_cancer",
     "oscc": "oral_cancer",
+    "salivary_adenoid_cystic_carcinoma": "oral_cancer",
+    "progressing_oral_epithelial_dysplasia": "oral_cancer",
+    "oral_leukoplakia": "oral_leukoplakia",
+
+    # Diabetes
+    "type_2_diabetes": "type_2_diabetes",
+    "type_2_diabetes_mellitus": "type_2_diabetes",
+    "type_1_diabetes": "type_1_diabetes",
+    "poor_glycemic_control": "type_2_diabetes",
+
+    # Cardiovascular / metabolic
+    "high_blood_pressure": "hypertension",
+    "hypertension": "hypertension",
+    "increased_carotid_intima_media_thickness": "cardiovascular_disease",
+    "metabolic_syndrome": "metabolic_syndrome",
+
+    # Mental health
+    "depression": "depression",
+    "depression_gut_brain_axis": "depression",
+    "anxiety_disorder": "anxiety_disorder",
+    "posttraumatic_stress_disorder": "posttraumatic_stress_disorder",
+    "mental_distress": "depression",
+
+    # IBD
+    "ulcerative_colitis": "inflammatory_bowel_disease",
+    "periodontitis_plus_ulcerative_colitis": "inflammatory_bowel_disease",
+    "overweight_irritable_bowel_syndrome": "irritable_bowel_syndrome",
+
+    # Other diseases
+    "covid_19": "covid_19",
+    "chronic_obstructive_pulmonary_disease": "chronic_obstructive_pulmonary_disease",
+    "idiopathic_pulmonary_fibrosis": "idiopathic_pulmonary_fibrosis",
+    "pulmonary_fibrosis": "idiopathic_pulmonary_fibrosis",
+    "systemic_lupus_erythematosus": "systemic_lupus_erythematosus",
+    "oral_mucositis": "oral_mucositis",
+    "endodontic_infection": "endodontic_infection",
+    "odontogenic_sinusitis": "odontogenic_sinusitis",
+    "visual_impairment": "visual_impairment",
+    "silicosis": "silicosis",
+    "papillon_lefevre_syndrome": "papillon_lefevre_syndrome",
+    "actinomycosis": "actinomycosis",
+
+    # Existing
     "halitosis": "halitosis",
     "oral_lichen_planus": "oral_lichen_planus",
+    "erosive_oral_lichen_planus": "oral_lichen_planus",
+    "non_erosive_oral_lichen_planus": "oral_lichen_planus",
 }
 
-# LLM sometimes extracts demographics, diets, symptoms, or clinical
+# LLM sometimes extracts demographics, diets, symptoms, treatments, or clinical
 # measures as "conditions". These are not KB diseases -- drop them.
 CONDITION_BLOCKLIST = {
     "healthy", "control", "female", "male", "elderly", "children",
-    "chimpanzee", "mouse", "rat",
+    "chimpanzee", "mouse", "rat", "monkey", "human",
     "dry_food_diet", "wet_food_diet", "high_sugar_diet",
     "high_sugar_beverage_consumption", "high_sugar_high_fat_diet",
-    "western_diet", "diet",
+    "western_diet", "diet", "grana_padano_cheese_consumption",
+    "high_carbohydrate_intake", "high_sugar_intake",
     "gingival_bleeding", "high_bleeding_on_probing", "tooth_pain",
     "dental_calculus", "plaque_index", "pocket_depth",
     "high_s_cristatus_p_gingivalis_ratio", "low_s_cristatus_p_gingivalis_ratio",
+    "high_streptococcus_cristatus_to_porphyromonas_gingivalis_ratio",
+    "low_streptococcus_cristatus_to_porphyromonas_gingivalis_ratio",
+    "cigarette_smoking", "smoking",
+    "captivity",
+    "elderly_individuals", "elderly_non_diabetic", "old_age", "young_individuals", "females",
+    "high_body_mass_index", "high_bacterial_count", "high_salivary_flow_rate",
+    "low_socioeconomic_status", "low_water_intake", "low_salivary_ph",
+    "stimulated_saliva", "unstimulated_saliva",
+    "ro_water", "underground_water",
+    "non_vegetarian", "vegetarian",
+    "highly_trained_athlete",
+    "post_bariatric_surgery",
+    "post_fluoride_varnish_treatment", "post_chlorhexidine_recovery",
+    "post_routine_oral_care", "post_oral_health_promotion_program",
+    "post_sucrose_rinse", "post_disinfection",
+    "edta_treatment", "uv_treatment", "uv_and_sodium_hypochlorite_treatment",
+    "sodium_hypochlorite_treatment", "chlorhexidine_treatment",
+    "fixed_orthodontic_appliance_treatment", "orthodontic_treatment",
+    "endotracheal_intubation",
+    "myelosuppressive_chemotherapy",
+    "elane_associated_neutropenia",
+    "untreated",
+    "caries_free", "healthy_periodontal_conditions", "poor_oral_health", "poor_health",
+    "ancient_calculus",
+    "black_stain_caries_free", "severe_early_childhood_caries_with_black_stain",
+    "periodontal_treatment", "periodontal_health", "periodontal_pocket_depth",
+    "subgingival_plaque",
+    "cerebral_palsy_severe_dental_caries", "cerebral_palsy_dental_caries",
+    "cerebral_palsy_dental_health",
+    "overweight_irritable_bowel_syndrome",
+    "chlorhexidine_resistance", "triclosan_resistance",
+    "sodium_hypochlorite_resistance", "erythromycin_resistance", "tetracycline_resistance",
 }
 
 RANKS = {"species", "genus", "family", "order", "class", "phylum"}
@@ -163,7 +260,11 @@ def load_staging(staging_dir: Path, verified_only: bool):
     if not files:
         sys.exit(f"No staging papers found in {staging_dir}")
     for path in files:
-        paper = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            print(f"WARN: {path.name} is a list (len={len(raw)}), skipping")
+            continue
+        paper = raw
         meta = {
             "pmid": paper.get("pmid") or path.stem.split("_")[0].replace("PMID", ""),
             "year": paper.get("year"),
@@ -177,7 +278,6 @@ def load_staging(staging_dir: Path, verified_only: bool):
             if not assoc.get("taxon") or not assoc.get("condition"):
                 continue
             yield meta, assoc
-
 
 def build_skeleton_taxon(display_name: str, rank: str) -> dict:
     return {
@@ -194,7 +294,7 @@ def build_skeleton_taxon(display_name: str, rank: str) -> dict:
     }
 
 
-def merge(staging_dir: Path, apply: bool, verified_only: bool,
+def merge(staging_dir: Path, apply: bool, verified_only: bool, resolve_mixed: bool = False,
           taxon_db_path: Path = TAXON_DB, disease_db_path: Path = DISEASE_DB) -> int:
     taxon_db = json.loads(taxon_db_path.read_text(encoding="utf-8"))
     disease_db = json.loads(disease_db_path.read_text(encoding="utf-8"))
@@ -254,8 +354,18 @@ def merge(staging_dir: Path, apply: bool, verified_only: bool,
         existing = entry["disease_associations"].get(condition)
         if existing:
             if existing != direction:
-                skipped_conflict.append((taxon_key, condition, existing, direction))
-            # Still record evidence provenance, but don't touch the direction.
+                # Auto-resolve: non-standard directions (pathogenic, associated, etc.)
+                # are overridden by literature; mixed can be resolved if --resolve-mixed.
+                VALID_DIRECTIONS = {"enriched", "depleted", "mixed"}
+                if existing not in VALID_DIRECTIONS:
+                    entry["disease_associations"][condition] = direction
+                    n_new_assoc += 1
+                elif resolve_mixed and existing == "mixed":
+                    entry["disease_associations"][condition] = direction
+                    n_new_assoc += 1
+                else:
+                    skipped_conflict.append((taxon_key, condition, existing, direction))
+            # Still record evidence provenance.
         else:
             entry["disease_associations"][condition] = direction
             n_new_assoc += 1
@@ -320,8 +430,11 @@ def main():
                     help="actually write the KB files (default: dry-run)")
     ap.add_argument("--include-unverified", action="store_true",
                     help="also merge associations whose evidence quote failed verification")
+    ap.add_argument("--resolve-mixed", action="store_true",
+                    help="overwrite KB 'mixed' directions with literature direction")
     args = ap.parse_args()
     return merge(args.staging_dir, args.apply, not args.include_unverified,
+                 resolve_mixed=args.resolve_mixed,
                  taxon_db_path=args.taxon_db, disease_db_path=args.disease_db)
 
 

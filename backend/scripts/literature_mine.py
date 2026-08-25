@@ -123,7 +123,6 @@ def chat_json(client_cfg: Dict[str, str], user_prompt: str, max_tokens: int = 80
             {"role": "user", "content": user_prompt},
         ],
         "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},
     }
     req = urllib.request.Request(
         f"{client_cfg['base_url']}/chat/completions",
