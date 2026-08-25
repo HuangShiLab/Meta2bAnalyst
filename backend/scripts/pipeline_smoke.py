@@ -37,7 +37,8 @@ def _find_data_dir() -> Path:
     """
     candidates = [
         Path(os.environ["META2B_DATA_DIR"]) if os.environ.get("META2B_DATA_DIR") else None,
-        REPO,                    # source checkout
+        REPO / "sample_data",    # source checkout (datasets live here since 2026-08-26)
+        REPO,                    # legacy layout: datasets at repo root
         BACKEND / "examples",    # container image
         Path("/app/examples"),
     ]

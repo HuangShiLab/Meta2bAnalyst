@@ -92,12 +92,12 @@ test_payload.json
 *.tsv
 !backend/examples/*.tsv
 !backend/app/knowledge/**/*.tsv
-# Worked-example datasets at repo root: bundled into the backend image
+# Worked-example datasets in sample_data/: bundled into the backend image
 # (docker/backend.Dockerfile COPY) and used by scripts/pipeline_smoke.py.
 # Without these tracked, a fresh clone cannot build the image.
-!/Huang_mBio_microbiome.tsv
-!/Huang_mBio_metabolome.tsv
-!/Huang_mBio_metadata.tsv
+!/sample_data/Huang_mBio_microbiome.tsv
+!/sample_data/Huang_mBio_metabolome.tsv
+!/sample_data/Huang_mBio_metadata.tsv
 *.biom
 
 # Temporary scripts (repo root only - do NOT ignore backend/tests/)
@@ -115,7 +115,11 @@ test_payload.json
 # Report outputs
 report_images/
 report_output/
-sample_data/
+# sample_data/ holds the tracked Huang_mBio worked examples (un-ignored
+# above) plus regenerable local content — ignore its *contents* by default,
+# never the directory itself, or the negations above cannot take effect
+# (git cannot re-include files under an excluded directory).
+sample_data/*
 
 # Plan files
 plan.md

@@ -61,7 +61,7 @@ COPY backend/examples/ ./examples/
 # Worked-example datasets (Huang mBio 2021: 261 samples x 44 genera + 1125
 # metabolites + metadata). Bundled so a tester can exercise the whole pipeline,
 # and so `python scripts/pipeline_smoke.py` runs inside the container.
-COPY Huang_mBio_microbiome.tsv Huang_mBio_metabolome.tsv Huang_mBio_metadata.tsv ./examples/
+COPY sample_data/Huang_mBio_microbiome.tsv sample_data/Huang_mBio_metabolome.tsv sample_data/Huang_mBio_metadata.tsv ./examples/
 
 # `data` holds the SQLite file. SQLAlchemy will not create a missing parent
 # directory, so a bind/volume mount target must exist before first start.
