@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { useWorkflowStore } from "@/stores/workflowStore";
+import { useWorkflowStore, type StepResult } from "@/stores/workflowStore";
+import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { cn } from "@/lib/utils";
 import {
   Play,
@@ -13,11 +14,15 @@ import {
   GripVertical,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   Zap,
   LayoutGrid,
   ArrowDown,
   Loader2,
   RotateCcw,
+  CheckCircle2,
+  XCircle,
+  BarChart3,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -223,7 +228,7 @@ function ParamPanel() {
 // DAG CANVAS (center)
 // ───────────────────────────────────────────────────────────────
 function DAGCanvas() {
-  const { nodes, edges, selectedNodeId, selectNode, moveNode } = useWorkflowStore();
+  const { nodes, edges, selectedNodeId, selectNode, moveNode, stepResults } = useWorkflowStore();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
@@ -339,6 +344,12 @@ function DAGCanvas() {
           >
             <GripVertical className="w-3.5 h-3.5 opacity-50" />
             <span className="text-xs font-semibold truncate flex-1">{node.module}</span>
+            {stepResults[node.id] &&
+              (stepResults[node.id].status === "error" ? (
+                <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+              ))}
             <span className="text-[10px] opacity-60">{node.id}</span>
           </div>
           <div className="px-3 py-2">
@@ -375,6 +386,112 @@ function DAGCanvas() {
 }
 
 // ───────────────────────────────────────────────────────────────
+// RESULTS TRAY (bottom panel, inline step results)
+// ───────────────────────────────────────────────────────────────
+function SummaryChips({ summary }: { summary: Record<string, any> }) {
+  const chips: [string, string][] = [];
+  for (const [k, v] of Object.entries(summary)) {
+    if (v == null || typeof v === "object") continue;
+    chips.push([k, String(v)]);
+  }
+  const stats = summary.statistics;
+  if (stats && typeof stats === "object") {
+    for (const [k, v] of Object.entries(stats)) {
+      if (typeof v === "number") chips.push([k, Number(v.toFixed(4)).toString()]);
+      else if (typeof v === "string" || typeof v === "boolean") chips.push([k, String(v)]);
+    }
+  }
+  if (chips.length === 0) return <p className="text-[11px] text-muted-foreground">完成，无图表输出</p>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {chips.slice(0, 8).map(([k, v]) => (
+        <Badge key={k} variant="outline" className="text-[10px] h-5 font-normal">
+          {k}: {v.length > 24 ? v.slice(0, 24) + "…" : v}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function ResultCard({ stepId, result }: { stepId: string; result: StepResult }) {
+  const failed = result.status === "error";
+  return (
+    <div
+      className={cn(
+        "w-80 shrink-0 rounded-lg border bg-white flex flex-col overflow-hidden",
+        failed ? "border-red-300" : "border-gray-200"
+      )}
+    >
+      <div className="px-3 py-1.5 border-b flex items-center gap-2 bg-muted/40">
+        {failed ? (
+          <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+        ) : (
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+        )}
+        <span className="text-xs font-semibold truncate flex-1">{result.module}</span>
+        <span className="text-[10px] text-muted-foreground">{stepId}</span>
+        {result.elapsed_time != null && (
+          <Badge variant="secondary" className="text-[9px] h-4">
+            {result.elapsed_time.toFixed(1)}s
+          </Badge>
+        )}
+      </div>
+      <div className="flex-1 p-2 min-h-0">
+        {failed ? (
+          <p className="text-[11px] text-red-700 line-clamp-6" title={result.error}>
+            {result.error}
+          </p>
+        ) : result.plot ? (
+          <PlotlyChart figure={result.plot} className="h-56" />
+        ) : result.plot_omitted ? (
+          <p className="text-[11px] text-muted-foreground">
+            图表过大未内联传输，请到 Results 页查看完整输出。
+          </p>
+        ) : (
+          <SummaryChips summary={result.summary || {}} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResultsTray() {
+  const [collapsed, setCollapsed] = useState(false);
+  const { stepResults, nodes } = useWorkflowStore();
+  const entries = nodes
+    .filter((n) => stepResults[n.id])
+    .map((n) => ({ stepId: n.id, result: stepResults[n.id] }));
+  // Steps that ran but no longer have a node (removed after run) still show up.
+  const orphanIds = Object.keys(stepResults).filter((id) => !nodes.some((n) => n.id === id));
+  for (const id of orphanIds) entries.push({ stepId: id, result: stepResults[id] });
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="border-t bg-background flex flex-col">
+      <button
+        className="h-7 px-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <BarChart3 className="w-3.5 h-3.5" />
+        Step Results
+        <Badge variant="secondary" className="text-[10px]">
+          {entries.length}
+        </Badge>
+        {collapsed ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
+      </button>
+      {!collapsed && (
+        <div className="h-64 px-3 pb-3 flex gap-3 overflow-x-auto overflow-y-hidden">
+          {entries.map(({ stepId, result }) => (
+            <ResultCard key={stepId} stepId={stepId} result={result} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // MAIN PAGE
 // ───────────────────────────────────────────────────────────────
 export default function WorkflowBuilder() {
@@ -387,6 +504,7 @@ export default function WorkflowBuilder() {
     runEvents,
     setRunning,
     addRunEvent,
+    recordStepResult,
     clearRunEvents,
     autoLayout,
   } = useWorkflowStore();
@@ -435,6 +553,19 @@ export default function WorkflowBuilder() {
             try {
               const event = JSON.parse(line.slice(6));
               addRunEvent(event);
+              if (event.event_type === "step_complete" && event.step_id) {
+                recordStepResult(event.step_id, {
+                  module: event.payload?.module ?? "",
+                  status: "complete",
+                  ...event.payload,
+                });
+              } else if (event.event_type === "step_error" && event.step_id) {
+                recordStepResult(event.step_id, {
+                  module: event.payload?.module ?? "",
+                  status: "error",
+                  error: event.payload?.error ?? "Unknown error",
+                });
+              }
               if (event.event_type === "complete" || event.event_type === "error") {
                 setRunning(false);
               }
@@ -490,10 +621,13 @@ export default function WorkflowBuilder() {
       </header>
 
       {/* Main */}
-      <div className="flex-1 flex overflow-hidden">
-        <ModulePalette />
-        <DAGCanvas />
-        <ParamPanel />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex overflow-hidden">
+          <ModulePalette />
+          <DAGCanvas />
+          <ParamPanel />
+        </div>
+        <ResultsTray />
       </div>
 
       {/* Status bar */}

@@ -17,6 +17,17 @@ export interface WorkflowEdge {
   target: string;
 }
 
+export interface StepResult {
+  module: string;
+  status: "complete" | "error";
+  elapsed_time?: number;
+  has_plot?: boolean;
+  plot_omitted?: boolean;
+  plot?: any;
+  summary?: Record<string, any>;
+  error?: string;
+}
+
 interface WorkflowState {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -25,6 +36,7 @@ interface WorkflowState {
   categories: string[];
   isRunning: boolean;
   runEvents: any[];
+  stepResults: Record<string, StepResult>;
 
   // Actions
   setRegistry: (registry: Record<string, any>, categories: string[]) => void;
@@ -37,6 +49,7 @@ interface WorkflowState {
   clearWorkflow: () => void;
   setRunning: (running: boolean) => void;
   addRunEvent: (event: any) => void;
+  recordStepResult: (stepId: string, result: StepResult) => void;
   clearRunEvents: () => void;
   toPlanJSON: () => any;
 }
@@ -51,6 +64,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   categories: [],
   isRunning: false,
   runEvents: [],
+  stepResults: {},
 
   setRegistry: (registry, categories) => set({ moduleRegistry: registry, categories }),
 
@@ -103,13 +117,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
-  clearWorkflow: () => set({ nodes: [], edges: [], selectedNodeId: null, runEvents: [] }),
+  clearWorkflow: () => set({ nodes: [], edges: [], selectedNodeId: null, runEvents: [], stepResults: {} }),
 
   setRunning: (running) => set({ isRunning: running }),
 
   addRunEvent: (event) => set((state) => ({ runEvents: [...state.runEvents, event] })),
 
-  clearRunEvents: () => set({ runEvents: [] }),
+  recordStepResult: (stepId, result) =>
+    set((state) => ({ stepResults: { ...state.stepResults, [stepId]: result } })),
+
+  clearRunEvents: () => set({ runEvents: [], stepResults: {} }),
 
   toPlanJSON: () => {
     const { nodes } = get();

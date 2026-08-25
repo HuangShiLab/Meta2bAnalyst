@@ -12,6 +12,7 @@ Features:
 - Retry logic for transient failures
 """
 import asyncio
+import json
 import logging
 import time
 import traceback
@@ -1075,11 +1076,7 @@ class WorkflowExecutor:
             events.append(ExecutionEvent(
                 event_type="step_complete",
                 step_id=step.id,
-                payload={
-                    "module": step.module,
-                    "elapsed_time": result["elapsed_time"],
-                    "has_plot": "plot_data" in str(result["result"]) or "plot" in str(result["result"]).lower(),
-                },
+                payload=self._result_payload(step, result),
             ))
 
             # Check if review is needed (e.g., p-value borderline)
@@ -1103,6 +1100,57 @@ class WorkflowExecutor:
             ))
 
         return events
+
+    #: SSE frames carrying huge figures (heatmaps over hundreds of samples can
+    #: reach several MB) stall the stream; cap the serialized plot size and
+    #: flag the omission so the client can point the user at the Results page.
+    _PLOT_PAYLOAD_MAX_CHARS = 900_000
+
+    def _result_payload(self, step: PlanStep, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Compact step_complete payload: scalar summary + the Plotly figure.
+
+        The full result stays in ``self.state`` for downstream steps; the event
+        only carries what a UI needs to render the step inline.
+        """
+        res = result.get("result")
+        payload: Dict[str, Any] = {
+            "module": step.module,
+            "elapsed_time": result["elapsed_time"],
+            "has_plot": False,
+        }
+        if not isinstance(res, dict):
+            return payload
+
+        summary = self._summarize_result(res)
+        for key in ("n_significant", "n_features", "n_samples", "method"):
+            if key in res and isinstance(res[key], (int, float, str)):
+                summary[key] = res[key]
+        payload["summary"] = summary
+
+        plot = self._extract_plot(res)
+        if plot is not None:
+            payload["has_plot"] = True
+            try:
+                if len(json.dumps(plot, default=str)) <= self._PLOT_PAYLOAD_MAX_CHARS:
+                    payload["plot"] = plot
+                else:
+                    payload["plot_omitted"] = True
+            except (TypeError, ValueError):
+                payload["plot_omitted"] = True
+        return payload
+
+    @staticmethod
+    def _extract_plot(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Pull the first renderable Plotly figure out of a module result."""
+        candidate = result.get("plot_data")
+        if isinstance(candidate, dict) and "data" in candidate:
+            return candidate
+        plots = result.get("plots")
+        if isinstance(plots, dict):
+            for value in plots.values():
+                if isinstance(value, dict) and "data" in value:
+                    return value
+        return None
 
     def _needs_human_review(self, result: Any) -> bool:
         """Check if a result needs human review."""
