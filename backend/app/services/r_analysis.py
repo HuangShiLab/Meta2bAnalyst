@@ -784,47 +784,6 @@ def run_edger_legacy(
     }
 
 
-def run_ancom(
-    feature_df: pd.DataFrame,
-    metadata_df: pd.DataFrame,
-    group_column: str,
-) -> Dict[str, Any]:
-    """Run ANCOM differential abundance analysis (placeholder)."""
-    return {
-        'method': 'ANCOM',
-        'status': 'placeholder',
-        'message': 'ANCOM implementation requires R package installation',
-    }
-
-
-def run_maaslin2(
-    feature_df: pd.DataFrame,
-    metadata_df: pd.DataFrame,
-    fixed_effects: List[str],
-    random_effects: Optional[List[str]] = None,
-    output_dir: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Run MaAsLin2 multivariate association analysis (placeholder)."""
-    return {
-        'method': 'MaAsLin2',
-        'status': 'placeholder',
-        'message': 'MaAsLin2 implementation requires R package installation',
-    }
-
-
-def run_aldex2(
-    feature_df: pd.DataFrame,
-    metadata_df: pd.DataFrame,
-    group_column: str,
-) -> Dict[str, Any]:
-    """Run ALDEx2 differential abundance analysis (placeholder)."""
-    return {
-        'method': 'ALDEx2',
-        'status': 'placeholder',
-        'message': 'ALDEx2 implementation requires R package installation',
-    }
-
-
 # ─────────────────────────────── ANCOM-BC
 
 

@@ -94,15 +94,6 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         },
         output_spec={"outlier_flags": "dataframe", "plot_data": "plotly", "report": "dict"},
     ),
-    "data_validator": ModuleSpec(
-        name="data_validator",
-        description="Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment",
-        category="preprocessing",
-        input_requirements={"microbiome": "optional", "metabolome": "optional", "metadata": "optional"},
-        parameters={},
-        output_spec={"report": "dict", "valid": "bool"},
-        constraints=["Must run before any analysis module"],
-    ),
 
     # ── Individual Omics: Microbiome ────────────────────────────
     "microbiome_pcoa": ModuleSpec(

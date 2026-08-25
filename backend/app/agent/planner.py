@@ -20,8 +20,6 @@ import pandas as pd
 
 from app.agent.module_registry import MODULE_REGISTRY, get_module_spec, get_module_names
 
-from app.agent.module_registry import MODULE_REGISTRY, get_module_spec, get_module_names
-
 logger = logging.getLogger(__name__)
 
 
