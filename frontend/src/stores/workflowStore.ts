@@ -51,6 +51,7 @@ interface WorkflowState {
   addRunEvent: (event: any) => void;
   recordStepResult: (stepId: string, result: StepResult) => void;
   clearRunEvents: () => void;
+  loadWorkflow: (plan: any, layout?: { id: string; x: number; y: number }[] | null) => void;
   toPlanJSON: () => any;
 }
 
@@ -127,6 +128,34 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set((state) => ({ stepResults: { ...state.stepResults, [stepId]: result } })),
 
   clearRunEvents: () => set({ runEvents: [], stepResults: {} }),
+
+  loadWorkflow: (plan, layout) => {
+    const layoutMap = new Map((layout || []).map((l) => [l.id, l]));
+    const nodes: WorkflowNode[] = (plan?.steps || []).map((s: any, i: number) => {
+      const pos = layoutMap.get(s.id);
+      return {
+        id: s.id,
+        module: s.module,
+        category: "",
+        description: s.description || "",
+        params: s.params || {},
+        depends_on: s.depends_on || [],
+        x: pos?.x ?? 300,
+        y: pos?.y ?? 80 + i * 120,
+      };
+    });
+    // Keep the id counter ahead of restored ids so new nodes never collide.
+    for (const n of nodes) {
+      const m = /^step_(\d+)$/.exec(n.id);
+      if (m) nodeCounter = Math.max(nodeCounter, parseInt(m[1], 10));
+    }
+    // Fill categories from the loaded registry when available.
+    const registry = get().moduleRegistry;
+    if (registry) {
+      for (const n of nodes) n.category = registry[n.module]?.category || "";
+    }
+    set({ nodes, edges: computeEdges(nodes), selectedNodeId: null, runEvents: [], stepResults: {} });
+  },
 
   toPlanJSON: () => {
     const { nodes } = get();

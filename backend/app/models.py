@@ -79,3 +79,21 @@ class AnalysisJob(Base):
 
     # Relationships
     session = relationship("Session", back_populates="analysis_jobs")
+
+
+class WorkflowTemplate(Base):
+    """Named workflow template saved from the Workflow Builder.
+
+    ``plan`` is the ExecutionPlan-shaped JSON (query/steps/...); ``layout``
+    stores canvas coordinates so a loaded workflow looks the way it was saved.
+    """
+
+    __tablename__ = "workflow_templates"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(255), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    plan = Column(JSON, nullable=False)
+    layout = Column(JSON, nullable=True)  # [{"id": step_id, "x": int, "y": int}]
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

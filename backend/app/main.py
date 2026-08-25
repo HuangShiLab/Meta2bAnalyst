@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import agent, analysis, data, export, multisite, sessions, strain, upload
+from app.api.routes import agent, analysis, data, export, multisite, sessions, strain, upload, workflows
 from app.config import settings
 from app.database import Base, engine
 
@@ -128,5 +128,6 @@ app.include_router(agent.router, prefix="/api/v1", tags=["agent"])
 app.include_router(multisite.router, prefix="/api/v1", tags=["multisite"])
 app.include_router(strain.router, prefix="/api/v1", tags=["strain"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
+app.include_router(workflows.router, prefix="/api/v1", tags=["workflows"])
 
 logger.info("Meta2bAnalyst API initialized with all routes.")

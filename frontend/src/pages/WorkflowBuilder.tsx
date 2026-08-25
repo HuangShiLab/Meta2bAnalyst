@@ -6,6 +6,21 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useWorkflowStore, type StepResult } from "@/stores/workflowStore";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   Play,
@@ -23,6 +38,8 @@ import {
   CheckCircle2,
   XCircle,
   BarChart3,
+  Save,
+  FolderOpen,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -509,8 +526,20 @@ export default function WorkflowBuilder() {
     autoLayout,
   } = useWorkflowStore();
   const [sessionId, setSessionId] = useState("");
+  const [templates, setTemplates] = useState<{ id: string; name: string; n_steps: number }[]>([]);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  // Fetch module registry on mount
+  const fetchTemplates = useCallback(() => {
+    axios
+      .get(`${API_BASE}/workflows`)
+      .then((res) => setTemplates(res.data))
+      .catch(() => setTemplates([]));
+  }, []);
+
+  // Fetch module registry and saved templates on mount
   useEffect(() => {
     axios
       .get(`${API_BASE}/agent/modules`)
@@ -518,7 +547,38 @@ export default function WorkflowBuilder() {
         setRegistry(res.data.modules, res.data.categories);
       })
       .catch((err) => console.error("Failed to load modules:", err));
-  }, [setRegistry]);
+    fetchTemplates();
+  }, [setRegistry, fetchTemplates]);
+
+  const handleSave = async () => {
+    if (!saveName.trim()) return;
+    setSaving(true);
+    try {
+      await axios.post(`${API_BASE}/workflows`, {
+        name: saveName.trim(),
+        description: saveDesc.trim() || null,
+        plan: toPlanJSON(),
+        layout: nodes.map((n) => ({ id: n.id, x: Math.round(n.x), y: Math.round(n.y) })),
+      });
+      setSaveOpen(false);
+      setSaveName("");
+      setSaveDesc("");
+      fetchTemplates();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to save workflow");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLoad = async (templateId: string) => {
+    try {
+      const res = await axios.get(`${API_BASE}/workflows/${templateId}`);
+      useWorkflowStore.getState().loadWorkflow(res.data.plan, res.data.layout);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to load workflow");
+    }
+  };
 
   const handleRun = async () => {
     if (!sessionId) {
@@ -600,6 +660,35 @@ export default function WorkflowBuilder() {
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}
           />
+          <Select onValueChange={handleLoad}>
+            <SelectTrigger className="h-8 w-36 text-xs">
+              <FolderOpen className="w-3.5 h-3.5 mr-1" />
+              <SelectValue placeholder="Load…" />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.length === 0 ? (
+                <SelectItem value="__none" disabled>
+                  No saved workflows
+                </SelectItem>
+              ) : (
+                templates.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name} ({t.n_steps})
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs gap-1"
+            onClick={() => setSaveOpen(true)}
+            disabled={nodes.length === 0}
+          >
+            <Save className="w-3.5 h-3.5" />
+            Save
+          </Button>
           <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={autoLayout}>
             <ArrowDown className="w-3.5 h-3.5" />
             Layout
@@ -637,6 +726,41 @@ export default function WorkflowBuilder() {
         {completedSteps.length > 0 && <span className="text-green-600">{completedSteps.length} completed</span>}
         {failedSteps.length > 0 && <span className="text-red-600">{failedSteps.length} failed</span>}
       </footer>
+
+      {/* Save workflow dialog */}
+      <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save Workflow</DialogTitle>
+            <DialogDescription>
+              Save the current canvas as a named template. Saving under an existing name overwrites it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Input
+              placeholder="Workflow name"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              className="text-sm"
+            />
+            <Input
+              placeholder="Description (optional)"
+              value={saveDesc}
+              onChange={(e) => setSaveDesc(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setSaveOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={saving || !saveName.trim()}>
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
