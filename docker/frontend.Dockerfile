@@ -20,8 +20,16 @@ RUN npm run build
 
 FROM nginx:alpine
 
+# apache2-utils provides htpasswd; nginx:alpine ships neither it nor openssl,
+# and the access-gate entrypoint needs one of them for ACCESS_PASSWORD.
+RUN apk add --no-cache apache2-utils
+
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# Both config variants are baked in; the entrypoint picks one at start.
+COPY docker/nginx.conf /etc/nginx/conf.d/open.conf
+COPY docker/nginx-auth.conf /etc/nginx/conf.d/auth.conf
+COPY docker/frontend-entrypoint.sh /docker-entrypoint-m2b.sh
+RUN chmod +x /docker-entrypoint-m2b.sh
 
 EXPOSE 80
 
@@ -30,4 +38,4 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1/nginx-health || exit 1
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/docker-entrypoint-m2b.sh"]

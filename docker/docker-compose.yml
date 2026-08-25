@@ -4,11 +4,14 @@
 #     docker compose -f docker/docker-compose.yml up --build
 #     open http://localhost:8080
 #
-# ⚠ THERE IS NO AUTHENTICATION. `GET /api/v1/sessions` lists every session on
-# the server and `DELETE /api/v1/sessions/{id}` erases its files. That is
-# acceptable for the intended use -- one container per person, bound to
-# localhost -- and is why the ports below are published on 127.0.0.1 only.
-# Do NOT expose this to a network without adding authentication first.
+# ⚠ THERE IS NO PER-USER AUTHENTICATION. `GET /api/v1/sessions` lists every
+# session on the server and `DELETE /api/v1/sessions/{id}` erases its files.
+# The frontend can be gated with a single shared password (M2B_ACCESS_PASSWORD,
+# see the frontend service below) — that is a classroom door, not accounts:
+# every logged-in user still sees and can delete ALL sessions.
+# Default binding stays 127.0.0.1 (single-user). For intranet/classroom use:
+#   M2B_BIND_ADDR=0.0.0.0 M2B_ACCESS_PASSWORD=... docker compose -f docker/docker-compose.yml up -d
+# Never bind 0.0.0.0 without M2B_ACCESS_PASSWORD set.
 
 name: meta2banalyst
 
@@ -105,10 +108,19 @@ services:
       dockerfile: docker/frontend.Dockerfile
     image: meta2banalyst-frontend:local
     restart: unless-stopped
+    environment:
+      # Shared-password gate for classroom/intranet use (see
+      # docker/frontend-entrypoint.sh). Empty = open access; set it here or
+      # via `M2B_ACCESS_PASSWORD=... docker compose ... up -d`.
+      ACCESS_PASSWORD: ${M2B_ACCESS_PASSWORD:-}
+      ACCESS_USER: ${M2B_ACCESS_USER:-student}
     ports:
       # 8080 rather than 80: no root privileges needed, and it does not collide
       # with whatever else the tester runs locally.
-      - "127.0.0.1:8080:80"
+      # Bind address is configurable: 127.0.0.1 for single-user local use
+      # (default before), 0.0.0.0 to serve the LAN/intranet — only do that
+      # together with M2B_ACCESS_PASSWORD, there is no per-user auth.
+      - "${M2B_BIND_ADDR:-127.0.0.1}:8080:80"
     depends_on:
       backend:
         condition: service_healthy
