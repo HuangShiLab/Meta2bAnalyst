@@ -70,6 +70,8 @@ class PlanResponse(BaseModel):
     notes: list
     clarification_needed: bool = False
     explanation: Optional[Dict[str, Any]] = None
+    # Clickable candidate intents when clarification_needed is set.
+    suggestions: list = []
 
 
 class ExecuteRequest(BaseModel):
@@ -322,6 +324,7 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
             notes=plan.notes,
             clarification_needed=plan.clarification_needed,
             explanation=explanation,
+            suggestions=getattr(plan, "suggestions", []) or [],
         )
 
     except Exception as e:

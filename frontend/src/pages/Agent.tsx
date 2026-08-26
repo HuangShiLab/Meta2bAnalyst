@@ -34,6 +34,7 @@ import {
   BarChart3,
   Download,
   Table,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PlotlyFigure } from "@/types";
@@ -59,6 +60,8 @@ interface ChatMessage {
   pendingConfirmation?: boolean;
   /** Analyses found in an uploaded paper that have no platform module. */
   unmatchedAnalyses?: string[];
+  /** Clickable candidate intents when the planner needs clarification. */
+  suggestions?: { label: string; query: string }[];
 }
 
 interface PlanExplanationStep {
@@ -84,6 +87,7 @@ interface ExecutionPlan {
   notes: string[];
   clarification_needed?: boolean;
   explanation?: PlanExplanation | null;
+  suggestions?: { label: string; query: string }[];
 }
 
 interface ExecutionEvent {
@@ -330,13 +334,20 @@ export function Agent() {
         "• \"菌群群落结构随 Visit 有显著变化吗？\"\n" +
         "• \"筛选 Day 0 与后续访视的差异标志物\"\n" +
         "• \"菌群和代谢物之间有哪些关联？\"\n\n" +
-        "我会先给出分析计划（每步做什么、用什么参数），你确认后自动执行并展示图表。也可以点下方的快捷模板开始。",
+        "我会先给出分析计划（每步做什么、用什么参数），确认前可以点步骤旁的 ✏️ 修改参数，确认后自动执行并展示图表。也可以点下方的快捷模板开始。",
       timestamp: new Date(),
     },
   ]);
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [useLlm, setUseLlm] = useState(true);
+  // Per-step parameter editing in the plan confirmation card.
+  const [paramEdit, setParamEdit] = useState<{
+    msgId: string;
+    stepId: string;
+    draft: string;
+    error?: string;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const paperInputRef = useRef<HTMLInputElement>(null);
@@ -493,6 +504,43 @@ export function Agent() {
     );
   }, []);
 
+  /** Apply an edited params JSON to a plan step awaiting confirmation. */
+  const applyParamEdit = useCallback(() => {
+    if (!paramEdit) return;
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(paramEdit.draft.trim() || "{}");
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error("params must be a JSON object");
+      }
+    } catch (err) {
+      setParamEdit({
+        ...paramEdit,
+        error: `JSON 无效：${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    const { msgId, stepId } = paramEdit;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId || !m.plan) return m;
+        const idx = m.plan.steps.findIndex((s) => s.id === stepId);
+        if (idx < 0) return m;
+        const steps = m.plan.steps.map((s, i) => (i === idx ? { ...s, params: parsed } : s));
+        const explanation = m.plan.explanation
+          ? {
+              ...m.plan.explanation,
+              steps: m.plan.explanation.steps.map((s, i) =>
+                i === idx ? { ...s, parameters: JSON.stringify(parsed) } : s
+              ),
+            }
+          : m.plan.explanation;
+        return { ...m, plan: { ...m.plan, steps, explanation } };
+      })
+    );
+    setParamEdit(null);
+  }, [paramEdit]);
+
   const sendMessage = useCallback(
     async (query: string) => {
       if (!query.trim() || isRunning || !sessionId) return;
@@ -525,8 +573,13 @@ export function Agent() {
 
         const planData: ExecutionPlan = await planRes.json();
 
-        // Step 2: propose and wait for the user to confirm before executing
-        proposePlan(planData);
+        // Step 2: propose and wait for the user to confirm before executing.
+        // Clarification plans carry no executable plan; their candidate
+        // suggestions ride on the message itself so they stay clickable.
+        proposePlan(
+          planData,
+          planData.clarification_needed ? { suggestions: planData.suggestions || [] } : undefined
+        );
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
         const errorMsg = err instanceof Error ? err.message : "Planning failed";
@@ -722,6 +775,27 @@ export function Agent() {
               >
                 <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
 
+                {/* Clarification: clickable candidate intents */}
+                {msg.suggestions && msg.suggestions.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    <p className="text-xs text-muted-foreground">
+                      你可能想做以下分析，点击即可开始：
+                    </p>
+                    {msg.suggestions.map((s, i) => (
+                      <Button
+                        key={i}
+                        variant="outline"
+                        size="sm"
+                        className="h-auto w-full justify-start py-1.5 text-left text-xs"
+                        onClick={() => sendMessage(s.query)}
+                        disabled={isRunning}
+                      >
+                        {s.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Execution Progress */}
                 {msg.plan && (
                   <div className="mt-3 space-y-2">
@@ -742,22 +816,64 @@ export function Agent() {
                               parameters: s.params ? JSON.stringify(s.params) : "default parameters",
                               inputs: "",
                             } as PlanExplanationStep))
-                          ).map((step) => (
+                          ).map((step) => {
+                            const planStep = msg.plan?.steps.find((s) => s.id === step.id);
+                            const editing = paramEdit?.msgId === msg.id && paramEdit?.stepId === step.id;
+                            return (
                             <div key={step.id} className="rounded-md border border-border bg-white/60 px-2.5 py-1.5">
                               <div className="flex items-center gap-2">
                                 <Badge variant="outline" className="text-[10px] shrink-0">
                                   {step.order}
                                 </Badge>
                                 <span className="text-xs font-semibold">{step.module}</span>
-                                <Badge variant="secondary" className="text-[10px] ml-auto">
+                                <Badge variant="secondary" className="text-[10px] ml-auto max-w-[55%] truncate">
                                   {step.parameters}
                                 </Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 shrink-0"
+                                  title="编辑该步骤参数（JSON）"
+                                  onClick={() =>
+                                    editing
+                                      ? setParamEdit(null)
+                                      : setParamEdit({
+                                          msgId: msg.id,
+                                          stepId: step.id,
+                                          draft: JSON.stringify(planStep?.params || {}, null, 2),
+                                        })
+                                  }
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
                               </div>
                               {step.what && (
                                 <p className="mt-1 text-[11px] text-slate-600 leading-snug">{step.what}</p>
                               )}
+                              {editing && (
+                                <div className="mt-2 space-y-1.5">
+                                  <textarea
+                                    className="w-full rounded-md border border-border bg-white p-2 font-mono text-[11px] leading-snug"
+                                    rows={4}
+                                    value={paramEdit.draft}
+                                    onChange={(e) => setParamEdit({ ...paramEdit, draft: e.target.value, error: undefined })}
+                                  />
+                                  {paramEdit.error && (
+                                    <p className="text-[11px] text-destructive">{paramEdit.error}</p>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <Button size="sm" className="h-7 text-xs" onClick={applyParamEdit}>
+                                      应用参数
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setParamEdit(null)}>
+                                      取消
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                         {msg.unmatchedAnalyses && msg.unmatchedAnalyses.length > 0 && (
                           <div className="rounded-md border border-amber-200 bg-amber-50 p-2">

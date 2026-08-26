@@ -289,42 +289,48 @@ def plotly_procrustes(coords_df: pd.DataFrame, metadata_df: Optional[pd.DataFram
         Plotly figure JSON dict.
     """
     fig = go.Figure()
-    
-    # Plot X coordinates (reference)
+
+    # Paired-sample connectors batched into ONE trace with None breaks.
+    # The previous version added a separate trace per sample (261 traces for
+    # the demo data), which bloated the payload and slowed rendering.
+    lx: list = []
+    ly: list = []
+    for _, row in coords_df.iterrows():
+        lx += [row["X_PC1"], row["Y_PC1"], None]
+        ly += [row["X_PC2"], row["Y_PC2"], None]
+    fig.add_trace(go.Scatter(
+        x=lx,
+        y=ly,
+        mode="lines",
+        line=dict(color="gray", width=0.5, dash="dot"),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # Sample names live in the hover tooltip only. Printing every label at a
+    # fixed position (markers+text) turned dense plots into an unreadable
+    # wall of overlapping text.
     fig.add_trace(go.Scatter(
         x=coords_df["X_PC1"],
         y=coords_df["X_PC2"],
-        mode="markers+text",
+        mode="markers",
         name="Dataset 1",
         text=coords_df["sample"],
-        textposition="top center",
-        marker=dict(size=12, color="#1f77b4", symbol="circle", opacity=0.7),
+        marker=dict(size=9, color="#1f77b4", symbol="circle", opacity=0.7),
         hovertemplate="<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>",
     ))
-    
+
     # Plot Y coordinates (transformed)
     fig.add_trace(go.Scatter(
         x=coords_df["Y_PC1"],
         y=coords_df["Y_PC2"],
-        mode="markers+text",
+        mode="markers",
         name="Dataset 2 (Procrustes aligned)",
         text=coords_df["sample"],
-        textposition="bottom center",
-        marker=dict(size=12, color="#ff7f0e", symbol="diamond", opacity=0.7),
+        marker=dict(size=9, color="#ff7f0e", symbol="diamond", opacity=0.7),
         hovertemplate="<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>",
     ))
-    
-    # Add connecting lines
-    for _, row in coords_df.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[row["X_PC1"], row["Y_PC1"]],
-            y=[row["X_PC2"], row["Y_PC2"]],
-            mode="lines",
-            line=dict(color="gray", width=0.5, dash="dot"),
-            showlegend=False,
-            hoverinfo="skip",
-        ))
-    
+
     fig.update_layout(
         title="Procrustes Analysis: Cross-omics Comparison",
         xaxis_title="PC1",
@@ -334,7 +340,7 @@ def plotly_procrustes(coords_df: pd.DataFrame, metadata_df: Optional[pd.DataFram
         width=600,
         showlegend=True,
     )
-    
+
     return fig.to_dict()
 
 

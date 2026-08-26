@@ -47,6 +47,9 @@ class ExecutionPlan:
     estimated_time: str = ""
     notes: List[str] = field(default_factory=list)
     clarification_needed: bool = False
+    # Clickable candidate intents offered when clarification_needed is set:
+    # [{"label": ..., "query": ...}], nearest first.
+    suggestions: List[Dict[str, str]] = field(default_factory=list)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -303,7 +306,63 @@ ANALYSIS_TEMPLATES = [
 ]
 
 
+# ───────────────────────────────────────────────────────────────
+# CLARIFICATION SUGGESTIONS
+# ───────────────────────────────────────────────────────────────
 
+# Curated clickable candidates offered when a query cannot be mapped onto any
+# analysis. Ranked by keyword overlap with the user's query so the nearest
+# intents come first; each "query" is a full natural-language request the
+# rule engine is known to handle, so clicking one always produces a plan.
+SUGGESTION_CATALOG: List[Dict[str, Any]] = [
+    {
+        "label": "完整多组学流程（验证→PCoA/PCA→PERMANOVA→标志物→整合→报告）",
+        "query": "用完整流程分析演示数据：先做数据验证，然后微生物组 PCoA 和代谢组 PCA，接着 PERMANOVA 检验 Visit 效应，再找 Day 0 与各访视的差异标志物，最后做 Procrustes 和 Mantel 整合分析并生成报告。",
+        "keywords": ["完整", "流程", "full", "pipeline", "所有", "全部", "multiomics", "multi-omics", "整个"],
+    },
+    {
+        "label": "群落结构随分组变化（PCoA + PERMANOVA）",
+        "query": "菌群群落结构在不同 Visit 之间是否有显著差异？做 PCoA 展示，并用 PERMANOVA 和 ANOSIM 检验。",
+        "keywords": ["pcoa", "群落", "结构", "permanova", "beta", "分组", "组间", "visit", "ordination", "pca", "nmds", "排序"],
+    },
+    {
+        "label": "差异标志物筛选（火山图）",
+        "query": "比较 Day 0 (T4) 与后续每次访视，分别筛选微生物组（CLR+Wilcoxon）和代谢组（log1p+Welch）的差异标志物。",
+        "keywords": ["标志物", "marker", "biomarker", "differential", "筛选", "火山", "volcano", "显著", "差异菌", "差异代谢"],
+    },
+    {
+        "label": "菌群-代谢物关联整合",
+        "query": "分析菌群与代谢物之间的关联：先做 cross-correlation，再做 sparse CCA，最后用 Procrustes 和 Mantel 检验两组学整体一致性。",
+        "keywords": ["关联", "整合", "integration", "correlation", "cca", "procrustes", "mantel", "一致", "相关", "关系"],
+    },
+    {
+        "label": "Alpha 多样性比较",
+        "query": "比较各访视之间微生物组的 alpha 多样性（Shannon、Simpson）是否有显著差异。",
+        "keywords": ["alpha", "多样性", "diversity", "shannon", "simpson", "丰富度", "richness"],
+    },
+    {
+        "label": "共现网络分析（SparCC）",
+        "query": "构建微生物组的 SparCC 共现网络，找出关键 hub 菌。",
+        "keywords": ["网络", "network", "sparcc", "共现", "hub"],
+    },
+]
+
+
+def _rank_suggestions(query: str, limit: int = 3) -> List[Dict[str, str]]:
+    """Rank the suggestion catalog by keyword overlap with the query.
+
+    Returns up to ``limit`` candidates; with zero overlap the catalog head
+    (the most common classroom intents) is returned instead of nothing.
+    """
+    q = query.lower()
+    scored = sorted(
+        SUGGESTION_CATALOG,
+        key=lambda s: -sum(1 for k in s["keywords"] if k in q),
+    )
+    top = [s for s in scored if any(k in q for k in s["keywords"])][:limit]
+    if not top:
+        top = scored[:limit]
+    return [{"label": s["label"], "query": s["query"]} for s in top]
 
 # ───────────────────────────────────────────────────────────────
 # DATA-AWARE PLANNING
@@ -1039,6 +1098,7 @@ def _clarification_plan(
         estimated_time="~0 seconds",
         notes=notes,
         clarification_needed=True,
+        suggestions=_rank_suggestions(query),
     )
 
 
