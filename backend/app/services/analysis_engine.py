@@ -1585,6 +1585,35 @@ def run_beta_diversity(
     return results
 
 
+def _group_confidence_ellipse(
+    xs: List[float], ys: List[float], n_points: int = 60
+) -> Optional[tuple]:
+    """95% confidence ellipse (chi2 df=2 -> scale sqrt(5.99) ~ 2.448) for a
+    cloud of 2-D points, matching the per-timepoint ellipses in the source
+    publication's PCoA panels. Returns (xs, ys) of the ellipse outline or
+    None when the group has too few points."""
+    if len(xs) < 3:
+        return None
+    cov = np.cov(xs, ys)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+    eigvals = np.maximum(eigvals[order], 0.0)
+    eigvecs = eigvecs[:, order]
+    theta = np.linspace(0, 2 * np.pi, n_points)
+    circle = np.vstack([np.cos(theta), np.sin(theta)])
+    radii = np.sqrt(eigvals) * 2.448
+    pts = eigvecs @ (circle * radii[:, None])
+    pts[0] += float(np.mean(xs))
+    pts[1] += float(np.mean(ys))
+    return pts[0].tolist(), pts[1].tolist()
+
+
+_PLOTLY_GROUP_COLORS = [
+    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+]
+
+
 def _ordination_scatter_plot(
     coords: pd.DataFrame,
     x_col: str,
@@ -1594,18 +1623,44 @@ def _ordination_scatter_plot(
     ylabel: str,
     title: str,
     group_metadata: Optional[Dict[str, str]] = None,
+    point_sizes: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Build a Plotly scatter figure for ordination coordinates.
 
     One trace per group when ``group_metadata`` (sample -> group) is given,
-    otherwise a single trace with all samples.  Always returns a figure dict
-    so the agent executor can stream it as ``plot_data``.
+    with a 95% confidence ellipse per group (the source publication's PCoA
+    style); otherwise a single trace with all samples.  ``point_sizes``
+    (sample -> continuous value, e.g. bleeding severity) scales marker
+    diameters.  Always returns a figure dict so the agent executor can
+    stream it as ``plot_data``.
     """
+    size_for: Optional[Dict[str, float]] = None
+    if point_sizes:
+        vals = [float(v) for v in point_sizes.values() if np.isfinite(float(v))]
+        if vals:
+            lo, hi = min(vals), max(vals)
+            span = (hi - lo) or 1.0
+            size_for = {
+                str(k): 6.0 + 12.0 * (float(v) - lo) / span
+                for k, v in point_sizes.items()
+            }
+
+    def _marker(color: Optional[str], index: pd.Index) -> Dict[str, Any]:
+        marker: Dict[str, Any] = {'opacity': 0.8}
+        if color:
+            marker['color'] = color
+        if size_for:
+            marker['size'] = [size_for.get(str(s), 8.0) for s in index]
+        else:
+            marker['size'] = 10
+        return marker
+
     traces: List[Dict[str, Any]] = []
     if group_metadata:
         groups = pd.Series({str(k): str(v) for k, v in group_metadata.items()})
         common = coords.index.intersection(groups.index)
-        for grp in groups.loc[common].unique():
+        for i, grp in enumerate(groups.loc[common].unique()):
+            color = _PLOTLY_GROUP_COLORS[i % len(_PLOTLY_GROUP_COLORS)]
             mask = (groups.loc[common] == grp).values
             sub = coords.loc[common][mask]
             traces.append({
@@ -1614,8 +1669,20 @@ def _ordination_scatter_plot(
                 'mode': 'markers',
                 'name': str(grp),
                 'text': [str(s) for s in sub.index],
-                'marker': {'size': 10, 'opacity': 0.8},
+                'marker': _marker(color, sub.index),
             })
+            # Per-group 95% confidence ellipse (paper Fig 1c/1d style)
+            ellipse = _group_confidence_ellipse(sub[x_col].tolist(), sub[y_col].tolist())
+            if ellipse is not None:
+                traces.append({
+                    'x': ellipse[0],
+                    'y': ellipse[1],
+                    'mode': 'lines',
+                    'name': f'{grp} 95% ellipse',
+                    'line': {'color': color, 'width': 2},
+                    'showlegend': False,
+                    'hoverinfo': 'skip',
+                })
     else:
         traces.append({
             'x': coords[x_col].tolist(),
@@ -1623,7 +1690,7 @@ def _ordination_scatter_plot(
             'mode': 'markers',
             'name': 'samples',
             'text': [str(s) for s in coords.index],
-            'marker': {'size': 10, 'opacity': 0.8},
+            'marker': _marker(None, coords.index),
         })
     return {
         'data': traces,
@@ -1668,12 +1735,24 @@ def run_pcoa(
         ve = results['variance_explained']
         vx = ve[0] if len(ve) > 0 else 0.0
         vy = ve[1] if len(ve) > 1 else 0.0
+        # Optional continuous metadata column scales marker size (the paper
+        # sizes dots by bleeding severity).
+        point_sizes = None
+        size_column = params.get('size_column')
+        if metadata_df is not None and size_column and size_column in metadata_df.columns:
+            point_sizes = {
+                str(s): float(metadata_df.loc[s, size_column])
+                for s in samples_df.index
+                if s in metadata_df.index
+                and pd.notna(metadata_df.loc[s, size_column])
+            }
         results['plot_data'] = _ordination_scatter_plot(
             samples_df, 'PC1', 'PC2',
             xlabel=f'PC1 ({vx:.1f}%)',
             ylabel=f'PC2 ({vy:.1f}%)',
             title=f'Microbiome PCoA ({metric})',
             group_metadata=results.get('group_metadata'),
+            point_sizes=point_sizes,
         )
 
     return results

@@ -568,6 +568,7 @@ def _get_module_function(module_name: str) -> Callable:
                 df, metadata_df, parameters={
                     "metric": kw.get("distance_metric", "braycurtis"),
                     "group_column": kw.get("group_column"),
+                    "size_column": kw.get("size_column"),
                 }
             ),
             "microbiome_nmds": lambda df, metadata_df=None, **kw: run_nmds(
