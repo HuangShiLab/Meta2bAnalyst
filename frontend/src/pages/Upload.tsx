@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDropzone } from "react-dropzone";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,6 +75,15 @@ export function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
 
   const currentFormat = formatConfigs[selectedFormat];
+
+  // uploadedFiles is persisted (zustand) across page reloads, but the actual
+  // File objects in fileMap are component state and die on reload. Stale
+  // entries would upload nothing while reporting success — purge them on
+  // mount; the user must re-select files after a refresh.
+  useEffect(() => {
+    uploadedFiles.forEach((f) => removeUploadedFile(f.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // crypto.randomUUID() is only available in secure contexts (https or
   // localhost). Students browsing the LAN URL (http://<ip>:8080) get an
@@ -199,6 +208,17 @@ export function UploadPage() {
     if (uploadedFiles.length < 1) {
       setValidationStatus("error");
       setValidationMessage("Validation failed: Please upload at least one data file.");
+      return;
+    }
+
+    const missing = uploadedFiles.filter((f) => !fileMap[f.id]);
+    if (missing.length > 0) {
+      setValidationStatus("error");
+      setValidationMessage(
+        `These files were added before a page reload and must be selected again: ${missing
+          .map((f) => f.name)
+          .join(", ")}`
+      );
       return;
     }
 
