@@ -6,6 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useSessionStore } from "@/stores/sessionStore";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { AgentChat } from "@/components/shared/AgentChat";
@@ -43,6 +50,8 @@ interface ChatMessage {
   plan?: ExecutionPlan;
   events?: ExecutionEvent[];
   plotData?: PlotlyFigure;
+  /** One card per step that produced a figure, in execution order. */
+  plots?: { module: string; figure: PlotlyFigure }[];
   stats?: Record<string, unknown>;
   /** Plan is shown but not executed until the user confirms. */
   pendingConfirmation?: boolean;
@@ -88,35 +97,35 @@ interface ExecutionEvent {
 
 const QUICK_TEMPLATES = [
   {
-    id: "auto_analyze",
-    label: "Analyze My Data",
-    icon: <BarChart3 className="h-4 w-4" />,
-    query: "Please analyze my uploaded data. Detect the data format and recommend the most appropriate analysis pipeline. Start with data validation, then run profiling, differential analysis, and network analysis as appropriate for this data type.",
+    id: "full_pipeline",
+    label: "完整流程演示",
+    icon: <Sparkles className="h-4 w-4" />,
+    query: "用完整流程分析演示数据：先做数据验证，然后微生物组 PCoA 和代谢组 PCA，接着 PERMANOVA 检验 Visit 效应，再找 Day 0 与各访视的差异标志物，最后做 Procrustes 和 Mantel 整合分析并生成报告。",
     highlight: true,
   },
   {
-    id: "full_pipeline",
-    label: "Full Multi-omics Pipeline",
-    icon: <Sparkles className="h-4 w-4" />,
-    query: "Run the complete multi-omics pipeline: individual profiling, PERMANOVA, marker discovery for both microbiome and metabolome, Procrustes alignment, Mantel test, and generate a report.",
+    id: "community_visit",
+    label: "群落结构随访视变化",
+    icon: <BarChart3 className="h-4 w-4" />,
+    query: "口腔菌群群落结构在不同 Visit 之间是否有显著差异？做 PCoA 展示，并用 PERMANOVA 和 ANOSIM 检验。",
   },
   {
     id: "markers_only",
-    label: "Marker Discovery",
+    label: "差异标志物筛选",
     icon: <Zap className="h-4 w-4" />,
-    query: "Find differential markers for both microbiome (CLR+Wilcoxon) and metabolome (log1p+Welch) comparing each visit to Day 0 (T4).",
+    query: "比较 Day 0 (T4) 与后续每次访视，分别筛选微生物组（CLR+Wilcoxon）和代谢组（log1p+Welch）的差异标志物。",
   },
   {
     id: "integration",
-    label: "Integration Analysis",
+    label: "菌群-代谢物关联",
     icon: <Dna className="h-4 w-4" />,
-    query: "Run Procrustes alignment and Mantel test to integrate microbiome and metabolome data.",
+    query: "分析菌群与代谢物之间的关联：先做 cross-correlation，再做 sparse CCA，最后用 Procrustes 和 Mantel 检验两组学整体一致性。",
   },
   {
-    id: "profiling",
-    label: "Individual Omics Profiling",
+    id: "metadata_effects",
+    label: "临床指标的影响",
     icon: <FileText className="h-4 w-4" />,
-    query: "Profile microbiome with PCoA and metabolome with PCA, then run PERMANOVA for metadata effects.",
+    query: "Plaque 和 Bleeding 等临床指标对菌群结构和代谢谱有没有显著影响？用 PERMANOVA 分别检验，并用 RDA 可视化。",
   },
 ];
 
@@ -167,15 +176,29 @@ function parseSSE(buffer: string): { events: ExecutionEvent[]; remainder: string
 function extractBestPlot(events: ExecutionEvent[]): PlotlyFigure | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const payload = events[i].payload || {};
+    // Current executor payload: `plot`; legacy field: `plot_data`.
+    if (payload.plot) return payload.plot as PlotlyFigure;
     if (payload.plot_data) return payload.plot_data as PlotlyFigure;
-    if (payload.has_plot && payload.plot_data) return payload.plot_data as PlotlyFigure;
   }
   return undefined;
+}
+
+/** Every step that emitted a plot, in execution order (newest payload field). */
+function extractStepPlots(events: ExecutionEvent[]): { module: string; figure: PlotlyFigure }[] {
+  const plots: { module: string; figure: PlotlyFigure }[] = [];
+  for (const e of events) {
+    if (e.event_type !== "step_complete") continue;
+    const figure = (e.payload?.plot || e.payload?.plot_data) as PlotlyFigure | undefined;
+    if (figure) plots.push({ module: e.payload?.module || e.step_id || "step", figure });
+  }
+  return plots;
 }
 
 function extractBestStats(events: ExecutionEvent[]): Record<string, unknown> | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const payload = events[i].payload || {};
+    // Current executor payload nests scalars under summary.statistics.
+    if (payload.summary?.statistics) return payload.summary.statistics as Record<string, unknown>;
     if (payload.statistics) return payload.statistics as Record<string, unknown>;
     if (payload.result_summary) return payload.result_summary as Record<string, unknown>;
   }
@@ -190,12 +213,33 @@ export function Agent() {
   const navigate = useNavigate();
   const setCurrentStep = useSessionStore((state) => state.setCurrentStep);
   const sessionId = useSessionStore((state) => state.sessionId);
+  const setSessionId = useSessionStore((state) => state.setSessionId);
 
   useEffect(() => {
     setCurrentStep("agent");
   }, [setCurrentStep]);
 
   const [mode, setMode] = useState<"execute" | "interpret">("execute");
+
+  // Available analysis sessions (e.g. the preloaded classroom demo)
+  const [sessions, setSessions] = useState<
+    { id: string; name: string; status: string; file_count: number }[]
+  >([]);
+  useEffect(() => {
+    fetch("/api/v1/sessions")
+      .then((res) => (res.ok ? res.json() : { sessions: [] }))
+      .then((data) => {
+        const list = data.sessions || [];
+        setSessions(list);
+        // Auto-select the demo session when nothing is selected yet
+        if (!sessionId && list.length > 0) {
+          const demo = list.find((s: { name: string }) => /demo/i.test(s.name));
+          setSessionId((demo || list[0]).id);
+        }
+      })
+      .catch(() => setSessions([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Build results dict from analysis history for interpretation
   const analysisHistory = useSessionStore((state) => state.analysisHistory);
@@ -214,13 +258,13 @@ export function Agent() {
       id: "welcome",
       role: "agent",
       content:
-        "Hello! I'm your Meta2bAnalyst Agent. I can help you run complex multi-omics analyses automatically.\n\n" +
-        "Just tell me what you want to analyze — for example:\n" +
-        "• \"Run the full multi-omics pipeline\"\n" +
-        "• \"Find differential markers between Day 0 and Day 21\"\n" +
-        "• \"Compare microbiome and metabolome with Procrustes and Mantel test\"\n" +
-        "• \"我们口腔和肠道两个位点在治疗前后的变化是否同向？应该做哪些分析？\" (free-form — LLM-assisted planning)\n\n" +
-        "Or select a quick template below to get started.",
+        "你好！我是 Meta2bAnalyst 智能分析 Agent。用一句自然语言，我就能帮你规划并执行完整的多组学分析流程。\n\n" +
+        "如果右上角已选中演示会话（Huang mBio 2021 口腔多组学，261 样本），可以直接试试：\n" +
+        "• \"用完整流程分析演示数据\"\n" +
+        "• \"菌群群落结构随 Visit 有显著变化吗？\"\n" +
+        "• \"筛选 Day 0 与后续访视的差异标志物\"\n" +
+        "• \"菌群和代谢物之间有哪些关联？\"\n\n" +
+        "我会先给出分析计划（每步做什么、用什么参数），你确认后自动执行并展示图表。也可以点下方的快捷模板开始。",
       timestamp: new Date(),
     },
   ]);
@@ -294,7 +338,8 @@ export function Agent() {
         // Finalize message
         const completed = allEvents.filter((e) => e.event_type === "step_complete").length;
         const failed = allEvents.filter((e) => e.event_type === "step_error").length;
-        const plotData = extractBestPlot(allEvents);
+        const plots = extractStepPlots(allEvents);
+        const plotData = plots.length > 0 ? undefined : extractBestPlot(allEvents);
         const stats = extractBestStats(allEvents);
 
         setMessages((prev) =>
@@ -306,6 +351,7 @@ export function Agent() {
                     m.content +
                     `\n\n---\n✅ **Completed**: ${completed} steps | ❌ **Failed**: ${failed} steps`,
                   plotData,
+                  plots,
                   stats,
                 }
               : m
@@ -502,6 +548,27 @@ export function Agent() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <Select
+              value={sessionId || ""}
+              onValueChange={(v) => setSessionId(v || null)}
+            >
+              <SelectTrigger className="h-8 w-56 text-xs">
+                <SelectValue placeholder="选择分析会话…" />
+              </SelectTrigger>
+              <SelectContent>
+                {sessions.length === 0 ? (
+                  <SelectItem value="__none" disabled>
+                    暂无会话，请先上传数据
+                  </SelectItem>
+                ) : (
+                  sessions.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}（{s.file_count} 文件）
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
               <Switch checked={useLlm} onCheckedChange={setUseLlm} />
               LLM assist
@@ -676,8 +743,45 @@ export function Agent() {
                   </div>
                 )}
 
-                {/* Results */}
-                {msg.plotData && (
+                {/* Results — one card per step that produced a figure */}
+                {msg.plots && msg.plots.length > 0 && (
+                  <div className="mt-4 space-y-3">
+                    {msg.plots.map((p, i) => (
+                      <div key={`${p.module}-${i}`} className="rounded-lg border border-border bg-white shadow-sm">
+                        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <BarChart3 className="h-4 w-4 text-primary" />
+                            <span className="text-xs font-medium">{p.module}</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => {
+                                const dataStr = JSON.stringify(p.figure, null, 2);
+                                const blob = new Blob([dataStr], { type: "application/json" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `plot-${p.module}-${msg.id}.json`;
+                                a.click();
+                              }}
+                            >
+                              <Download className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="h-80 p-2">
+                          <PlotlyChart figure={p.figure} className="h-full" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Fallback: single best plot (legacy payloads) */}
+                {!msg.plots?.length && msg.plotData && (
                   <div className="mt-4 space-y-3">
                     {/* Plot Card */}
                     <div className="rounded-lg border border-border bg-white shadow-sm">
@@ -795,14 +899,18 @@ export function Agent() {
           {/* No session warning */}
           {isNoSession && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm text-amber-800">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>No analysis session found. Upload data first to enable the Agent.</span>
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    {sessions.length > 0
+                      ? "请先在右上角选择一个分析会话（或演示会话）。"
+                      : "暂无分析会话。请先上传数据，或让老师预置演示会话。"}
+                  </span>
                 </div>
-                <Button size="sm" onClick={() => navigate("/upload")} className="gap-1">
+                <Button size="sm" onClick={() => navigate("/upload")} className="gap-1 shrink-0">
                   <Upload className="h-3 w-3" />
-                  Upload Data
+                  上传数据
                 </Button>
               </div>
             </div>
@@ -833,7 +941,7 @@ export function Agent() {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Describe your analysis goal... (e.g., 'Find differential markers between Day 0 and Day 21')"
+              placeholder="用一句话描述你的分析目标，例如：菌群结构随 Visit 有显著变化吗？"
               className="flex-1"
               disabled={isRunning || isNoSession}
             />
@@ -844,8 +952,8 @@ export function Agent() {
           </form>
 
           <p className="text-center text-[10px] text-muted-foreground">
-            Agent uses rule-based planning (no API key required). Supports 20+ analysis modules with
-            automatic parameter injection.
+            支持中英文自然语言提问；LLM 辅助规划默认开启，关闭后自动回退到内置规则。覆盖 20+
+            分析模块，参数自动注入，计划确认后才执行。
           </p>
         </div>
       </div>

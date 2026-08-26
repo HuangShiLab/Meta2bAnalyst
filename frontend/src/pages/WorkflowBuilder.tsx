@@ -526,6 +526,7 @@ export default function WorkflowBuilder() {
     autoLayout,
   } = useWorkflowStore();
   const [sessionId, setSessionId] = useState("");
+  const [sessions, setSessions] = useState<{ id: string; name: string; file_count: number }[]>([]);
   const [templates, setTemplates] = useState<{ id: string; name: string; n_steps: number }[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -548,6 +549,10 @@ export default function WorkflowBuilder() {
       })
       .catch((err) => console.error("Failed to load modules:", err));
     fetchTemplates();
+    axios
+      .get(`${API_BASE}/sessions`)
+      .then((res) => setSessions(res.data.sessions || []))
+      .catch(() => setSessions([]));
   }, [setRegistry, fetchTemplates]);
 
   const handleSave = async () => {
@@ -654,8 +659,26 @@ export default function WorkflowBuilder() {
         </h1>
         <div className="flex-1" />
         <div className="flex items-center gap-2">
+          <Select value={sessionId} onValueChange={setSessionId}>
+            <SelectTrigger className="h-8 w-52 text-xs">
+              <SelectValue placeholder="选择会话…" />
+            </SelectTrigger>
+            <SelectContent>
+              {sessions.length === 0 ? (
+                <SelectItem value="__none" disabled>
+                  暂无会话
+                </SelectItem>
+              ) : (
+                sessions.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}（{s.file_count} 文件）
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
           <Input
-            placeholder="Session ID"
+            placeholder="或粘贴 Session ID"
             className="h-8 w-40 text-xs"
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}

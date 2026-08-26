@@ -1585,6 +1585,57 @@ def run_beta_diversity(
     return results
 
 
+def _ordination_scatter_plot(
+    coords: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    *,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    group_metadata: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Build a Plotly scatter figure for ordination coordinates.
+
+    One trace per group when ``group_metadata`` (sample -> group) is given,
+    otherwise a single trace with all samples.  Always returns a figure dict
+    so the agent executor can stream it as ``plot_data``.
+    """
+    traces: List[Dict[str, Any]] = []
+    if group_metadata:
+        groups = pd.Series({str(k): str(v) for k, v in group_metadata.items()})
+        common = coords.index.intersection(groups.index)
+        for grp in groups.loc[common].unique():
+            mask = (groups.loc[common] == grp).values
+            sub = coords.loc[common][mask]
+            traces.append({
+                'x': sub[x_col].tolist(),
+                'y': sub[y_col].tolist(),
+                'mode': 'markers',
+                'name': str(grp),
+                'text': [str(s) for s in sub.index],
+                'marker': {'size': 10, 'opacity': 0.8},
+            })
+    else:
+        traces.append({
+            'x': coords[x_col].tolist(),
+            'y': coords[y_col].tolist(),
+            'mode': 'markers',
+            'name': 'samples',
+            'text': [str(s) for s in coords.index],
+            'marker': {'size': 10, 'opacity': 0.8},
+        })
+    return {
+        'data': traces,
+        'layout': {
+            'title': title,
+            'xaxis': {'title': xlabel},
+            'yaxis': {'title': ylabel},
+            'hovermode': 'closest',
+        },
+    }
+
+
 def run_pcoa(
     df: pd.DataFrame,
     metadata_df: Optional[pd.DataFrame] = None,
@@ -1611,6 +1662,19 @@ def run_pcoa(
             for s in pcoa_result['samples'].index
             if s in metadata_df.index
         }
+
+    samples_df = pcoa_result['samples']
+    if 'PC1' in samples_df.columns and 'PC2' in samples_df.columns:
+        ve = results['variance_explained']
+        vx = ve[0] if len(ve) > 0 else 0.0
+        vy = ve[1] if len(ve) > 1 else 0.0
+        results['plot_data'] = _ordination_scatter_plot(
+            samples_df, 'PC1', 'PC2',
+            xlabel=f'PC1 ({vx:.1f}%)',
+            ylabel=f'PC2 ({vy:.1f}%)',
+            title=f'Microbiome PCoA ({metric})',
+            group_metadata=results.get('group_metadata'),
+        )
 
     return results
 
@@ -1644,6 +1708,18 @@ def run_nmds(
             for s in nmds_result['coordinates'].index
             if s in metadata_df.index
         }
+
+    coords_df = nmds_result['coordinates']
+    if 'NMDS1' in coords_df.columns and 'NMDS2' in coords_df.columns:
+        stress = results['stress']
+        stress_txt = f'{stress:.4f}' if isinstance(stress, (int, float)) else 'n/a'
+        results['plot_data'] = _ordination_scatter_plot(
+            coords_df, 'NMDS1', 'NMDS2',
+            xlabel='NMDS1',
+            ylabel='NMDS2',
+            title=f'Microbiome NMDS ({metric}, stress={stress_txt})',
+            group_metadata=results.get('group_metadata'),
+        )
 
     return results
 
