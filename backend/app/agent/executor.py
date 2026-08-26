@@ -1142,9 +1142,10 @@ class WorkflowExecutor:
     @staticmethod
     def _extract_plot(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Pull the first renderable Plotly figure out of a module result."""
-        candidate = result.get("plot_data")
-        if isinstance(candidate, dict) and "data" in candidate:
-            return candidate
+        for key in ("plot_data", "volcano_plot"):
+            candidate = result.get(key)
+            if isinstance(candidate, dict) and "data" in candidate:
+                return candidate
         plots = result.get("plots")
         if isinstance(plots, dict):
             for value in plots.values():
@@ -1163,14 +1164,49 @@ class WorkflowExecutor:
                     return True
         return False
 
+    # Scalar result keys worth surfacing in the step summary / stats card.
+    _SUMMARY_SCALAR_KEYS = (
+        "pseudo_f", "r_squared", "pvalue", "p_value", "padj", "significant",
+        "n_samples", "n_features", "n_significant", "n_permutations",
+        "n_components", "method", "test_method", "transformation",
+        "metric", "stress", "statistic", "correlation", "m_squared", "status",
+    )
+
     def _summarize_result(self, result: Any) -> Dict[str, Any]:
-        """Create a lightweight summary of a result for review prompts."""
+        """Create a lightweight summary of a result for review prompts.
+
+        Key scalars are merged into ``summary["statistics"]`` so the UI stats
+        card can show them directly (e.g. PERMANOVA pseudo-F / p-value,
+        per-group significant marker counts).
+        """
         if not isinstance(result, dict):
             return {"type": "unknown"}
 
-        summary = {"type": "analysis_result"}
-        if "statistics" in result:
-            summary["statistics"] = result["statistics"]
+        summary: Dict[str, Any] = {"type": "analysis_result"}
+
+        statistics: Dict[str, Any] = {}
+        if isinstance(result.get("statistics"), dict):
+            statistics.update(result["statistics"])
+        for key in self._SUMMARY_SCALAR_KEYS:
+            value = result.get(key)
+            if isinstance(value, (int, float, str, bool)):
+                statistics[key] = value
+
+        # Marker discovery keeps per-group counts under result["summary"] as
+        # {group: {n_significant, n_up, n_down}} — flatten so the UI can show
+        # per-comparison counts and a total without nested objects.
+        per_group = result.get("summary")
+        if isinstance(per_group, dict) and per_group and all(
+            isinstance(v, dict) and "n_significant" in v for v in per_group.values()
+        ):
+            total_sig = 0
+            for grp, counts in per_group.items():
+                statistics[f"{grp} significant"] = counts["n_significant"]
+                total_sig += counts["n_significant"]
+            statistics["n_significant_total"] = total_sig
+
+        if statistics:
+            summary["statistics"] = statistics
         if "significant_features" in result:
             summary["n_significant"] = len(result["significant_features"])
         return summary

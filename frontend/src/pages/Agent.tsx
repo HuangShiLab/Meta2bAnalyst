@@ -52,6 +52,8 @@ interface ChatMessage {
   plotData?: PlotlyFigure;
   /** One card per step that produced a figure, in execution order. */
   plots?: { module: string; figure: PlotlyFigure }[];
+  /** One stats card per step that produced summary statistics. */
+  stepStats?: { module: string; stats: Record<string, unknown> }[];
   stats?: Record<string, unknown>;
   /** Plan is shown but not executed until the user confirms. */
   pendingConfirmation?: boolean;
@@ -194,6 +196,21 @@ function extractStepPlots(events: ExecutionEvent[]): { module: string; figure: P
   return plots;
 }
 
+/** Every step that emitted summary statistics, in execution order. */
+function extractStepStats(events: ExecutionEvent[]): { module: string; stats: Record<string, unknown> }[] {
+  const out: { module: string; stats: Record<string, unknown> }[] = [];
+  for (const e of events) {
+    if (e.event_type !== "step_complete") continue;
+    const stats = (e.payload?.summary?.statistics || e.payload?.statistics) as
+      | Record<string, unknown>
+      | undefined;
+    if (stats && Object.keys(stats).length > 0) {
+      out.push({ module: e.payload?.module || e.step_id || "step", stats });
+    }
+  }
+  return out;
+}
+
 function extractBestStats(events: ExecutionEvent[]): Record<string, unknown> | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const payload = events[i].payload || {};
@@ -203,6 +220,55 @@ function extractBestStats(events: ExecutionEvent[]): Record<string, unknown> | u
     if (payload.result_summary) return payload.result_summary as Record<string, unknown>;
   }
   return undefined;
+}
+
+/** Statistics card: title + a grid of scalar stats with p-value highlighting. */
+function StatsCard({ title, stats }: { title: string; stats: Record<string, unknown> }) {
+  return (
+    <div className="rounded-lg border border-border bg-white shadow-sm">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <Table className="h-4 w-4 text-primary" />
+        <span className="text-xs font-medium">{title}</span>
+      </div>
+      <div className="p-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {Object.entries(stats).map(([key, value]) => {
+            let displayValue: string;
+            if (typeof value === "number") {
+              displayValue = Math.abs(value) < 0.001 ? value.toExponential(2) : value.toFixed(4);
+            } else if (typeof value === "object" && value !== null) {
+              displayValue = JSON.stringify(value).slice(0, 30) + "...";
+            } else {
+              displayValue = String(value);
+            }
+
+            const lk = key.toLowerCase();
+            const isPValue =
+              lk === "p" || lk.includes("pvalue") || lk.includes("p_value") || lk.includes("padj");
+            const isSignificant = isPValue && typeof value === "number" && value < 0.05;
+
+            return (
+              <div
+                key={key}
+                className={cn(
+                  "rounded-lg p-2",
+                  isSignificant ? "bg-green-50 border border-green-200" : "bg-background/50"
+                )}
+              >
+                <p className="text-[10px] uppercase text-muted-foreground truncate">
+                  {key.replace(/_/g, " ")}
+                </p>
+                <p className={cn("text-sm font-semibold", isSignificant && "text-green-700")}>
+                  {displayValue}
+                  {isSignificant && " ✓"}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -339,8 +405,9 @@ export function Agent() {
         const completed = allEvents.filter((e) => e.event_type === "step_complete").length;
         const failed = allEvents.filter((e) => e.event_type === "step_error").length;
         const plots = extractStepPlots(allEvents);
+        const stepStats = extractStepStats(allEvents);
         const plotData = plots.length > 0 ? undefined : extractBestPlot(allEvents);
-        const stats = extractBestStats(allEvents);
+        const stats = stepStats.length > 0 ? undefined : extractBestStats(allEvents);
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -352,6 +419,7 @@ export function Agent() {
                     `\n\n---\n✅ **Completed**: ${completed} steps | ❌ **Failed**: ${failed} steps`,
                   plotData,
                   plots,
+                  stepStats,
                   stats,
                 }
               : m
@@ -818,52 +886,19 @@ export function Agent() {
                   </div>
                 )}
 
-                {/* Statistics Summary */}
-                {msg.stats && (
-                  <div className="mt-3 rounded-lg border border-border bg-white shadow-sm">
-                    <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-                      <Table className="h-4 w-4 text-primary" />
-                      <span className="text-xs font-medium">Statistics Summary</span>
-                    </div>
-                    <div className="p-3">
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {Object.entries(msg.stats).map(([key, value]) => {
-                          // Format the display value
-                          let displayValue: string;
-                          if (typeof value === "number") {
-                            displayValue = Math.abs(value) < 0.001 ? value.toExponential(2) : value.toFixed(4);
-                          } else if (typeof value === "object" && value !== null) {
-                            displayValue = JSON.stringify(value).slice(0, 30) + "...";
-                          } else {
-                            displayValue = String(value);
-                          }
-                          
-                          // Highlight significant p-values
-                          const isSignificant = key.toLowerCase().includes("p") && typeof value === "number" && value < 0.05;
-                          
-                          return (
-                            <div
-                              key={key}
-                              className={cn(
-                                "rounded-lg p-2",
-                                isSignificant ? "bg-green-50 border border-green-200" : "bg-background/50"
-                              )}
-                            >
-                              <p className="text-[10px] uppercase text-muted-foreground truncate">
-                                {key.replace(/_/g, " ")}
-                              </p>
-                              <p className={cn(
-                                "text-sm font-semibold",
-                                isSignificant && "text-green-700"
-                              )}>
-                                {displayValue}
-                                {isSignificant && " ✓"}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                {/* Per-step statistics cards */}
+                {msg.stepStats && msg.stepStats.length > 0 && (
+                  <div className="mt-3 space-y-3">
+                    {msg.stepStats.map((s, i) => (
+                      <StatsCard key={`${s.module}-${i}`} title={s.module} stats={s.stats} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Fallback: single statistics summary (legacy payloads) */}
+                {!msg.stepStats?.length && msg.stats && (
+                  <div className="mt-3">
+                    <StatsCard title="Statistics Summary" stats={msg.stats} />
                   </div>
                 )}
 
