@@ -35,8 +35,10 @@ import {
   Download,
   Table,
   Pencil,
+  Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DEMO_DATASETS, loadDemoDataset } from "@/lib/demoDatasets";
 import type { PlotlyFigure } from "@/types";
 
 // ───────────────────────────────────────────────────────────────
@@ -295,21 +297,80 @@ export function Agent() {
   const [sessions, setSessions] = useState<
     { id: string; name: string; status: string; file_count: number }[]
   >([]);
+  const refreshSessions = useCallback(
+    () =>
+      fetch("/api/v1/sessions")
+        .then((res) => (res.ok ? res.json() : { sessions: [] }))
+        .then((data) => {
+          const list = data.sessions || [];
+          setSessions(list);
+          return list;
+        })
+        .catch(() => {
+          setSessions([]);
+          return [];
+        }),
+    [],
+  );
   useEffect(() => {
-    fetch("/api/v1/sessions")
-      .then((res) => (res.ok ? res.json() : { sessions: [] }))
-      .then((data) => {
-        const list = data.sessions || [];
-        setSessions(list);
-        // Auto-select the demo session when nothing is selected yet
-        if (!sessionId && list.length > 0) {
-          const demo = list.find((s: { name: string }) => /demo/i.test(s.name));
-          setSessionId((demo || list[0]).id);
-        }
-      })
-      .catch(() => setSessions([]));
+    refreshSessions().then((list) => {
+      // Auto-select the demo session when nothing is selected yet
+      if (!sessionId && list.length > 0) {
+        const demo = list.find((s: { name: string }) => /demo/i.test(s.name));
+        setSessionId((demo || list[0]).id);
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Demo dataset loading: four categories matching sample_data/.
+  const [demoLoading, setDemoLoading] = useState<string | null>(null);
+  const handleLoadDemo = useCallback(
+    async (datasetId: string) => {
+      const dataset = DEMO_DATASETS.find((d) => d.id === datasetId);
+      if (!dataset || demoLoading) return;
+      setDemoLoading(datasetId);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `demo-load-${Date.now()}`,
+          role: "system",
+          content: `⏳ 正在加载演示数据集「${dataset.label}」（${dataset.files.length} 个文件）…`,
+          timestamp: new Date(),
+        },
+      ]);
+      try {
+        const newSessionId = await loadDemoDataset(dataset);
+        await refreshSessions();
+        setSessionId(newSessionId);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `demo-done-${Date.now()}`,
+            role: "system",
+            content:
+              `✅ 演示数据集「${dataset.label}」已就绪（会话：${dataset.sessionName}）。\n` +
+              `${dataset.description}\n` +
+              `现在可以直接说"用完整流程分析演示数据"，或点下方快捷模板开始。`,
+            timestamp: new Date(),
+          },
+        ]);
+      } catch (err) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `demo-err-${Date.now()}`,
+            role: "system",
+            content: `❌ 演示数据加载失败：${err instanceof Error ? err.message : "未知错误"}`,
+            timestamp: new Date(),
+          },
+        ]);
+      } finally {
+        setDemoLoading(null);
+      }
+    },
+    [demoLoading, refreshSessions, setSessionId],
+  );
 
   // Build results dict from analysis history for interpretation
   const analysisHistory = useSessionStore((state) => state.analysisHistory);
@@ -329,7 +390,7 @@ export function Agent() {
       role: "agent",
       content:
         "你好！我是 Meta2bAnalyst 智能分析 Agent。用一句自然语言，我就能帮你规划并执行完整的多组学分析流程。\n\n" +
-        "如果右上角已选中演示会话（Huang mBio 2021 口腔多组学，261 样本），可以直接试试：\n" +
+        "右上角可以一键加载四类演示数据集（微生物组 / 代谢组 / 多组学 / 多位点多组学），加载后即可直接试试：\n" +
         "• \"用完整流程分析演示数据\"\n" +
         "• \"菌群群落结构随 Visit 有显著变化吗？\"\n" +
         "• \"筛选 Day 0 与后续访视的差异标志物\"\n" +
@@ -688,6 +749,40 @@ export function Agent() {
                     </SelectItem>
                   ))
                 )}
+              </SelectContent>
+            </Select>
+            <Select
+              value=""
+              onValueChange={(v) => {
+                if (v) handleLoadDemo(v);
+              }}
+              disabled={demoLoading !== null}
+            >
+              <SelectTrigger
+                className="h-8 w-64 text-xs"
+                data-testid="select-demo-dataset"
+                title="从四类演示数据集创建一个带数据的新会话"
+              >
+                <Database className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                <SelectValue
+                  placeholder={
+                    demoLoading
+                      ? "演示数据加载中…"
+                      : "加载演示数据集（4 类）…"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {DEMO_DATASETS.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    <span className="flex flex-col items-start">
+                      <span>{d.label}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {d.description}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">

@@ -206,11 +206,17 @@ def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
 
 
 def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
-    """Get metadata DataFrame for a session if available."""
+    """Get metadata DataFrame for a session if available.
+
+    When several metadata files exist (e.g. per-site metadata in a multi-site
+    session), the most recently uploaded one wins, consistent with
+    get_dataframe_by_type.
+    """
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
         .filter(DataFile.file_type == 'metadata')
+        .order_by(DataFile.id.desc())
         .first()
     )
     if not data_file:
@@ -272,7 +278,14 @@ def get_all_dataframes_by_type(
         except Exception as e:
             logger.error(f'Failed to parse data file {data_file.file_path}: {e}')
             continue
-        out.append((data_file.original_name or file_type, _orient(session_id, db, df, data_file.original_name or file_type)))
+        try:
+            oriented = _orient(session_id, db, df, data_file.original_name or file_type)
+        except HTTPException as e:
+            # e.g. a multi-site session whose urine table does not match the
+            # primary (saliva) metadata -- skip instead of failing the load.
+            logger.warning('Skipping %s: %s', data_file.original_name, e.detail)
+            continue
+        out.append((data_file.original_name or file_type, oriented))
     return out
 
 
