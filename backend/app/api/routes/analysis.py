@@ -8,7 +8,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -250,8 +250,82 @@ def get_dataframe_by_name(session_id: str, db: DBSession, name_pattern: str) -> 
     return _orient(session_id, db, df, data_file.original_name or name_pattern)
 
 
+def get_all_dataframes_by_type(
+    session_id: str, db: DBSession, file_type: str
+) -> List[Tuple[str, pd.DataFrame]]:
+    """Load every uploaded table of one file_type, oriented as features x samples.
+
+    Returns [(original_name, dataframe), ...] newest first. Tables that fail to
+    parse are skipped with an error log.
+    """
+    data_files = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == file_type)
+        .order_by(DataFile.id.desc())
+        .all()
+    )
+    out: List[Tuple[str, pd.DataFrame]] = []
+    for data_file in data_files:
+        try:
+            df, _ = parse_data_file(Path(data_file.file_path), file_type=file_type, use_chunks=True)
+        except Exception as e:
+            logger.error(f'Failed to parse data file {data_file.file_path}: {e}')
+            continue
+        out.append((data_file.original_name or file_type, _orient(session_id, db, df, data_file.original_name or file_type)))
+    return out
+
+
+def merge_metabolome_tables(
+    named_tables: List[Tuple[str, pd.DataFrame]],
+) -> Optional[pd.DataFrame]:
+    """Merge multiple metabolome feature tables (e.g. neg/pos modes) into one.
+
+    Per the upload spec, merging normalizes each table within samples first
+    (total-sum scaling per sample), then stacks features. Tables may only be
+    merged when they share the exact same sample set; otherwise returns None so
+    the caller can fall back to a single table.
+    """
+    if len(named_tables) < 2:
+        return named_tables[0][1] if named_tables else None
+    sample_sets = [set(df.columns) for _, df in named_tables]
+    if not all(s == sample_sets[0] for s in sample_sets[1:]):
+        logger.warning(
+            'Metabolome tables have different sample sets (%s); not merging.',
+            ', '.join(f'{name}={len(df.columns)}' for name, df in named_tables),
+        )
+        return None
+    normed = []
+    for name, df in named_tables:
+        totals = df.sum(axis=0)
+        totals = totals.where(totals != 0, 1.0)
+        normed.append(df.div(totals, axis=1))
+    merged = pd.concat(normed, axis=0)
+    logger.info(
+        'Merged %d metabolome tables (%s) -> %d features x %d samples',
+        len(named_tables),
+        ', '.join(name for name, _ in named_tables),
+        merged.shape[0], merged.shape[1],
+    )
+    return merged
+
+
 def get_dataframe_by_type(session_id: str, db: DBSession, file_type: str) -> Optional[pd.DataFrame]:
-    """Get a DataFrame by exact file_type."""
+    """Get a DataFrame by exact file_type.
+
+    For metabolome data with multiple uploaded tables (e.g. neg/pos modes),
+    returns the per-sample-normalized merged table when all tables share the
+    same samples; otherwise the newest table.
+    """
+    if file_type == 'metabolome':
+        tables = get_all_dataframes_by_type(session_id, db, file_type)
+        if not tables:
+            return None
+        if len(tables) > 1:
+            merged = merge_metabolome_tables(tables)
+            if merged is not None:
+                return merged
+        return tables[0][1]
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)

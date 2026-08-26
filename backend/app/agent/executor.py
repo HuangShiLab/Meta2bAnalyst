@@ -204,12 +204,46 @@ def _get_module_function(module_name: str) -> Callable:
                     "(PERMANOVA, marker discovery) cannot run."
                 )
 
+            # Cross-omics sample-ID consistency: integrative modules (Procrustes,
+            # O2PLS, ...) need the same samples in every omics layer.
+            cross_stats: Dict[str, Any] = {}
+            if len(tables) == 2:
+                (layer_a, table_a), (layer_b, table_b) = tables
+                set_a, set_b = set(table_a.columns), set(table_b.columns)
+                common = set_a & set_b
+                cross_stats = {
+                    f"{layer_a}_samples": len(set_a),
+                    f"{layer_b}_samples": len(set_b),
+                    "cross_omics_common_samples": len(common),
+                }
+                if not common:
+                    errors.append(
+                        f"cross-omics: no shared sample IDs between {layer_a} "
+                        f"({len(set_a)} samples) and {layer_b} ({len(set_b)} samples); "
+                        "integrative analyses (Procrustes, O2PLS, multi-omics) cannot run. "
+                        "Check that sample names match exactly across omics files."
+                    )
+                elif len(common) < max(len(set_a), len(set_b)):
+                    warnings.append(
+                        f"cross-omics: {len(common)} shared samples, "
+                        f"{len(set_a - set_b)} {layer_a}-only, "
+                        f"{len(set_b - set_a)} {layer_b}-only; integrative "
+                        "analyses will use the shared subset."
+                    )
+
+            statistics: Dict[str, Any] = dict(cross_stats)
+            for layer, table in tables:
+                statistics[f"{layer}_shape"] = f"{table.shape[0]} features x {table.shape[1]} samples"
+            if has_metadata:
+                statistics["metadata_samples"] = len(metadata_df)
+
             return {
                 "valid": not errors,
                 "report": report,
                 "errors": errors,
                 "warnings": warnings,
                 "validated": [layer for layer, _ in tables] + (["metadata"] if has_metadata else []),
+                "statistics": statistics,
             }
 
         def _run_report_generator(results=None, session_id=None, **kw):

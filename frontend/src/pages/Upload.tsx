@@ -469,19 +469,50 @@ export function UploadPage() {
         >
           <span className="flex items-center gap-2">
             <HelpCircle className="h-4 w-4" />
-            Format Guide
+            数据组织要求与格式说明 (Data Requirements &amp; Format Guide)
           </span>
           {formatOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </Button>
         {formatOpen && (
           <div className="px-4 pb-4">
             <Card className="bg-muted/30 border-0">
-              <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
-                <p><strong>Feature table:</strong> First row: sample names; First column: feature names; Values: abundance counts.</p>
-                <p><strong>Metadata:</strong> First row: sample names; Subsequent columns: grouping variables, experimental conditions, etc.</p>
-                <p><strong>Taxonomy (optional):</strong> Contains mapping between feature names and taxonomic annotations.</p>
-                <p><strong>BIOM:</strong> QIIME-generated BIOM format abundance table; JSON format recommended.</p>
-                <p><strong>Mothur:</strong> .shared file contains OTU abundance table; .taxonomy file contains taxonomic annotations.</p>
+              <CardContent className="p-4 text-sm text-muted-foreground space-y-4">
+                <div className="space-y-2">
+                  <p className="font-medium text-foreground">一、文件格式 (File Formats)</p>
+                  <p><strong>Feature table（特征表）:</strong> 第一行为样品名，第一列为特征名（菌属/代谢物等），值为丰度。First row: sample names; first column: feature names; values: abundance.</p>
+                  <p><strong>Metadata（元数据）:</strong> 第一列为样品名，其余列为分组变量、实验条件等。First column: sample names; other columns: grouping variables / conditions.</p>
+                  <p><strong>Taxonomy（可选）:</strong> 特征名与分类学注释的映射表。</p>
+                  <p><strong>BIOM:</strong> QIIME 生成的 BIOM 丰度表，推荐 JSON 格式。<strong>Mothur:</strong> .shared（OTU 丰度表）与 .taxonomy（分类注释）文件。</p>
+                </div>
+                <div className="space-y-2">
+                  <p className="font-medium text-foreground">二、单一组学数据 (Single-omics)</p>
+                  <p>每种组学至少需要 <strong>2 个文件</strong>：1 个 feature table + 1 个 metadata。分析前系统会检查两个文件的<strong>样品 ID 是否完全一致</strong>：</p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>若完全无交集，将报错并提示修正样品名；</li>
+                    <li>若部分匹配，系统会自动找出两者共有的样品 ID，并报告匹配数量（共有 N 个、仅表内 M 个、仅 metadata K 个），后续分析只使用共有样品。</li>
+                  </ul>
+                </div>
+                <div className="space-y-2">
+                  <p className="font-medium text-foreground">三、多组学数据 (Multi-omics)</p>
+                  <p>一般需要 <strong>n × 2 个文件</strong>（n 为组学个数，每组学 1 个 feature table + 1 个 metadata）。样品名一致性要求：</p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>每个组学内部：metadata 与 feature table 的样品名必须一致；</li>
+                    <li>不同组学之间：样品名也必须一致，否则整合分析（Procrustes、O2PLS 等）无法运行；</li>
+                    <li>若只上传 <strong>1 个合并的统一 metadata</strong> + n 个 feature table，系统会检查该 metadata 与所有 feature table 的样品名是否都一致。</li>
+                  </ul>
+                </div>
+                <div className="space-y-2">
+                  <p className="font-medium text-foreground">四、代谢组多表 (Multiple metabolome tables, e.g. neg / pos)</p>
+                  <p>代谢组可能产生多个 feature table（如负离子 neg、正离子 pos 模式），上传时将它们都标记为 metabolome 类型。统计分析时可以<strong>分开分析</strong>，也可以<strong>合并为一个 feature table</strong>：</p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>仅当各表样品集合完全一致时才合并；合并前每张表先在<strong>样品内做丰度归一化</strong>（每个样品总和归一），再按特征堆叠；</li>
+                    <li>样品集合不一致（例如不同采样位点的表）不合并，系统使用最新上传的表并给出警告。</li>
+                  </ul>
+                </div>
+                <div className="space-y-2">
+                  <p className="font-medium text-foreground">五、多位点多组学 (Multi-site multi-omics)</p>
+                  <p>不同采样位点（如唾液 saliva、尿液 urine）的数据请<strong>按位点成对提供文件</strong>（每位点各自的 feature table + metadata），位点之间样品名不要求一致；跨位点比较前请确认各表内部样品名一致。</p>
+                </div>
               </CardContent>
             </Card>
           </div>
