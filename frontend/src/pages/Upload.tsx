@@ -76,31 +76,52 @@ export function UploadPage() {
 
   const currentFormat = formatConfigs[selectedFormat];
 
+  // crypto.randomUUID() is only available in secure contexts (https or
+  // localhost). Students browsing the LAN URL (http://<ip>:8080) get an
+  // insecure context where it is undefined — without this fallback the drop
+  // handler throws and the page appears to do nothing.
+  const makeId = () =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `f-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
   const classifyFile = (name: string): string => {
     const lower = name.toLowerCase();
-    if (lower.includes("metadata") || lower.includes("meta") || lower.includes("sample")) return "metadata";
+    // Check metabolome BEFORE metadata: "metabolome" contains "meta".
+    if (lower.includes("metabolome") || lower.includes("metabolite") || lower.includes("lcms")) return "metabolome";
+    if (lower.includes("metadata") || lower.includes("sample") || (lower.includes("meta") && !lower.includes("metabol"))) return "metadata";
     if (lower.includes("metaphlan") || lower.includes("clade")) return "microbiome";
     if (lower.includes("humann3") || lower.includes("humann") || lower.includes("pathabundance") || lower.includes("genefamilies")) return "metabolome";
     if (lower.includes("microbiome") || lower.includes("microbial") || lower.includes("16s") || lower.includes("otu") || lower.includes("asv") || lower.includes("taxa")) return "microbiome";
-    if (lower.includes("metabolome") || lower.includes("metabolite") || lower.includes("lcms") || lower.includes("ms")) return "metabolome";
+    if (lower.includes("ms")) return "metabolome";
     return "feature_table";
   };
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      acceptedFiles.forEach((file) => {
-        const id = crypto.randomUUID();
-        const uploadFile: UploadFile = {
-          id,
-          name: file.name,
-          size: file.size,
-          type: file.type || "application/octet-stream",
-          progress: 100,
-          status: "success",
-        };
-        addUploadedFile(uploadFile);
-        setFileMap((prev) => ({ ...prev, [id]: file }));
-      });
+      try {
+        acceptedFiles.forEach((file) => {
+          const id = makeId();
+          const uploadFile: UploadFile = {
+            id,
+            name: file.name,
+            size: file.size,
+            type: file.type || "application/octet-stream",
+            progress: 100,
+            status: "success",
+          };
+          addUploadedFile(uploadFile);
+          setFileMap((prev) => ({ ...prev, [id]: file }));
+        });
+        if (acceptedFiles.length > 0) {
+          setValidationStatus("idle");
+          setValidationMessage("");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setValidationStatus("error");
+        setValidationMessage(`Failed to add files: ${message}`);
+      }
     },
     [addUploadedFile]
   );
@@ -147,7 +168,7 @@ export function UploadPage() {
         }
         const blob = await response.blob();
         const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
-        const id = crypto.randomUUID();
+        const id = makeId();
         const uploadFile: UploadFile = {
           id,
           name: filename,
@@ -193,15 +214,20 @@ export function UploadPage() {
       const sid = session.id;
       setSessionId(sid);
 
+      const detectedTypes: string[] = [];
       for (const uploadFileMeta of uploadedFiles) {
         const file = fileMap[uploadFileMeta.id];
         if (!file) continue;
         const fileType = classifyFile(uploadFileMeta.name);
         await uploadFile(sid, file, fileType);
+        detectedTypes.push(`${uploadFileMeta.name} → ${fileType}`);
       }
 
       setValidationStatus("success");
-      setValidationMessage(`Data validation passed and uploaded!Session ID: ${sid}`);
+      setValidationMessage(
+        `Uploaded ${detectedTypes.length} file(s). Session ID: ${sid}\n` +
+        detectedTypes.join("\n")
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setValidationStatus("error");
