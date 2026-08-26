@@ -97,6 +97,31 @@ class TestSessionAPI:
         response = client.delete("/api/v1/sessions/nonexistent-id")
         assert response.status_code == 404
 
+    def test_demo_session_refuses_plain_delete(self, client):
+        """Demo-flagged sessions (shared classroom dataset) need ?force=true."""
+        create_resp = client.post(
+            "/api/v1/sessions",
+            json={"name": "Demo", "analysis_level": "species",
+                  "metadata": {"demo": True}},
+        )
+        session_id = create_resp.json()["id"]
+
+        refused = client.delete(f"/api/v1/sessions/{session_id}")
+        assert refused.status_code == 409
+        assert "force" in refused.json()["detail"]
+
+        forced = client.delete(f"/api/v1/sessions/{session_id}?force=true")
+        assert forced.status_code == 204
+
+    def test_non_demo_session_delete_unaffected(self, client):
+        """Sessions without the demo flag still delete without force."""
+        create_resp = client.post(
+            "/api/v1/sessions",
+            json={"name": "Normal", "metadata": {"project": "x"}},
+        )
+        session_id = create_resp.json()["id"]
+        assert client.delete(f"/api/v1/sessions/{session_id}").status_code == 204
+
     def test_health_check(self, client):
         """Test health check endpoint."""
         response = client.get("/health")

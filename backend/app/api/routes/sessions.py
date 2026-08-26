@@ -160,14 +160,26 @@ async def update_session(
 )
 async def delete_session(
     session_id: str,
+    force: bool = False,
     db: DBSession = Depends(get_db),
 ):
-    """Delete a session, its database rows, and its uploaded files."""
+    """Delete a session, its database rows, and its uploaded files.
+
+    Sessions created with ``metadata.demo = true`` (the preloaded classroom
+    dataset) refuse deletion unless ``?force=true`` — on a shared instance any
+    student can reach this endpoint, and losing the demo data mid-class is a
+    much worse failure than an extra query parameter.
+    """
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id} not found",
+        )
+    if not force and isinstance(session.metadata_json, dict) and session.metadata_json.get("demo"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This is the shared demo session. Pass ?force=true to delete it anyway.",
         )
     try:
         db.delete(session)
