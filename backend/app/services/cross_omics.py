@@ -314,7 +314,7 @@ def plotly_procrustes(coords_df: pd.DataFrame, metadata_df: Optional[pd.DataFram
         x=coords_df["X_PC1"],
         y=coords_df["X_PC2"],
         mode="markers",
-        name="Dataset 1",
+        name="Microbiome",
         text=coords_df["sample"],
         marker=dict(size=9, color="#1f77b4", symbol="circle", opacity=0.7),
         hovertemplate="<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>",
@@ -325,7 +325,7 @@ def plotly_procrustes(coords_df: pd.DataFrame, metadata_df: Optional[pd.DataFram
         x=coords_df["Y_PC1"],
         y=coords_df["Y_PC2"],
         mode="markers",
-        name="Dataset 2 (Procrustes aligned)",
+        name="Metabolome (Procrustes aligned)",
         text=coords_df["sample"],
         marker=dict(size=9, color="#ff7f0e", symbol="diamond", opacity=0.7),
         hovertemplate="<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>",
@@ -361,7 +361,7 @@ def plotly_mantel_scatter(dist1_flat: np.ndarray, dist2_flat: np.ndarray,
         y=dist2_flat,
         mode="markers",
         marker=dict(size=8, opacity=0.5, color="#2ca02c"),
-        hovertemplate="Dist1: %{x:.3f}<br>Dist2: %{y:.3f}<extra></extra>",
+        hovertemplate="Microbiome dist: %{x:.3f}<br>Metabolome dist: %{y:.3f}<extra></extra>",
     ))
     
     # Add regression line
@@ -379,8 +379,8 @@ def plotly_mantel_scatter(dist1_flat: np.ndarray, dist2_flat: np.ndarray,
     
     fig.update_layout(
         title=f"Mantel Test: r={correlation:.3f}, p={p_value:.4f}",
-        xaxis_title="Distance Matrix 1",
-        yaxis_title="Distance Matrix 2",
+        xaxis_title="Microbiome pairwise distance",
+        yaxis_title="Metabolome pairwise distance",
         template="plotly_white",
         height=500,
         width=500,

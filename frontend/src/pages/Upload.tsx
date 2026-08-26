@@ -5,6 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Upload, FileType, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, FileText, HelpCircle, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -73,8 +80,18 @@ export function UploadPage() {
   const [formatOpen, setFormatOpen] = useState(false);
   const [fileMap, setFileMap] = useState<Record<string, File>>({});
   const [isUploading, setIsUploading] = useState(false);
+  // Per-file omics layer chosen by the user; falls back to filename
+  // classification when untouched.
+  const [fileTypeOverrides, setFileTypeOverrides] = useState<Record<string, string>>({});
 
   const currentFormat = formatConfigs[selectedFormat];
+
+  const FILE_TYPE_OPTIONS = [
+    { value: "microbiome", label: "微生物组 Microbiome" },
+    { value: "metabolome", label: "代谢组 Metabolome" },
+    { value: "metadata", label: "元数据 Metadata" },
+    { value: "feature_table", label: "通用特征表 Feature table" },
+  ];
 
   // uploadedFiles is persisted (zustand) across page reloads, but the actual
   // File objects in fileMap are component state and die on reload. Stale
@@ -105,6 +122,9 @@ export function UploadPage() {
     if (lower.includes("ms")) return "metabolome";
     return "feature_table";
   };
+
+  /** User-chosen omics layer wins; otherwise the filename classification. */
+  const effectiveType = (f: UploadFile) => fileTypeOverrides[f.id] || classifyFile(f.name);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -156,6 +176,11 @@ export function UploadPage() {
       delete next[fileId];
       return next;
     });
+    setFileTypeOverrides((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
   };
 
   const [isLoadingExample, setIsLoadingExample] = useState(false);
@@ -166,6 +191,7 @@ export function UploadPage() {
       // Clear previous files so example data is a clean start
       uploadedFiles.forEach((f) => removeUploadedFile(f.id));
       setFileMap({});
+      setFileTypeOverrides({});
 
       const newFiles: UploadFile[] = [];
       const newFileMap: Record<string, File> = {};
@@ -238,7 +264,7 @@ export function UploadPage() {
       for (const uploadFileMeta of uploadedFiles) {
         const file = fileMap[uploadFileMeta.id];
         if (!file) continue;
-        const fileType = classifyFile(uploadFileMeta.name);
+        const fileType = effectiveType(uploadFileMeta);
         await uploadFile(sid, file, fileType);
         detectedTypes.push(`${uploadFileMeta.name} → ${fileType}`);
       }
@@ -360,28 +386,47 @@ export function UploadPage() {
                 {uploadedFiles.map((file) => (
                   <div
                     key={file.id}
-                    className="flex items-center justify-between rounded-lg border border-border bg-white p-3"
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border bg-white p-3"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       {file.status === "success" ? (
-                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <CheckCircle className="h-4 w-4 shrink-0 text-green-500" />
                       ) : file.status === "error" ? (
-                        <AlertCircle className="h-4 w-4 text-destructive" />
+                        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
                       ) : (
-                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
                       )}
-                      <div>
-                        <p className="text-sm font-medium">{file.name}</p>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{file.name}</p>
                         <p className="text-xs text-muted-foreground">{formatSize(file.size)}</p>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRemoveFile(file.id)}
-                    >
-                      <X className="h-4 w-4 text-muted-foreground" />
-                    </Button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Select
+                        value={effectiveType(file)}
+                        onValueChange={(v) =>
+                          setFileTypeOverrides((prev) => ({ ...prev, [file.id]: v }))
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-44 text-xs" title="指定该文件的组学类型">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FILE_TYPE_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveFile(file.id)}
+                      >
+                        <X className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
