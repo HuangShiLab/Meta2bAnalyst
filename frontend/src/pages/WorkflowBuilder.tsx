@@ -418,7 +418,7 @@ function SummaryChips({ summary }: { summary: Record<string, any> }) {
       else if (typeof v === "string" || typeof v === "boolean") chips.push([k, String(v)]);
     }
   }
-  if (chips.length === 0) return <p className="text-[11px] text-muted-foreground">完成，无图表输出</p>;
+  if (chips.length === 0) return <p className="text-[11px] text-muted-foreground">Done — no chart output</p>;
   return (
     <div className="flex flex-wrap gap-1">
       {chips.slice(0, 8).map(([k, v]) => (
@@ -462,7 +462,7 @@ function ResultCard({ stepId, result }: { stepId: string; result: StepResult }) 
           <PlotlyChart figure={result.plot} className="h-56" />
         ) : result.plot_omitted ? (
           <p className="text-[11px] text-muted-foreground">
-            图表过大未内联传输，请到 Results 页查看完整输出。
+            Chart too large to inline; see the Results page for the full output.
           </p>
         ) : (
           <SummaryChips summary={result.summary || {}} />
@@ -661,24 +661,24 @@ export default function WorkflowBuilder() {
         <div className="flex items-center gap-2">
           <Select value={sessionId} onValueChange={setSessionId}>
             <SelectTrigger className="h-8 w-52 text-xs">
-              <SelectValue placeholder="选择会话…" />
+              <SelectValue placeholder="Select session…" />
             </SelectTrigger>
             <SelectContent>
               {sessions.length === 0 ? (
                 <SelectItem value="__none" disabled>
-                  暂无会话
+                  No sessions
                 </SelectItem>
               ) : (
                 sessions.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
-                    {s.name}（{s.file_count} 文件）
+                    {s.name} ({s.file_count} files)
                   </SelectItem>
                 ))
               )}
             </SelectContent>
           </Select>
           <Input
-            placeholder="或粘贴 Session ID"
+            placeholder="or paste a Session ID"
             className="h-8 w-40 text-xs"
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}

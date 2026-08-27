@@ -87,7 +87,7 @@ export async function loadDemoDataset(
     body: JSON.stringify({ name: dataset.sessionName }),
   });
   if (!sessionRes.ok) {
-    throw new Error(`创建演示会话失败 (HTTP ${sessionRes.status})`);
+    throw new Error(`Failed to create demo session (HTTP ${sessionRes.status})`);
   }
   const session = (await sessionRes.json()) as { id: string };
 
@@ -98,7 +98,7 @@ export async function loadDemoDataset(
       `/examples/demo/${dataset.id}/${encodeURIComponent(f.name)}`,
     );
     if (!fileRes.ok) {
-      throw new Error(`加载演示文件失败: ${f.name} (HTTP ${fileRes.status})`);
+      throw new Error(`Failed to load demo file: ${f.name} (HTTP ${fileRes.status})`);
     }
     const blob = await fileRes.blob();
     const form = new FormData();
@@ -110,7 +110,7 @@ export async function loadDemoDataset(
     });
     if (!uploadRes.ok) {
       const detail = await uploadRes.text().catch(() => "");
-      throw new Error(`上传 ${f.name} 失败 (HTTP ${uploadRes.status}) ${detail.slice(0, 200)}`);
+      throw new Error(`Failed to upload ${f.name} (HTTP ${uploadRes.status}) ${detail.slice(0, 200)}`);
     }
   }
   onProgress?.(dataset.files.length, dataset.files.length, "");
