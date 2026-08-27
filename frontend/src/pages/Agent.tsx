@@ -731,27 +731,6 @@ export function Agent() {
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Select
-              value={sessionId || ""}
-              onValueChange={(v) => setSessionId(v || null)}
-            >
-              <SelectTrigger className="h-8 w-56 text-xs">
-                <SelectValue placeholder="选择分析会话…" />
-              </SelectTrigger>
-              <SelectContent>
-                {sessions.length === 0 ? (
-                  <SelectItem value="__none" disabled>
-                    暂无会话，请先上传数据
-                  </SelectItem>
-                ) : (
-                  sessions.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}（{s.file_count} 文件）
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-            <Select
               value=""
               onValueChange={(v) => {
                 if (v) handleLoadDemo(v);
@@ -761,14 +740,14 @@ export function Agent() {
               <SelectTrigger
                 className="h-8 w-64 text-xs"
                 data-testid="select-demo-dataset"
-                title="从四类演示数据集创建一个带数据的新会话"
+                title="Create a new session preloaded with one of the four demo datasets"
               >
                 <Database className="mr-1.5 h-3.5 w-3.5 shrink-0" />
                 <SelectValue
                   placeholder={
                     demoLoading
-                      ? "演示数据加载中…"
-                      : "加载演示数据集（4 类）…"
+                      ? "Loading demo dataset…"
+                      : "Load demo dataset (4 categories)…"
                   }
                 />
               </SelectTrigger>
@@ -1150,8 +1129,8 @@ export function Agent() {
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
                     {sessions.length > 0
-                      ? "请先在右上角选择一个分析会话（或演示会话）。"
-                      : "暂无分析会话。请先上传数据，或让老师预置演示会话。"}
+                      ? "请先在右上角加载一个演示数据集，或到 Upload 页上传你的数据。"
+                      : "暂无分析会话。请点右上角 Load demo dataset，或先到 Upload 页上传数据。"}
                   </span>
                 </div>
                 <Button size="sm" onClick={() => navigate("/upload")} className="gap-1 shrink-0">

@@ -25,8 +25,8 @@ export interface DemoDataset {
 export const DEMO_DATASETS: DemoDataset[] = [
   {
     id: "microbiome",
-    label: "Microbiome 微生物组",
-    description: "Huang mBio 2021 · 261 样本菌群丰度表 + metadata（20 列临床/访视变量）",
+    label: "Microbiome",
+    description: "Huang mBio 2021 · 261-sample genus abundance table + metadata (20 clinical/visit variables)",
     sessionName: "Demo - Microbiome (mBio 2021)",
     files: [
       { name: "Matched_microbes_abd_261.tsv", fileType: "microbiome" },
@@ -35,8 +35,8 @@ export const DEMO_DATASETS: DemoDataset[] = [
   },
   {
     id: "metabolome",
-    label: "Metabolome 代谢组",
-    description: "Huang mBio 2021 · 261 样本代谢物丰度表 + metadata",
+    label: "Metabolome",
+    description: "Huang mBio 2021 · 261-sample metabolite abundance table + metadata",
     sessionName: "Demo - Metabolome (mBio 2021)",
     files: [
       { name: "Matched_metabolites_abd_261.txt", fileType: "metabolome" },
@@ -45,8 +45,8 @@ export const DEMO_DATASETS: DemoDataset[] = [
   },
   {
     id: "multi-omics",
-    label: "Multi-omics 多组学",
-    description: "微生物组 + 代谢组各 2 文件；合并版 20 列 metadata 最后上传作为统一 metadata",
+    label: "Multi-omics",
+    description: "Microbiome + metabolome (2 files each); merged 20-column metadata uploaded last as the unified metadata",
     sessionName: "Demo - Multi-omics (mBio 2021)",
     files: [
       { name: "Matched_microbes_abd_261.tsv", fileType: "microbiome" },
@@ -57,8 +57,8 @@ export const DEMO_DATASETS: DemoDataset[] = [
   },
   {
     id: "multi-site-multi-omics",
-    label: "Multi-site Multi-omics 多位点多组学",
-    description: "唾液 + 尿液：GTDB 微生物表、neg/pos 代谢表与各位点 metadata（共 8 文件）",
+    label: "Multi-site Multi-omics",
+    description: "Saliva + urine: GTDB microbiome tables, neg/pos metabolome tables and per-site metadata (8 files)",
     sessionName: "Demo - Multi-site Multi-omics",
     files: [
       { name: "Urine_microbiome_GTDB_abd.txt", fileType: "microbiome" },
