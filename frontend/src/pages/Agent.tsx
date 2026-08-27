@@ -106,34 +106,34 @@ interface ExecutionEvent {
 const QUICK_TEMPLATES = [
   {
     id: "full_pipeline",
-    label: "完整流程演示",
+    label: "Full pipeline demo",
     icon: <Sparkles className="h-4 w-4" />,
-    query: "用完整流程分析演示数据：先做数据验证，然后微生物组 PCoA 和代谢组 PCA，接着 PERMANOVA 检验 Visit 效应，再找 Day 0 与各访视的差异标志物，最后做 Procrustes 和 Mantel 整合分析并生成报告。",
+    query: "Run the full pipeline on the demo data: validate the data first, then microbiome PCoA and metabolome PCA, then PERMANOVA for the Visit effect, then differential markers between Day 0 and each later visit, and finally Procrustes and Mantel integrative analyses with a report.",
     highlight: true,
   },
   {
     id: "community_visit",
-    label: "群落结构随访视变化",
+    label: "Community shifts across visits",
     icon: <BarChart3 className="h-4 w-4" />,
-    query: "口腔菌群群落结构在不同 Visit 之间是否有显著差异？做 PCoA 展示，并用 PERMANOVA 和 ANOSIM 检验。",
+    query: "Does the oral microbiome community structure differ significantly across visits? Show a PCoA and test with PERMANOVA and ANOSIM.",
   },
   {
     id: "markers_only",
-    label: "差异标志物筛选",
+    label: "Differential marker screen",
     icon: <Zap className="h-4 w-4" />,
-    query: "比较 Day 0 (T4) 与后续每次访视，分别筛选微生物组（CLR+Wilcoxon）和代谢组（log1p+Welch）的差异标志物。",
+    query: "Compare Day 0 (T4) against each later visit and screen for differential markers in the microbiome (CLR + Wilcoxon) and the metabolome (log1p + Welch) respectively.",
   },
   {
     id: "integration",
-    label: "菌群-代谢物关联",
+    label: "Microbe–metabolite links",
     icon: <Dna className="h-4 w-4" />,
-    query: "分析菌群与代谢物之间的关联：先做 cross-correlation，再做 sparse CCA，最后用 Procrustes 和 Mantel 检验两组学整体一致性。",
+    query: "Analyze associations between microbes and metabolites: start with cross-correlation, then sparse CCA, and finally test overall concordance between the two omics layers with Procrustes and Mantel.",
   },
   {
     id: "metadata_effects",
-    label: "临床指标的影响",
+    label: "Clinical variable effects",
     icon: <FileText className="h-4 w-4" />,
-    query: "Plaque 和 Bleeding 等临床指标对菌群结构和代谢谱有没有显著影响？用 PERMANOVA 分别检验，并用 RDA 可视化。",
+    query: "Do clinical measures such as Plaque and Bleeding significantly affect community structure and metabolic profiles? Test each with PERMANOVA and visualize with RDA.",
   },
 ];
 
@@ -335,7 +335,7 @@ export function Agent() {
         {
           id: `demo-load-${Date.now()}`,
           role: "system",
-          content: `⏳ 正在加载演示数据集「${dataset.label}」（${dataset.files.length} 个文件）…`,
+          content: `⏳ Loading demo dataset "${dataset.label}" (${dataset.files.length} files)…`,
           timestamp: new Date(),
         },
       ]);
@@ -349,9 +349,9 @@ export function Agent() {
             id: `demo-done-${Date.now()}`,
             role: "system",
             content:
-              `✅ 演示数据集「${dataset.label}」已就绪（会话：${dataset.sessionName}）。\n` +
+              `✅ Demo dataset "${dataset.label}" is ready (session: ${dataset.sessionName}).\n` +
               `${dataset.description}\n` +
-              `现在可以直接说"用完整流程分析演示数据"，或点下方快捷模板开始。`,
+              `You can now say "run the full pipeline on the demo data", or start from a quick template below.`,
             timestamp: new Date(),
           },
         ]);
@@ -361,7 +361,7 @@ export function Agent() {
           {
             id: `demo-err-${Date.now()}`,
             role: "system",
-            content: `❌ 演示数据加载失败：${err instanceof Error ? err.message : "未知错误"}`,
+            content: `❌ Failed to load demo dataset: ${err instanceof Error ? err.message : "unknown error"}`,
             timestamp: new Date(),
           },
         ]);
@@ -389,13 +389,13 @@ export function Agent() {
       id: "welcome",
       role: "agent",
       content:
-        "你好！我是 Meta2bAnalyst 智能分析 Agent。用一句自然语言，我就能帮你规划并执行完整的多组学分析流程。\n\n" +
-        "右上角可以一键加载四类演示数据集（微生物组 / 代谢组 / 多组学 / 多位点多组学），加载后即可直接试试：\n" +
-        "• \"用完整流程分析演示数据\"\n" +
-        "• \"菌群群落结构随 Visit 有显著变化吗？\"\n" +
-        "• \"筛选 Day 0 与后续访视的差异标志物\"\n" +
-        "• \"菌群和代谢物之间有哪些关联？\"\n\n" +
-        "我会先给出分析计划（每步做什么、用什么参数），确认前可以点步骤旁的 ✏️ 修改参数，确认后自动执行并展示图表。也可以点下方的快捷模板开始。",
+        "Hi! I'm the Meta2bAnalyst analysis agent. Describe your goal in one sentence and I will plan and run a complete multi-omics workflow for you.\n\n" +
+        "Use the top-right selector to load one of the four demo datasets (Microbiome / Metabolome / Multi-omics / Multi-site Multi-omics), then try:\n" +
+        "• \"Run the full pipeline on the demo data\"\n" +
+        "• \"Does community structure change significantly across visits?\"\n" +
+        "• \"Screen for differential markers between Day 0 and later visits\"\n" +
+        "• \"How are microbes and metabolites associated?\"\n\n" +
+        "I will propose an analysis plan first (what each step does and with which parameters). You can click the ✏️ next to a step to edit its parameters before confirming; once confirmed, execution runs automatically and figures are shown inline. You can also start from a quick template below.",
       timestamp: new Date(),
     },
   ]);
@@ -577,7 +577,7 @@ export function Agent() {
     } catch (err) {
       setParamEdit({
         ...paramEdit,
-        error: `JSON 无效：${err instanceof Error ? err.message : String(err)}`,
+        error: `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
       });
       return;
     }
@@ -853,7 +853,7 @@ export function Agent() {
                 {msg.suggestions && msg.suggestions.length > 0 && (
                   <div className="mt-3 space-y-1.5">
                     <p className="text-xs text-muted-foreground">
-                      你可能想做以下分析，点击即可开始：
+                      You may want one of these analyses — click to start:
                     </p>
                     {msg.suggestions.map((s, i) => (
                       <Button
@@ -907,7 +907,7 @@ export function Agent() {
                                   variant="ghost"
                                   size="sm"
                                   className="h-6 w-6 p-0 shrink-0"
-                                  title="编辑该步骤参数（JSON）"
+                                  title="Edit step parameters (JSON)"
                                   onClick={() =>
                                     editing
                                       ? setParamEdit(null)
@@ -937,10 +937,10 @@ export function Agent() {
                                   )}
                                   <div className="flex gap-2">
                                     <Button size="sm" className="h-7 text-xs" onClick={applyParamEdit}>
-                                      应用参数
+                                      Apply
                                     </Button>
                                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setParamEdit(null)}>
-                                      取消
+                                      Cancel
                                     </Button>
                                   </div>
                                 </div>
@@ -1129,13 +1129,13 @@ export function Agent() {
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
                     {sessions.length > 0
-                      ? "请先在右上角加载一个演示数据集，或到 Upload 页上传你的数据。"
-                      : "暂无分析会话。请点右上角 Load demo dataset，或先到 Upload 页上传数据。"}
+                      ? "Load a demo dataset from the top-right selector, or upload your own data on the Upload page."
+                      : "No analysis session yet. Click Load demo dataset at the top right, or upload your data first."}
                   </span>
                 </div>
                 <Button size="sm" onClick={() => navigate("/upload")} className="gap-1 shrink-0">
                   <Upload className="h-3 w-3" />
-                  上传数据
+                  Upload data
                 </Button>
               </div>
             </div>
@@ -1166,7 +1166,7 @@ export function Agent() {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="用一句话描述你的分析目标，例如：菌群结构随 Visit 有显著变化吗？"
+              placeholder="Describe your analysis goal in one sentence, e.g. Does community structure change across visits?"
               className="flex-1"
               disabled={isRunning || isNoSession}
             />
@@ -1177,8 +1177,8 @@ export function Agent() {
           </form>
 
           <p className="text-center text-[10px] text-muted-foreground">
-            支持中英文自然语言提问；LLM 辅助规划默认开启，关闭后自动回退到内置规则。覆盖 20+
-            分析模块，参数自动注入，计划确认后才执行。
+            Natural-language queries in English or Chinese; LLM-assisted planning is on by default and falls back
+            to built-in rules when off. 20+ analysis modules, parameters auto-filled, plans run only after your confirmation.
           </p>
         </div>
       </div>

@@ -470,7 +470,7 @@ export function AgentChat({ results: externalResults, sessionId }: AgentChatProp
     "Comprehensive analysis of my data",
     "Why is alpha not significant but LEfSe found differences?",
     "What diseases are these species related to?",
-    "哪些菌种与炎症性肠病相关？",
+    "Which species are associated with inflammatory bowel disease?",
     "What should I do next?",
   ];
 
