@@ -36,6 +36,12 @@ import {
   runEnterotype,
   runWGCNA,
   runDIABLO,
+  runNetworkAnalysis,
+  runHierarchicalClustering,
+  runSourceTracking,
+  runFunctionalPrediction,
+  runPathwayAnalysis,
+  runAdvancedDimred,
   runStrainComposition,
   runStrainAlpha,
   runStrainBeta,
@@ -92,7 +98,12 @@ export type AnalysisType =
   | 'songbird'
   | 'enterotype'
   | 'wgcna'
-  | 'diablo';
+  | 'diablo'
+  | 'hierarchical-clustering'
+  | 'source-tracking'
+  | 'functional-prediction'
+  | 'pathway'
+  | 'advanced-dimred';
 
 interface AnalysisState {
   isLoading: boolean;
@@ -199,7 +210,22 @@ export function useAnalysis() {
             response = await runStrainReplacement(sessionId, params as Record<string, unknown>);
             break;
           case 'network':
-            response = await runStrainReplacement(sessionId, params as Record<string, unknown>);
+            response = await runNetworkAnalysis(sessionId, params as Record<string, unknown>);
+            break;
+          case 'hierarchical-clustering':
+            response = await runHierarchicalClustering(sessionId, params as Record<string, unknown>);
+            break;
+          case 'source-tracking':
+            response = await runSourceTracking(sessionId, params as Record<string, unknown>);
+            break;
+          case 'functional-prediction':
+            response = await runFunctionalPrediction(sessionId, params as Record<string, unknown>);
+            break;
+          case 'pathway':
+            response = await runPathwayAnalysis(sessionId, params as Record<string, unknown>);
+            break;
+          case 'advanced-dimred':
+            response = await runAdvancedDimred(sessionId, params as Record<string, unknown>);
             break;
           case 'cross-omics':
             response = await runMultiOmicsAnalysis(sessionId, params as MultiOmicsParams);

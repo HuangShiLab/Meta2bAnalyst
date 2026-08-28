@@ -2270,10 +2270,11 @@ def metabolomics_analysis(
 # ─────────────────────────────── Cross-omics Analysis (Procrustes + Mantel)
 
 class CrossOmicsRequest(BaseModel):
-    analysis_type: str = 'both'  # 'procrustes', 'mantel', or 'both'
+    analysis_type: str = 'both'  # 'procrustes', 'mantel', 'correlation', or 'both'
     procrustes_method: str = 'pcoa'
     mantel_metric: str = 'braycurtis'
     mantel_method: str = 'pearson'
+    correlation_method: str = 'spearman'  # used when analysis_type='correlation'
     n_permutations: int = 999
     group_column: Optional[str] = None
 

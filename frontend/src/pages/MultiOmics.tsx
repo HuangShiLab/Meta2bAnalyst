@@ -358,6 +358,13 @@ export function MultiOmics() {
     }, "Mantel Test", "Distance Matrix Correlation");
   }, [runWithHistory]);
 
+  const handleRunXCorr = useCallback(async () => {
+    await runWithHistory("xcorr", "cross-omics", {
+      analysis_type: "correlation",
+      correlation_method: "spearman",
+    }, "Cross-omics Correlation", "Genus-Metabolite Spearman Correlations");
+  }, [runWithHistory]);
+
   const handleRunSparseCCA = useCallback(async () => {
     await runWithHistory("scca", "sparse-cca", {
       n_components: nComponents,
@@ -803,27 +810,29 @@ export function MultiOmics() {
                 <CardHeader>
                   <CardTitle>Feature-level Cross-omics Analysis</CardTitle>
                   <CardDescription>
-                    Spearman rank correlations between bacterial genera and metabolites.
-                    Significant associations (p&lt;0.05) are identified for exploratory analysis.
+                    Spearman rank correlations between bacterial genera and metabolites across
+                    matched samples, with Benjamini-Hochberg FDR correction.
+                    Significant associations (FDR&lt;0.05) are reported for exploratory analysis.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4">
-                    <Button onClick={handleRunMantel} disabled={!!loading["mantel"]} className="gap-2">
-                      {loading["mantel"] ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />}
+                    <Button onClick={handleRunXCorr} disabled={!!loading["xcorr"]} className="gap-2">
+                      {loading["xcorr"] ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeftRight className="h-4 w-4" />}
                       Run Cross-correlation Analysis
                     </Button>
                     <p className="text-sm text-muted-foreground">
-                      This will compute 44 × 1,125 = 49,500 pairwise correlations and identify significant associations.
+                      Computes the full genus × metabolite correlation matrix over matched samples
+                      and identifies significant associations.
                     </p>
                   </div>
                 </CardContent>
               </Card>
               <ResultSection
                 title="Cross-omics Correlation Heatmap"
-                onRun={handleRunMantel}
+                onRun={handleRunXCorr}
                 runLabel="Run Heatmap"
-                {...sectionProps("mantel")}
+                {...sectionProps("xcorr")}
               />
             </TabsContent>
           </Tabs>

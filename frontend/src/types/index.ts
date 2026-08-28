@@ -214,6 +214,7 @@ export interface MultiOmicsParams {
   n_ortho_y?: number;
   pvalue_threshold?: number;
   fc_threshold?: number;
+  correlation_method?: string;
 }
 
 // Multi-site specific types

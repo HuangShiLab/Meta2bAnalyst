@@ -390,6 +390,161 @@ def plotly_mantel_scatter(dist1_flat: np.ndarray, dist2_flat: np.ndarray,
     return fig.to_dict()
 
 
+# ─────────────────────────────── Pairwise Cross-omics Correlation
+
+
+def run_cross_omics_correlation(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    method: str = "spearman",
+    alpha: float = 0.05,
+    top_heatmap_metabolites: int = 60,
+    max_reported_pairs: int = 500,
+) -> Dict[str, Any]:
+    """Pairwise feature-level correlation between two omics layers.
+
+    Computes the full |df1 features| x |df2 features| correlation matrix
+    (e.g. bacterial genera x metabolites) over the samples shared by both
+    tables, with per-pair p-values and Benjamini-Hochberg FDR correction.
+
+    Args:
+        df1: Feature table (features x samples), e.g. genus-level microbiome.
+        df2: Feature table (features x samples), e.g. metabolome.
+        method: 'spearman' (default) or 'pearson'.
+        alpha: FDR significance threshold (default 0.05).
+        top_heatmap_metabolites: Number of df2 features (ranked by best FDR)
+            shown in the heatmap. All df1 features are always shown.
+        max_reported_pairs: Cap on significant pairs returned in the report.
+
+    Returns:
+        Dict with correlation statistics, significant pairs, and heatmap data.
+    """
+    from scipy.stats import rankdata, t as t_dist
+
+    from app.services.analysis_engine import adjust_pvalues
+
+    if df2 is None:
+        return {"error": "Cross-omics correlation requires both omics feature tables."}
+
+    # 1. Align on shared samples
+    common = df1.columns.intersection(df2.columns)
+    if len(common) < 5:
+        return {
+            "error": (
+                f"Only {len(common)} samples are shared between the two omics tables "
+                "(need >= 5). Check that sample IDs match across both files."
+            )
+        }
+    X1 = df1[common].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    X2 = df2[common].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    n = len(common)
+
+    # Drop zero-variance features (correlation undefined)
+    v1 = X1.var(axis=1)
+    v2 = X2.var(axis=1)
+    X1 = X1.loc[v1 > 0]
+    X2 = X2.loc[v2 > 0]
+    if X1.empty or X2.empty:
+        return {"error": "No variable features left after filtering zero-variance rows."}
+
+    # 2. Rank-transform (Spearman) or keep raw (Pearson), then row-wise z-score
+    if method == "spearman":
+        A = np.apply_along_axis(rankdata, 1, X1.values)
+        B = np.apply_along_axis(rankdata, 1, X2.values)
+    else:
+        A = X1.values.astype(float)
+        B = X2.values.astype(float)
+    A = (A - A.mean(axis=1, keepdims=True)) / A.std(axis=1, keepdims=True)
+    B = (B - B.mean(axis=1, keepdims=True)) / B.std(axis=1, keepdims=True)
+
+    # 3. Full correlation matrix + t-approximation p-values
+    R = (A @ B.T) / (n - 1)
+    R = np.clip(R, -1.0, 1.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        T = R * np.sqrt((n - 2) / np.maximum(1e-12, 1.0 - R ** 2))
+    P = 2.0 * t_dist.sf(np.abs(T), df=n - 2)
+    P = np.nan_to_num(P, nan=1.0)
+
+    # 4. BH-FDR over all pairs
+    Q = adjust_pvalues(P.ravel(), "fdr_bh").reshape(P.shape)
+
+    # 5. Significant pairs (FDR < alpha), sorted by FDR then |rho|
+    sig_idx = np.argwhere(Q < alpha)
+    pairs: List[Dict[str, Any]] = []
+    if sig_idx.size:
+        order = sorted(
+            sig_idx.tolist(),
+            key=lambda ij: (Q[ij[0], ij[1]], -abs(R[ij[0], ij[1]])),
+        )
+        for i, j in order[:max_reported_pairs]:
+            pairs.append({
+                "feature_1": str(X1.index[i]),
+                "feature_2": str(X2.index[j]),
+                "correlation": float(R[i, j]),
+                "pvalue": float(P[i, j]),
+                "fdr": float(Q[i, j]),
+            })
+
+    n_sig_fdr = int((Q < alpha).sum())
+    n_sig_p = int((P < alpha).sum())
+
+    # 6. Heatmap: all df1 features x top df2 features (by best FDR), clustered rows
+    best_q_per_metabolite = Q.min(axis=0)
+    top_j = np.argsort(best_q_per_metabolite)[: min(top_heatmap_metabolites, R.shape[1])]
+    top_j = np.sort(top_j)
+    heat_z = R[:, top_j]
+    heat_x = [str(c) for c in X2.index[top_j]]
+    heat_y = [str(ix) for ix in X1.index]
+
+    # Cluster df1 rows by correlation profile for readability
+    try:
+        from scipy.cluster.hierarchy import leaves_list, linkage
+        if heat_z.shape[0] > 2:
+            row_order = leaves_list(linkage(pdist(heat_z, metric="correlation"), method="average"))
+            heat_z = heat_z[row_order]
+            heat_y = [heat_y[k] for k in row_order]
+    except Exception:
+        pass
+
+    fig = go.Figure(data=go.Heatmap(
+        z=heat_z,
+        x=heat_x,
+        y=heat_y,
+        colorscale="RdBu_r",
+        zmid=0,
+        zmin=-1,
+        zmax=1,
+        colorbar=dict(title=f"{method.capitalize()} rho"),
+        hovertemplate="Genus: %{y}<br>Metabolite: %{x}<br>rho: %{z:.3f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=(
+            f"Cross-omics Correlation Heatmap ({method.capitalize()})<br>"
+            f"<sup>{R.shape[0]} genera x {R.shape[1]} metabolites = {R.size:,} pairs; "
+            f"{n_sig_fdr:,} significant at FDR<{alpha} "
+            f"(heatmap shows top {len(heat_x)} metabolites by best FDR)</sup>"
+        ),
+        xaxis_title=f"Metabolites (top {len(heat_x)} of {R.shape[1]})",
+        yaxis_title=f"Bacterial genera (n={R.shape[0]})",
+        template="plotly_white",
+        height=max(500, 16 * len(heat_y) + 200),
+        width=1000,
+    )
+
+    return {
+        "method": method,
+        "n_samples": n,
+        "n_features_1": int(R.shape[0]),
+        "n_features_2": int(R.shape[1]),
+        "n_pairs_tested": int(R.size),
+        "n_significant_fdr": n_sig_fdr,
+        "n_significant_p": n_sig_p,
+        "alpha": alpha,
+        "significant_pairs": pairs,
+        "plot_data": fig.to_dict(),
+    }
+
+
 # ─────────────────────────────── Main Runner
 
 def run_cross_omics_analysis(
@@ -403,10 +558,11 @@ def run_cross_omics_analysis(
     Args:
         df1: Primary feature table (features x samples), e.g. microbiome.
         df2: Secondary feature table (features x samples), e.g. metabolome.
-             If None and analysis_type requires df2, a noisy version of df1 is used for testing.
+             Required for analysis_type='correlation'. If None for procrustes/mantel,
+             a noisy version of df1 is used (testing only).
         metadata_df: Optional metadata.
         parameters: Dict with keys:
-            - analysis_type: 'procrustes', 'mantel', or 'both' (default 'both')
+            - analysis_type: 'procrustes', 'mantel', 'correlation', or 'both' (default 'both')
             - procrustes_method: 'pcoa' or 'raw' (default 'pcoa')
             - mantel_metric: 'braycurtis', 'euclidean' (default 'braycurtis')
             - mantel_method: 'pearson' or 'spearman' (default 'pearson')
@@ -429,14 +585,51 @@ def run_cross_omics_analysis(
         f"procrustes={procrustes_method}, mantel={mantel_metric}"
     )
 
-    # If df2 not provided, create a noisy version for testing
-    if df2 is None:
+    # If df2 not provided, create a noisy version for testing.
+    # NOTE: never fabricate df2 for the pairwise correlation analysis —
+    # a synthetic second omics table would produce meaningless correlations.
+    if df2 is None and analysis_type != "correlation":
         rng = np.random.RandomState(seed=42)
         noise = rng.normal(0, 0.1, df1.shape)
         df2 = df1 + noise
         df2 = df2.clip(lower=0)
 
     result: Dict[str, Any] = {"analysis_type": analysis_type}
+
+    # 0. Pairwise cross-omics correlation (feature-level, e.g. genus x metabolite)
+    if analysis_type == "correlation":
+        corr_method = params.get("correlation_method", "spearman")
+        corr_result = run_cross_omics_correlation(df1, df2, method=corr_method)
+        if "error" in corr_result:
+            return corr_result
+
+        result["correlation"] = _sanitize_json({
+            "method": corr_result["method"],
+            "n_samples": corr_result["n_samples"],
+            "n_features_1": corr_result["n_features_1"],
+            "n_features_2": corr_result["n_features_2"],
+            "n_pairs_tested": corr_result["n_pairs_tested"],
+            "n_significant_fdr": corr_result["n_significant_fdr"],
+            "n_significant_p": corr_result["n_significant_p"],
+            "alpha": corr_result["alpha"],
+        })
+        result["plot_data"] = corr_result["plot_data"]
+        result["statistics"] = {
+            "method": corr_result["method"],
+            "n_samples": corr_result["n_samples"],
+            "n_genera": corr_result["n_features_1"],
+            "n_metabolites": corr_result["n_features_2"],
+            "n_pairs_tested": corr_result["n_pairs_tested"],
+            "n_significant_fdr": corr_result["n_significant_fdr"],
+            "n_significant_p_nominal": corr_result["n_significant_p"],
+            "fdr_threshold": corr_result["alpha"],
+        }
+        result["data"] = _sanitize_json(corr_result["significant_pairs"])
+        logger.info(
+            f"Cross-omics correlation complete: {corr_result['n_pairs_tested']:,} pairs, "
+            f"{corr_result['n_significant_fdr']:,} significant at FDR<{corr_result['alpha']}"
+        )
+        return result
 
     # 1. Procrustes analysis (if requested)
     if analysis_type in ("procrustes", "both"):

@@ -506,9 +506,9 @@ export function Microbiome() {
 
     if (networkSubTab === "network") {
       response = await runAnalysis("network", sessionId, {
-        correlation_method: corrMethod,
+        method: corrMethod,
         threshold: corrThreshold,
-        top_n: networkTopN,
+        top_n_features: networkTopN,
       });
       sessionStore.addAnalysisHistoryItem({
         id: response.job_id,
@@ -522,7 +522,7 @@ export function Microbiome() {
         params: { correlation_method: corrMethod, threshold: corrThreshold, top_n: networkTopN },
       });
     } else if (networkSubTab === "functional") {
-      response = await runAnalysis("metabolomics", sessionId, {
+      response = await runAnalysis("functional-prediction", sessionId, {
         method: "picrust2",
       });
       sessionStore.addAnalysisHistoryItem({
@@ -537,8 +537,8 @@ export function Microbiome() {
         params: { method: "picrust2" },
       });
     } else {
-      response = await runAnalysis("metabolomics", sessionId, {
-        database: "KEGG",
+      response = await runAnalysis("pathway", sessionId, {
+        method: "hypergeometric",
       });
       sessionStore.addAnalysisHistoryItem({
         id: response.job_id,
@@ -559,10 +559,10 @@ export function Microbiome() {
     let response: AnalysisJobResponse;
 
     if (advancedSubTab === "dimred") {
-      response = await runAnalysis("metabolomics", sessionId, {
-        analysis_type: dimredMethod,
-        perplexity: dimredMethod === "tsne" ? dimredPerplexity : undefined,
-        n_neighbors: dimredMethod === "umap" ? dimredNeighbors : undefined,
+      response = await runAnalysis("advanced-dimred", sessionId, {
+        method: dimredMethod,
+        tsne_perplexity: dimredMethod === "tsne" ? dimredPerplexity : undefined,
+        umap_n_neighbors: dimredMethod === "umap" ? dimredNeighbors : undefined,
         group_column: dimredGroup,
       });
       sessionStore.addAnalysisHistoryItem({
@@ -577,10 +577,10 @@ export function Microbiome() {
         params: { analysis_type: dimredMethod, group_column: dimredGroup },
       });
     } else if (advancedSubTab === "clustering") {
-      response = await runAnalysis("network", sessionId, {
-        cluster_method: hclustMethod,
+      response = await runAnalysis("hierarchical-clustering", sessionId, {
+        linkage_method: hclustMethod,
         distance_metric: hclustDistance,
-        top_n: hclustTopN,
+        top_n_features: hclustTopN,
       });
       sessionStore.addAnalysisHistoryItem({
         id: response.job_id,
@@ -659,8 +659,8 @@ export function Microbiome() {
         params: { n_clusters: enterotypeN, distance_metric: enterotypeDistance },
       });
     } else {
-      response = await runAnalysis("network", sessionId, {
-        sink: sourceTrackingSink,
+      response = await runAnalysis("source-tracking", sessionId, {
+        source_column: sourceTrackingSink,
       });
       sessionStore.addAnalysisHistoryItem({
         id: response.job_id,

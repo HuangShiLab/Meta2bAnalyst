@@ -325,7 +325,7 @@ export function AnalysisSpecies() {
       });
     } else {
       response = await runAnalysis("network", sessionId, {
-        correlationMethod: corrMethod,
+        method: corrMethod,
         threshold: corrThreshold,
       });
     }
