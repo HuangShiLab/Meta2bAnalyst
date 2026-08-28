@@ -28,8 +28,15 @@ from app.services.analysis_engine import (
 )
 from app.services.strain_analyzer import StrainAnalyzer
 from app.services.data_parser import parse_data_file
+from app.services.orientation import resolve_feature_table, OrientationError
 
 logger = logging.getLogger(__name__)
+
+
+def _db_session():
+    """Open a DB session inside a worker (shares DATABASE_URL with the backend)."""
+    from app.database import SessionLocal
+    return SessionLocal()
 
 # ─────────────────────────────── Task status helpers
 
@@ -39,33 +46,92 @@ def _update_task_state(self, state: str, meta: Dict[str, Any]) -> None:
     self.update_state(state=state, meta=meta)
 
 
+# Feature-table file types in order of preference for the single-omics
+# (microbiome) analyses these tasks implement. 'metabolome' is last so a
+# multi-omics session never silently runs microbiome stats on the wrong omics.
+_FEATURE_TYPE_PREFERENCE = (
+    'microbiome', 'metaphlan', 'feature_table', 'filtered_feature_table',
+    'normalized_relative', 'biom', 'shared', 'metabolome',
+)
+
+
 def _load_session_data(session_id: str) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
-    """Load feature table and metadata for a session from disk."""
-    uploads_dir = Path("./uploads") / session_id
-    
-    # Find feature table
+    """Load feature table and metadata for a session.
+
+    DB-driven, mirroring the sync route helpers: the previous disk-glob version
+    took the FIRST parseable file as the feature table -- which could be the
+    metadata file itself (parsed with a mangled delimiter into a garbage
+    260x11 frame) or the metabolome table of a multi-omics session. Orientation
+    is resolved against the metadata exactly like the sync path.
+    """
+    from app.models import DataFile
+
+    db = _db_session()
+    try:
+        files = (
+            db.query(DataFile)
+            .filter(DataFile.session_id == session_id)
+            .order_by(DataFile.id.desc())
+            .all()
+        )
+    finally:
+        db.close()
+
+    metadata_df = _load_metadata(files)
+
     df = None
-    for file_path in uploads_dir.glob("*"):
-        if file_path.is_file() and file_path.suffix in (".csv", ".tsv", ".txt", ".biom", ".shared"):
+    for wanted in _FEATURE_TYPE_PREFERENCE:
+        data_file = next((f for f in files if f.file_type == wanted), None)
+        if data_file is None:
+            continue
+        try:
+            parsed, _ = parse_data_file(Path(data_file.file_path), file_type=wanted, use_chunks=True)
+        except Exception as e:
+            logger.error(f'Failed to parse {data_file.file_path}: {e}')
+            continue
+        try:
+            df, report = resolve_feature_table(parsed, metadata_df, name=data_file.original_name or wanted)
+        except OrientationError as e:
+            # Fail loudly: running ordination/statistics on a mis-oriented
+            # table silently computes nonsense.
+            raise ValueError(f'Orientation error for {data_file.original_name}: {e}')
+        for w in report.warnings:
+            logger.warning('Session %s: %s', session_id, w)
+        logger.info(f'Loaded feature table ({wanted}): {df.shape}')
+        break
+
+    # Legacy fallback for sessions with no DB rows (should not happen, but
+    # keeps old uploads usable): glob the upload dir, EXCLUDING metadata files.
+    if df is None:
+        uploads_dir = Path("./uploads") / session_id
+        for file_path in sorted(uploads_dir.glob("*")):
+            if not (file_path.is_file() and file_path.suffix in (".csv", ".tsv", ".txt", ".biom", ".shared")):
+                continue
+            if "metadata" in file_path.name.lower():
+                continue
             try:
-                df, _ = parse_data_file(file_path)
-                logger.info(f"Loaded feature table: {df.shape}")
+                parsed, _ = parse_data_file(file_path)
+                df, _ = resolve_feature_table(parsed, metadata_df, name=file_path.name)
+                logger.info(f'Loaded feature table (disk fallback): {df.shape}')
                 break
             except Exception:
                 continue
-    
-    # Find metadata
-    metadata_df = None
-    for file_path in uploads_dir.glob("*"):
-        if file_path.is_file() and "metadata" in file_path.name.lower():
-            try:
-                metadata_df = pd.read_csv(file_path, sep="\t", index_col=0)
-                logger.info(f"Loaded metadata: {metadata_df.shape}")
-                break
-            except Exception:
-                continue
-    
+
     return df, metadata_df
+
+
+def _load_metadata(files) -> Optional[pd.DataFrame]:
+    """Newest metadata file for the session, tab- then comma-separated."""
+    data_file = next((f for f in files if f.file_type == 'metadata'), None)
+    if data_file is None:
+        return None
+    try:
+        try:
+            return pd.read_csv(data_file.file_path, sep='\t', index_col=0)
+        except Exception:
+            return pd.read_csv(data_file.file_path, index_col=0)
+    except Exception:
+        return None
 
 
 def _save_result(session_id: str, job_id: str, task_name: str, result_data: Dict[str, Any]) -> str:

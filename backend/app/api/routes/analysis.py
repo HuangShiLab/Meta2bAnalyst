@@ -821,7 +821,10 @@ async def analyze_pcoa(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # Prefer the microbiome table: in multi-omics sessions get_dataframe would
+    # return the newest omics table (possibly the metabolome) -- wrong input
+    # for "Microbiome PCoA". Falls back to get_dataframe for single-omics.
+    df = get_microbiome_df(session_id, db)
     metadata_df = get_metadata_df(session_id, db)
 
     try:
@@ -1236,7 +1239,8 @@ async def analyze_permanova(
     if not session:
         raise HTTPException(status_code=404, detail=f'Session {session_id} not found')
 
-    df = get_dataframe(session_id, db)
+    # Prefer the microbiome table in multi-omics sessions (see analyze_pcoa).
+    df = get_microbiome_df(session_id, db)
     metadata_df = get_metadata_df(session_id, db)
 
     if metadata_df is None or request.group_column not in metadata_df.columns:
@@ -2194,6 +2198,10 @@ class MetabolomicsRequest(BaseModel):
     test_method: str = 'welch'
     pvalue_threshold: float = 0.05
     fc_threshold: float = 1.5
+    # Which omics table to analyze. The MultiOmics page runs this endpoint for
+    # both metabolome (pca/markers) and microbiome marker discovery; without
+    # this switch "Microbiome Markers" silently analyzed the metabolome.
+    data_source: str = 'metabolome'  # 'metabolome' | 'microbiome'
 
 
 @router.post('/sessions/{session_id}/analyze/metabolomics', response_model=AnalysisResponse)
@@ -2203,11 +2211,14 @@ def metabolomics_analysis(
     db: DBSession = Depends(get_db),
 ):
     """Single-omics metabolomics analysis endpoint used by the MultiOmics page."""
-    metabolome_df = get_metabolome_df(session_id, db)
-    if metabolome_df is None:
+    if request.data_source == 'microbiome':
+        omics_df = get_microbiome_df(session_id, db)
+    else:
+        omics_df = get_metabolome_df(session_id, db)
+    if omics_df is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='No metabolome data found for this session',
+            detail=f'No {request.data_source} data found for this session',
         )
     metadata_df = get_metadata_df(session_id, db)
     job = AnalysisJob(
@@ -2221,7 +2232,7 @@ def metabolomics_analysis(
     db.commit()
     db.refresh(job)
     result_data = run_metabolomics_analysis(
-        metabolome_df.T,
+        omics_df.T,
         metadata_df,
         request.model_dump(),
     )

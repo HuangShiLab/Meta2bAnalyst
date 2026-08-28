@@ -215,7 +215,9 @@ export function MultiOmics() {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleUpload = useCallback(async () => {
-    if (!microbiomeFile || !metabolomeFile) return;
+    // Metadata is required: grouping, ordination coloring and every
+    // group-wise statistic downstream depend on it.
+    if (!microbiomeFile || !metabolomeFile || !metadataFile) return;
     setIsUploading(true);
     setUploadError(null);
     try {
@@ -227,9 +229,7 @@ export function MultiOmics() {
       const sid = session.id;
       await uploadFile(sid, microbiomeFile, "microbiome");
       await uploadFile(sid, metabolomeFile, "metabolome");
-      if (metadataFile) {
-        await uploadFile(sid, metadataFile, "metadata");
-      }
+      await uploadFile(sid, metadataFile, "metadata");
       sessionStore.setSessionId(sid);
       setUploaded(true);
     } catch (err) {
@@ -294,11 +294,12 @@ export function MultiOmics() {
 
   // Individual Omics handlers
   const handleRunMicrobiomePCoA = useCallback(async () => {
+    // AnalysisRequest contract: analysis-specific knobs go under `parameters`,
+    // grouping is the top-level `group_column`. Flat camelCase keys are
+    // silently dropped by the backend (no group coloring, default metric).
     await runWithHistory("mb_pcoa", "pcoa", {
-      distanceMethod: "bray-curtis",
-      ordinationMethod: "pcoa",
-      groupColumn,
-      testMethod: "PERMANOVA",
+      parameters: { metric: "braycurtis", n_components: 3 },
+      group_column: groupColumn,
     }, "Microbiome PCoA", "Bray-Curtis PCoA");
   }, [runWithHistory, groupColumn]);
 
@@ -313,10 +314,8 @@ export function MultiOmics() {
 
   const handleRunPERMANOVA = useCallback(async () => {
     await runWithHistory("permanova", "permanova", {
-      distanceMethod: "bray-curtis",
-      ordinationMethod: "pcoa",
-      groupColumn,
-      testMethod: "PERMANOVA",
+      parameters: { metric: "braycurtis", n_permutations: 999 },
+      group_column: groupColumn,
     }, "PERMANOVA", `PERMANOVA (${groupColumn})`);
   }, [runWithHistory, groupColumn]);
 
@@ -335,6 +334,7 @@ export function MultiOmics() {
   const handleRunMicrobiomeMarkerDiscovery = useCallback(async () => {
     await runWithHistory("mb_marker", "metabolomics", {
       analysis_type: "marker_discovery",
+      data_source: "microbiome",
       group_column: groupColumn,
       reference_group: referenceGroup,
       test_method: "mannwhitney",
@@ -427,7 +427,7 @@ export function MultiOmics() {
           <CardHeader>
             <CardTitle>Upload Multi-omics Data</CardTitle>
             <CardDescription>
-              Upload paired microbiome (species/genus table), metabolome (intensity matrix), and metadata files
+              Upload paired microbiome (species/genus table), metabolome (intensity matrix), and metadata files — all three are required
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -439,6 +439,7 @@ export function MultiOmics() {
                 </div>
                 <UploadZone
                   accept={acceptTypes}
+                  file={microbiomeFile}
                   onUpload={(files: File[]) => setMicrobiomeFile(files[0] || null)}
                 />
                 <p className="text-xs text-muted-foreground">Samples × features (TSV/CSV)</p>
@@ -450,6 +451,7 @@ export function MultiOmics() {
                 </div>
                 <UploadZone
                   accept={acceptTypes}
+                  file={metabolomeFile}
                   onUpload={(files: File[]) => setMetabolomeFile(files[0] || null)}
                 />
                 <p className="text-xs text-muted-foreground">Samples × metabolites (TSV/CSV)</p>
@@ -457,10 +459,12 @@ export function MultiOmics() {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <FileText className="h-4 w-4 text-primary" />
-                  <Label className="font-medium">Metadata (Optional)</Label>
+                  <Label className="font-medium">Metadata</Label>
+                  <span className="text-xs text-destructive">*required</span>
                 </div>
                 <UploadZone
                   accept={acceptTypes}
+                  file={metadataFile}
                   onUpload={(files: File[]) => setMetadataFile(files[0] || null)}
                 />
                 <p className="text-xs text-muted-foreground">Sample × variables (TSV/CSV)</p>
@@ -483,7 +487,7 @@ export function MultiOmics() {
               </Button>
               <Button
                 onClick={handleUpload}
-                disabled={!microbiomeFile || !metabolomeFile || isUploading}
+                disabled={!microbiomeFile || !metabolomeFile || !metadataFile || isUploading}
                 className="flex-[2] gap-2"
               >
                 {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
