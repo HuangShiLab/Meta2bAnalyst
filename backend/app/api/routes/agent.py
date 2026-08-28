@@ -295,7 +295,7 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
                     .all()
                 )
                 if files:
-                    context["session_files"] = [f.file_name for f in files]
+                    context["session_files"] = [f.original_name or f.file_path for f in files]
                     context["file_types"] = [f.file_type for f in files if f.file_type]
             except Exception:
                 pass
@@ -485,7 +485,22 @@ async def _execute_workflow_stream(
         )
     elif query:
         planner = get_planner()
-        plan = await planner.plan(query)
+        # Build session context so the planner can drop steps whose data the
+        # session does not hold (mirrors the /plan endpoint).
+        context: Dict[str, Any] = {"session_id": session_id}
+        try:
+            from app.models import DataFile
+            files = (
+                db.query(DataFile)
+                .filter(DataFile.session_id == session_id)
+                .all()
+            )
+            if files:
+                context["session_files"] = [f.original_name or f.file_path for f in files]
+                context["file_types"] = [f.file_type for f in files if f.file_type]
+        except Exception:
+            pass
+        plan = await planner.plan(query, context)
     else:
         yield "data: " + json.dumps({"event_type": "error", "payload": {"error": "No plan or query provided"}}) + "\n\n"
         return
@@ -560,7 +575,20 @@ async def analyze_one_shot(request: AnalyzeRequest, db: DBSession = Depends(get_
     try:
         # Plan
         planner = get_planner(use_llm=request.use_llm)
-        plan = await planner.plan(request.query)
+        plan_context: Dict[str, Any] = {"session_id": request.session_id}
+        try:
+            from app.models import DataFile
+            files = (
+                db.query(DataFile)
+                .filter(DataFile.session_id == request.session_id)
+                .all()
+            )
+            if files:
+                plan_context["session_files"] = [f.original_name or f.file_path for f in files]
+                plan_context["file_types"] = [f.file_type for f in files if f.file_type]
+        except Exception:
+            pass
+        plan = await planner.plan(request.query, plan_context)
 
         # Load data
         microbiome_df, metabolome_df, metadata_df = _load_session_data(request.session_id, db)

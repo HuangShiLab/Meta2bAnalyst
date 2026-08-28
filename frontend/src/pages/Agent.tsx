@@ -334,7 +334,7 @@ export function Agent() {
         ...prev,
         {
           id: `demo-load-${Date.now()}`,
-          role: "system",
+          role: "agent",
           content: `⏳ Loading demo dataset "${dataset.label}" (${dataset.files.length} files)…`,
           timestamp: new Date(),
         },
@@ -347,7 +347,7 @@ export function Agent() {
           ...prev,
           {
             id: `demo-done-${Date.now()}`,
-            role: "system",
+            role: "agent",
             content:
               `✅ Demo dataset "${dataset.label}" is ready (session: ${dataset.sessionName}).\n` +
               `${dataset.description}\n` +

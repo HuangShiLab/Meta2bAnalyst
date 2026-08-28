@@ -61,7 +61,8 @@ ANALYSIS_TEMPLATES = [
         "name": "full_multiomics_pipeline",
         "patterns": [
             r"full.*multi.?omics|complete.*pipeline|run.*all.*analysis|integrat.*everything",
-            r"全部.*分析|完整.*流程|多组学.*整合.*全部",
+            r"full.*pipeline|whole.*pipeline|entire.*pipeline|end.to.end.*(analysis|pipeline|workflow)",
+            r"全部.*分析|完整.*流程|多组学.*整合.*全部|全流程|整个.*流程",
         ],
         "description": "Complete multi-omics pipeline: individual profiling + integration + markers + report",
         "steps": [
@@ -1418,11 +1419,13 @@ class AnalysisPlanner:
         available = _available_omics_from_context(context)
         if available == "microbiome_only":
             plan.steps = [s for s in plan.steps
-                          if get_module_spec(s.module).input_requirements.get("metabolome") != "required"]
+                          if get_module_spec(s.module).input_requirements.get("metabolome") != "required"
+                          and s.params.get("data_type") != "metabolome"]
             plan.notes.append("Adjusted for microbiome-only data")
         elif available == "metabolome_only":
             plan.steps = [s for s in plan.steps
-                          if get_module_spec(s.module).input_requirements.get("microbiome") != "required"]
+                          if get_module_spec(s.module).input_requirements.get("microbiome") != "required"
+                          and s.params.get("data_type") != "microbiome"]
             plan.notes.append("Adjusted for metabolome-only data")
 
         if available:
