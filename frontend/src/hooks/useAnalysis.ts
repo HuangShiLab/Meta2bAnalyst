@@ -412,9 +412,13 @@ export function useSectionAnalysis() {
       });
 
       try {
+        // Synchronous endpoints (rda, sparse-cca, ...) can legitimately take
+        // minutes on large datasets; the default 60s axios timeout reported
+        // them as failures even though the backend completed the job.
         const response = await api.post<RawJobPayload>(
           `/sessions/${sessionId}/analyze/${type}`,
-          params
+          params,
+          { timeout: JOB_POLL_TIMEOUT_MS }
         );
         let payload = response.data;
 
