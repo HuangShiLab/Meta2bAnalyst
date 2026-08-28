@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { NO_SESSION_MESSAGE } from "@/hooks/useRequiredSession";
 import type {
   AnalysisJobResponse,
+  PlotlyFigure,
   AlphaDiversityParams,
   BetaDiversityParams,
   DifferentialParams,
@@ -294,6 +295,96 @@ export function useAnalysis() {
 
 // ─────────────────────────────── Section Analysis (multi-section state)
 
+// ─────────────────────────────── Section analysis (MultiOmics & friends)
+
+const JOB_POLL_INTERVAL_MS = 2000;
+const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Raw shape returned by POST /analyze/* (AnalysisResponse) and GET /jobs/{id}/result. */
+interface RawJobPayload {
+  job_id?: number | string;
+  status?: string;
+  result_data?: Record<string, unknown>;
+  plot_data?: unknown;
+  message?: string;
+  detail?: string;
+  [key: string]: unknown;
+}
+
+const isPlotlyFigure = (v: unknown): v is PlotlyFigure => {
+  if (!v || typeof v !== "object") return false;
+  const fig = v as PlotlyFigure;
+  return Array.isArray(fig.data) && typeof fig.layout === "object" && fig.layout !== null;
+};
+
+/**
+ * The backend nests every analysis payload under result_data, and the exact
+ * layout varies by analysis type (pcoa: result_data.plot_data; cross-omics:
+ * result_data.plot_data + result_data.statistics; metabolomics marker:
+ * result_data.marker_discovery.plot_data). Normalize all of them into the
+ * flat AnalysisJobResponse shape the section cards render.
+ */
+const normalizeJobPayload = (payload: RawJobPayload): AnalysisJobResponse => {
+  const rd = (payload.result_data ?? {}) as Record<string, unknown>;
+
+  let plot: PlotlyFigure | undefined;
+  if (isPlotlyFigure(payload.plot_data)) plot = payload.plot_data;
+  else if (isPlotlyFigure(rd.plot_data)) plot = rd.plot_data;
+  else {
+    // One level down: marker_discovery.plot_data and similar nestings.
+    for (const v of Object.values(rd)) {
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        const sub = v as Record<string, unknown>;
+        if (isPlotlyFigure(sub.plot_data)) {
+          plot = sub.plot_data;
+          break;
+        }
+      }
+    }
+  }
+
+  const statistics =
+    rd.statistics && typeof rd.statistics === "object" && !Array.isArray(rd.statistics)
+      ? (rd.statistics as Record<string, unknown>)
+      : undefined;
+
+  const data = Array.isArray(rd.data)
+    ? (rd.data as Record<string, string | number>[])
+    : undefined;
+
+  return {
+    success: true,
+    job_id: String(payload.job_id ?? ""),
+    plot_data: plot,
+    statistics,
+    data,
+  };
+};
+
+/** Poll a queued (Celery) job until it finishes, then fetch its stored result. */
+const waitForJobResult = async (
+  sessionId: string,
+  jobId: number | string
+): Promise<RawJobPayload> => {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+  for (;;) {
+    const statusResp = await api.get(`/sessions/${sessionId}/jobs/${jobId}/status`);
+    const jobStatus: string | undefined = statusResp.data?.status;
+
+    if (jobStatus === "success" || jobStatus === "completed") {
+      const resultResp = await api.get(`/sessions/${sessionId}/jobs/${jobId}/result`);
+      return resultResp.data as RawJobPayload;
+    }
+    if (jobStatus === "failed") {
+      throw new Error(statusResp.data?.message || "Analysis job failed");
+    }
+    if (Date.now() > deadline) {
+      throw new Error("Analysis is taking too long; please check Results page later.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+  }
+};
+
 export function useSectionAnalysis() {
   const [results, setResults] = useState<Record<string, AnalysisJobResponse>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
@@ -313,14 +404,25 @@ export function useSectionAnalysis() {
       });
 
       try {
-        // Create a temporary useAnalysis to run the analysis
-        // This is a workaround - in practice the caller should use runAnalysis directly
-        const response = await api.post<AnalysisJobResponse>(
+        const response = await api.post<RawJobPayload>(
           `/sessions/${sessionId}/analyze/${type}`,
           params
         );
-        setResults((prev) => ({ ...prev, [key]: response.data }));
-        return response.data;
+        let payload = response.data;
+
+        // Large datasets are queued to Celery: the POST returns
+        // {status: 'pending', job_id} with no result yet. Poll until the
+        // worker finishes, then load the stored result.
+        if (payload?.status === "pending" || payload?.status === "running") {
+          if (payload.job_id === undefined || payload.job_id === null) {
+            throw new Error("Analysis was queued but no job id was returned");
+          }
+          payload = await waitForJobResult(sessionId, payload.job_id);
+        }
+
+        const normalized = normalizeJobPayload(payload);
+        setResults((prev) => ({ ...prev, [key]: normalized }));
+        return normalized;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Analysis failed";
         setErrors((prev) => ({ ...prev, [key]: message }));

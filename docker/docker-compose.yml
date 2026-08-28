@@ -78,7 +78,11 @@ services:
       dockerfile: docker/backend.Dockerfile
     image: meta2banalyst-backend:local
     restart: unless-stopped
-    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
+    # Consume BOTH queues: task_routes in celery_app.py publishes
+    # app.tasks.analysis_tasks.* to the 'analysis' queue, but a worker without
+    # -Q only consumes the default 'celery' queue -- so every async analysis
+    # job used to pile up unconsumed and stay 'pending' forever.
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2 -Q analysis,celery
     environment:
       DATABASE_URL: sqlite:////app/data/meta2banalyst.db
       REDIS_URL: redis://redis:6379/0

@@ -247,14 +247,16 @@ export function MultiOmics() {
     setUploadError(null);
     try {
       const fetchFile = async (name: string, type: string) => {
-        const response = await fetch(`/examples/${name}`);
+        const response = await fetch(`/examples/demo/multi-omics/${name}`);
         if (!response.ok) throw new Error(`Failed to load ${name}`);
         const blob = await response.blob();
         return new File([blob], name, { type });
       };
-      setMicrobiomeFile(await fetchFile("metaphlan_abundance.tsv", "text/tab-separated-values"));
-      setMetabolomeFile(await fetchFile("humann3_pathabundance.tsv", "text/tab-separated-values"));
-      setMetadataFile(await fetchFile("metaphlan_metadata.tsv", "text/tab-separated-values"));
+      // Huang mBio 2021 demo set: sample IDs verified consistent across all
+      // three files (261 samples).
+      setMicrobiomeFile(await fetchFile("Matched_microbes_abd_261.tsv", "text/tab-separated-values"));
+      setMetabolomeFile(await fetchFile("Matched_metabolites_abd_261.txt", "text/tab-separated-values"));
+      setMetadataFile(await fetchFile("Matched_metadata_261.tsv", "text/tab-separated-values"));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load example data";
       setUploadError(message);
@@ -270,19 +272,24 @@ export function MultiOmics() {
     historyType: string,
     historyLabel: string
   ) => {
-    if (!sessionId) return;
     clear(key);
-    const response = await run(key, type, sessionId, params);
-    sessionStore.addAnalysisHistoryItem({
-      id: response.job_id,
-      type: historyType,
-      label: historyLabel,
-      timestamp: new Date().toISOString(),
-      status: "success",
-      plotData: response.plot_data,
-      statistics: response.statistics,
-      tableData: response.data,
-    });
+    try {
+      // run() records NO_SESSION_MESSAGE / backend errors into errors[key],
+      // which the section card renders; rethrowing would be unhandled.
+      const response = await run(key, type, sessionId ?? "", params);
+      sessionStore.addAnalysisHistoryItem({
+        id: response.job_id,
+        type: historyType,
+        label: historyLabel,
+        timestamp: new Date().toISOString(),
+        status: "success",
+        plotData: response.plot_data,
+        statistics: response.statistics,
+        tableData: response.data,
+      });
+    } catch {
+      // error state already set by useSectionAnalysis
+    }
   }, [clear, run, sessionId, sessionStore]);
 
   // Individual Omics handlers

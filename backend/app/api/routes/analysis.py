@@ -506,7 +506,7 @@ def _save_result(session_id: str, job: AnalysisJob, result_data: Dict[str, Any])
     return result_data
 
 
-def _submit_async_task(task_func, _session_id: str, job: AnalysisJob, **kwargs) -> AnalysisResponse:
+def _submit_async_task(task_func, _session_id: str, job: AnalysisJob, db: DBSession, **kwargs) -> AnalysisResponse:
     """Submit a Celery async task and return a pending response.
 
     ``kwargs`` holds the Celery task's own arguments, which include a
@@ -515,11 +515,17 @@ def _submit_async_task(task_func, _session_id: str, job: AnalysisJob, **kwargs) 
     argument twice and raised ``TypeError: got multiple values for argument
     'session_id'`` before the body ever ran. This path was unreachable until the
     orientation fix made large datasets actually take it.
+
+    The ``celery_task_id`` MUST be committed here: the status endpoint can only
+    reconcile Celery state into the DB when it can read the task id back from
+    ``job.parameters``. Without this commit the id lived only on the in-memory
+    object, so polled jobs stayed 'pending' forever even after the task ran.
     """
     kwargs.setdefault('session_id', _session_id)
     try:
         celery_job = task_func.delay(**kwargs)
         job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
+        db.commit()
         return AnalysisResponse(
             job_id=job.id,
             session_id=_session_id,
@@ -678,7 +684,7 @@ async def analyze_alpha_diversity(
             db.commit()
             return _submit_async_task(
                 alpha_diversity_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 metrics=request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
                 grouping=request.group_column,
@@ -763,7 +769,7 @@ async def analyze_beta_diversity(
             db.commit()
             return _submit_async_task(
                 beta_diversity_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 distance=request.parameters.get('metric', 'braycurtis'),
                 grouping=request.group_column,
@@ -840,7 +846,7 @@ async def analyze_pcoa(
             db.commit()
             return _submit_async_task(
                 pcoa_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 distance=request.parameters.get('metric', 'braycurtis'),
                 grouping=request.group_column,
@@ -926,7 +932,7 @@ async def analyze_nmds(
             db.commit()
             return _submit_async_task(
                 nmds_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 distance=request.parameters.get('metric', 'braycurtis'),
                 n_components=request.parameters.get('n_components', 2),
@@ -1013,7 +1019,7 @@ async def analyze_differential(
                 raise HTTPException(status_code=400, detail=str(e))
             return _submit_async_task(
                 differential_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 method=request.parameters.get('test_method', 'mannwhitney'),
                 group_var=request.group_column,
@@ -1258,7 +1264,7 @@ async def analyze_permanova(
             db.commit()
             return _submit_async_task(
                 permanova_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 distance=request.parameters.get('metric', 'braycurtis'),
                 group_var=request.group_column,
@@ -1339,7 +1345,7 @@ async def analyze_anosim(
             db.commit()
             return _submit_async_task(
                 anosim_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 distance=request.parameters.get('metric', 'braycurtis'),
                 group_var=request.group_column,
@@ -1419,7 +1425,7 @@ async def analyze_random_forest(
             db.commit()
             return _submit_async_task(
                 random_forest_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 group_var=request.group_column,
                 n_estimators=request.parameters.get('n_estimators', 500),
@@ -1580,7 +1586,7 @@ async def analyze_heatmap(
             db.commit()
             return _submit_async_task(
                 heatmap_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 n_top=request.parameters.get('top_n', 50),
             )
