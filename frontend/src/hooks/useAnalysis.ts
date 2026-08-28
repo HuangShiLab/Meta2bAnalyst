@@ -317,12 +317,25 @@ const isPlotlyFigure = (v: unknown): v is PlotlyFigure => {
   return Array.isArray(fig.data) && typeof fig.layout === "object" && fig.layout !== null;
 };
 
+/** Depth-limited search for a Plotly-shaped dict ({data, layout}). */
+const findFigureDeep = (obj: Record<string, unknown>, depth: number): PlotlyFigure | undefined => {
+  for (const v of Object.values(obj)) {
+    if (isPlotlyFigure(v)) return v;
+    if (depth > 0 && v && typeof v === "object" && !Array.isArray(v)) {
+      const found = findFigureDeep(v as Record<string, unknown>, depth - 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};
+
 /**
  * The backend nests every analysis payload under result_data, and the exact
  * layout varies by analysis type (pcoa: result_data.plot_data; cross-omics:
  * result_data.plot_data + result_data.statistics; metabolomics marker:
- * result_data.marker_discovery.plot_data). Normalize all of them into the
- * flat AnalysisJobResponse shape the section cards render.
+ * result_data.marker_discovery.volcano_plot; permanova: flat scalars).
+ * Normalize all of them into the flat AnalysisJobResponse shape the section
+ * cards render.
  */
 const normalizeJobPayload = (payload: RawJobPayload): AnalysisJobResponse => {
   const rd = (payload.result_data ?? {}) as Record<string, unknown>;
@@ -330,23 +343,18 @@ const normalizeJobPayload = (payload: RawJobPayload): AnalysisJobResponse => {
   let plot: PlotlyFigure | undefined;
   if (isPlotlyFigure(payload.plot_data)) plot = payload.plot_data;
   else if (isPlotlyFigure(rd.plot_data)) plot = rd.plot_data;
-  else {
-    // One level down: marker_discovery.plot_data and similar nestings.
-    for (const v of Object.values(rd)) {
-      if (v && typeof v === "object" && !Array.isArray(v)) {
-        const sub = v as Record<string, unknown>;
-        if (isPlotlyFigure(sub.plot_data)) {
-          plot = sub.plot_data;
-          break;
-        }
-      }
-    }
-  }
+  else plot = findFigureDeep(rd, 2);
 
-  const statistics =
-    rd.statistics && typeof rd.statistics === "object" && !Array.isArray(rd.statistics)
-      ? (rd.statistics as Record<string, unknown>)
-      : undefined;
+  let statistics: Record<string, unknown> | undefined;
+  if (rd.statistics && typeof rd.statistics === "object" && !Array.isArray(rd.statistics)) {
+    statistics = rd.statistics as Record<string, unknown>;
+  } else {
+    // PERMANOVA-style flat results: surface the scalar fields as the stats card.
+    const scalars = Object.fromEntries(
+      Object.entries(rd).filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))
+    );
+    if (Object.keys(scalars).length > 0) statistics = scalars;
+  }
 
   const data = Array.isArray(rd.data)
     ? (rd.data as Record<string, string | number>[])

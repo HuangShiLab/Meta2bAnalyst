@@ -446,6 +446,17 @@ def _jsonify(obj: Any) -> Any:
     import numpy as _np
 
     if isinstance(obj, dict):
+        # Plotly >= 6 emits typed-array dicts ({'dtype': 'f8', 'bdata': ...})
+        # for numpy arrays in fig.to_dict(). Browsers without a matching
+        # plotly.js decoder render EMPTY charts from these, so decode them
+        # back to plain lists at the boundary.
+        if set(obj.keys()) == {'dtype', 'bdata'}:
+            try:
+                import base64
+                arr = _np.frombuffer(base64.b64decode(obj['bdata']), dtype=_np.dtype(obj['dtype']))
+                return _jsonify(arr.tolist())
+            except Exception:
+                return obj
         return {str(k): _jsonify(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_jsonify(v) for v in obj]
@@ -566,6 +577,9 @@ async def get_job_status(
                 job.result_data = celery_status.get('result')
                 if isinstance(job.result_data, dict) and 'result_data' in job.result_data:
                     job.result_data = job.result_data['result_data']
+                # Celery results carry plotly binary arrays; decode to lists
+                # before persisting so the result endpoint serves plain JSON.
+                job.result_data = _jsonify(job.result_data)
                 db.commit()
             elif celery_status['status'] == 'failed' and job.status != 'failed':
                 job.status = 'failed'
@@ -618,6 +632,9 @@ async def get_job_result(
         raise HTTPException(status_code=500, detail=f'Job failed: {job.error_message or "Unknown error"}')
     
     result_data = job.result_data
+    # Legacy rows may still hold plotly binary arrays ({dtype, bdata}) from
+    # before the decode-at-store fix; sanitize on the way out.
+    result_data = _jsonify(result_data)
     
     # Handle paginated differential results
     if job.job_type == 'differential' and result_data and 'all_features' in result_data:
