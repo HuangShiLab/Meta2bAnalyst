@@ -654,7 +654,7 @@ def _get_module_function(module_name: str) -> Callable:
                     "top_n_features": kw.get("top_n_genera", 15),
                 }
             ),
-            "network_sparcc": lambda df, metadata_df=None, **kw: run_network_analysis(df, metadata_df, **kw),
+            "network_sparcc": lambda df, metadata_df=None, **kw: run_network_analysis(df, **kw),
             "pathway_kegg": lambda df, **kw: run_pathway_analysis(df, parameters=kw),
             "functional_prediction": lambda df, **kw: run_functional_prediction(df, parameters=kw),
             "tsne": _run_tsne,

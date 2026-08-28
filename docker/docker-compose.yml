@@ -54,6 +54,12 @@ services:
       CORS_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
       ENVIRONMENT: production
       DEBUG: "false"
+      # LLM assist (planner fallback + narrative interpretation). Leave
+      # KIMI_API_KEY unset to run KB-only; values come from docker/.env
+      # (gitignored) or the shell environment.
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}
+      KIMI_MODEL: ${KIMI_MODEL:-kimi-for-coding}
     volumes:
       - uploads_data:/app/uploads
       - logs_data:/app/logs
@@ -81,6 +87,9 @@ services:
       UPLOAD_DIR: /app/uploads
       LOG_DIR: /app/logs
       ENVIRONMENT: production
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}
+      KIMI_MODEL: ${KIMI_MODEL:-kimi-for-coding}
     volumes:
       # Must share uploads and the database with the backend: tasks read the
       # session's files from disk by path.

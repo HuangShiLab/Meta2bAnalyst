@@ -387,7 +387,7 @@ def _infer_data_type_from_files(file_list: List[str]) -> Dict[str, Any]:
             data_types["has_microbiome"] = True
         if any(k in fname_lower for k in ['humann3', 'humann', 'genefamilies', 'pathabundance']):
             data_types["has_humann3"] = True
-        if any(k in fname_lower for k in ['microbiome', '16s', 'otu', 'asv', 'species', 'feature_table']):
+        if any(k in fname_lower for k in ['microbiome', 'microbe', 'microbial', '16s', 'otu', 'asv', 'species', 'feature_table']):
             data_types["has_microbiome"] = True
         if any(k in fname_lower for k in ['metabolome', 'metabolite', 'lcms', 'gcms']):
             data_types["has_metabolome"] = True
