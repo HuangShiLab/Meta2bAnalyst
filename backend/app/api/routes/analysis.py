@@ -851,13 +851,21 @@ async def analyze_pcoa(
     metadata_df = get_metadata_df(session_id, db)
 
     try:
+        # The frontend historically sent ``distance_metric``; accept both.
+        metric = (
+            request.parameters.get('metric')
+            or request.parameters.get('distance_metric')
+            or 'braycurtis'
+        )
+        size_column = request.parameters.get('size_column')
         job = AnalysisJob(
             session_id=session_id,
             job_type='pcoa',
             parameters={
-                'metric': request.parameters.get('metric', 'braycurtis'),
+                'metric': metric,
                 'n_components': request.parameters.get('n_components', 3),
                 'group_column': request.group_column,
+                'size_column': size_column,
             },
             status='pending',
             started_at=datetime.utcnow(),
@@ -874,22 +882,17 @@ async def analyze_pcoa(
                 pcoa_task,
                 session_id, job, db,
                 session_id=session_id,
-                distance=request.parameters.get('metric', 'braycurtis'),
+                distance=metric,
                 grouping=request.group_column,
+                size_column=size_column,
             )
 
         job.status = 'running'
         db.commit()
 
+        # run_pcoa already renders the publication-style scatter (per-group
+        # 95% ellipses, severity-scaled markers); do not overwrite it here.
         result_data = run_pcoa(df, metadata_df, job.parameters)
-
-        # Generate Plotly chart
-        if metadata_df is not None and request.group_column and request.group_column in metadata_df.columns:
-            engine = AnalysisEngine()
-            dist_matrix = engine.beta_diversity(df, distance=job.parameters.get('metric', 'braycurtis'))
-            pcoa_result = engine.pcoa(dist_matrix)
-            plot_data = engine.plotly_pcoa_scatter(pcoa_result, metadata_df, request.group_column)
-            result_data['plot_data'] = plot_data
 
         _save_result(session_id, job, result_data)
         job.status = 'completed'
@@ -937,13 +940,20 @@ async def analyze_nmds(
     metadata_df = get_metadata_df(session_id, db)
 
     try:
+        metric = (
+            request.parameters.get('metric')
+            or request.parameters.get('distance_metric')
+            or 'braycurtis'
+        )
+        size_column = request.parameters.get('size_column')
         job = AnalysisJob(
             session_id=session_id,
             job_type='nmds',
             parameters={
-                'metric': request.parameters.get('metric', 'braycurtis'),
+                'metric': metric,
                 'n_components': request.parameters.get('n_components', 2),
                 'group_column': request.group_column,
+                'size_column': size_column,
             },
             status='pending',
             started_at=datetime.utcnow(),
@@ -960,8 +970,10 @@ async def analyze_nmds(
                 nmds_task,
                 session_id, job, db,
                 session_id=session_id,
-                distance=request.parameters.get('metric', 'braycurtis'),
+                distance=metric,
                 n_components=request.parameters.get('n_components', 2),
+                grouping=request.group_column,
+                size_column=size_column,
             )
 
         job.status = 'running'

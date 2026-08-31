@@ -201,6 +201,7 @@ export function Microbiome() {
   const [betaDistance, setBetaDistance] = useState("braycurtis");
   const [betaOrdination, setBetaOrdination] = useState<"PCoA" | "NMDS">("PCoA");
   const [betaGroup, setBetaGroup] = useState("Visit");
+  const [betaSizeColumn, setBetaSizeColumn] = useState<string>("none");
 
   const [compType, setCompType] = useState<"stacked-bar" | "heatmap">("stacked-bar");
   const [compTopN, setCompTopN] = useState(30);
@@ -309,8 +310,11 @@ export function Microbiome() {
       });
     } else if (communitySubTab === "beta") {
       const betaParams = {
-        distance_metric: betaDistance,
-        ordination: betaOrdination,
+        parameters: {
+          metric: betaDistance,
+          ordination: betaOrdination,
+          ...(betaSizeColumn !== "none" ? { size_column: betaSizeColumn } : {}),
+        },
         group_column: betaGroup,
       };
       response = await runAnalysis(
@@ -424,7 +428,7 @@ export function Microbiome() {
         params: { permanova: { group_column: permanovaGroup, distance_metric: permanovaDistance }, anosim: { group_column: anosimGroup, distance_metric: anosimDistance } },
       });
     }
-  }, [communitySubTab, alphaIndices, alphaGroup, alphaTest, betaDistance, betaOrdination, betaGroup, compType, compTopN, compTaxLevel, compGroup, permanovaGroup, permanovaDistance, anosimGroup, anosimDistance, rarefactionMetrics, rarefactionGroup, rarefactionSteps, rarefactionIterations, taxonomyBarLevel, taxonomyBarTopN, taxonomyBarGroup, corePrevalence, coreAbundance, coreGroup, runAnalysis, sessionId, clearResult, sessionStore]);
+  }, [communitySubTab, alphaIndices, alphaGroup, alphaTest, betaDistance, betaOrdination, betaGroup, betaSizeColumn, compType, compTopN, compTaxLevel, compGroup, permanovaGroup, permanovaDistance, anosimGroup, anosimDistance, rarefactionMetrics, rarefactionGroup, rarefactionSteps, rarefactionIterations, taxonomyBarLevel, taxonomyBarTopN, taxonomyBarGroup, corePrevalence, coreAbundance, coreGroup, runAnalysis, sessionId, clearResult, sessionStore]);
 
   const handleRunDifferential = useCallback(async () => {
     clearResult();
@@ -821,6 +825,17 @@ export function Microbiome() {
                         <Select value={betaGroup} onValueChange={setBetaGroup}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
+                            {metadataColumns.map((col) => (
+                              <SelectItem key={col} value={col}>{col}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </ParameterItem>
+                      <ParameterItem label="Point Size Column" tooltip="Optional numeric metadata column (e.g. Bleeding) that scales marker size, as in the source publication">
+                        <Select value={betaSizeColumn} onValueChange={setBetaSizeColumn}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">None (uniform size)</SelectItem>
                             {metadataColumns.map((col) => (
                               <SelectItem key={col} value={col}>{col}</SelectItem>
                             ))}

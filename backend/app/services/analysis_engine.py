@@ -1608,10 +1608,17 @@ def _group_confidence_ellipse(
     return pts[0].tolist(), pts[1].tolist()
 
 
+# Okabe-Ito colorblind-safe palette, standard for publication figures.
 _PLOTLY_GROUP_COLORS = [
-    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+    '#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7',
+    '#56B4E9', '#F0E442', '#000000', '#999999', '#882255',
 ]
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip('#')
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f'rgba({r},{g},{b},{alpha})'
 
 
 def _ordination_scatter_plot(
@@ -1624,15 +1631,19 @@ def _ordination_scatter_plot(
     title: str,
     group_metadata: Optional[Dict[str, str]] = None,
     point_sizes: Optional[Dict[str, float]] = None,
+    group_label: Optional[str] = None,
+    size_label: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a Plotly scatter figure for ordination coordinates.
+    """Build a publication-quality Plotly scatter figure for ordination
+    coordinates.
 
     One trace per group when ``group_metadata`` (sample -> group) is given,
     with a 95% confidence ellipse per group (the source publication's PCoA
     style); otherwise a single trace with all samples.  ``point_sizes``
     (sample -> continuous value, e.g. bleeding severity) scales marker
-    diameters.  Always returns a figure dict so the agent executor can
-    stream it as ``plot_data``.
+    diameters.  Layout follows journal-figure conventions: white background,
+    boxed axes with outward ticks, no gridlines, colorblind-safe palette,
+    Arial-type fonts, and informative hover tooltips.
     """
     size_for: Optional[Dict[str, float]] = None
     if point_sizes:
@@ -1646,14 +1657,28 @@ def _ordination_scatter_plot(
             }
 
     def _marker(color: Optional[str], index: pd.Index) -> Dict[str, Any]:
-        marker: Dict[str, Any] = {'opacity': 0.8}
+        marker: Dict[str, Any] = {
+            'opacity': 0.85,
+            'line': {'color': 'rgba(0,0,0,0.35)', 'width': 0.6},
+        }
         if color:
             marker['color'] = color
         if size_for:
             marker['size'] = [size_for.get(str(s), 8.0) for s in index]
         else:
-            marker['size'] = 10
+            marker['size'] = 9
         return marker
+
+    def _hover(index: pd.Index, group: Optional[str]) -> List[str]:
+        rows = []
+        for s in index:
+            parts = [f'<b>{s}</b>']
+            if group is not None:
+                parts.append(f'{group_label or "Group"}: {group}')
+            if size_for and str(s) in size_for:
+                parts.append(f'{size_label or "Size"}: {point_sizes[str(s)]:.3g}')
+            rows.append('<br>'.join(parts))
+        return rows
 
     traces: List[Dict[str, Any]] = []
     if group_metadata:
@@ -1663,15 +1688,8 @@ def _ordination_scatter_plot(
             color = _PLOTLY_GROUP_COLORS[i % len(_PLOTLY_GROUP_COLORS)]
             mask = (groups.loc[common] == grp).values
             sub = coords.loc[common][mask]
-            traces.append({
-                'x': sub[x_col].tolist(),
-                'y': sub[y_col].tolist(),
-                'mode': 'markers',
-                'name': str(grp),
-                'text': [str(s) for s in sub.index],
-                'marker': _marker(color, sub.index),
-            })
-            # Per-group 95% confidence ellipse (paper Fig 1c/1d style)
+            # Per-group 95% confidence ellipse drawn first so points sit on
+            # top (paper Fig 1c/1d style), with a faint fill to show spread.
             ellipse = _group_confidence_ellipse(sub[x_col].tolist(), sub[y_col].tolist())
             if ellipse is not None:
                 traces.append({
@@ -1679,26 +1697,62 @@ def _ordination_scatter_plot(
                     'y': ellipse[1],
                     'mode': 'lines',
                     'name': f'{grp} 95% ellipse',
-                    'line': {'color': color, 'width': 2},
+                    'line': {'color': color, 'width': 1.8},
+                    'fill': 'toself',
+                    'fillcolor': _hex_to_rgba(color, 0.08),
                     'showlegend': False,
                     'hoverinfo': 'skip',
                 })
+            traces.append({
+                'x': sub[x_col].tolist(),
+                'y': sub[y_col].tolist(),
+                'mode': 'markers',
+                'name': str(grp),
+                'text': _hover(sub.index, str(grp)),
+                'hovertemplate': '%{text}<br>%{xaxis.title.text}: %{x:.3f}<br>%{yaxis.title.text}: %{y:.3f}<extra></extra>',
+                'marker': _marker(color, sub.index),
+            })
     else:
         traces.append({
             'x': coords[x_col].tolist(),
             'y': coords[y_col].tolist(),
             'mode': 'markers',
             'name': 'samples',
-            'text': [str(s) for s in coords.index],
-            'marker': _marker(None, coords.index),
+            'text': _hover(coords.index, None),
+            'hovertemplate': '%{text}<br>%{xaxis.title.text}: %{x:.3f}<br>%{yaxis.title.text}: %{y:.3f}<extra></extra>',
+            'marker': _marker('#0072B2', coords.index),
         })
+
+    axis_style = {
+        'showline': True,
+        'linecolor': 'black',
+        'linewidth': 1.2,
+        'mirror': True,
+        'ticks': 'outside',
+        'tickwidth': 1,
+        'tickcolor': 'black',
+        'zeroline': False,
+        'showgrid': False,
+        'title': {'font': {'size': 15}},
+    }
     return {
         'data': traces,
         'layout': {
-            'title': title,
-            'xaxis': {'title': xlabel},
-            'yaxis': {'title': ylabel},
+            'title': {'text': title, 'font': {'size': 17}},
+            'xaxis': {**axis_style, 'title': {**axis_style['title'], 'text': xlabel}},
+            'yaxis': {**axis_style, 'title': {**axis_style['title'], 'text': ylabel}},
             'hovermode': 'closest',
+            'plot_bgcolor': 'white',
+            'paper_bgcolor': 'white',
+            'font': {'family': 'Arial, "Helvetica Neue", sans-serif', 'size': 13, 'color': 'black'},
+            'legend': {
+                **({'title': {'text': f'<b>{group_label}</b>'}} if group_label else {}),
+                'bordercolor': 'rgba(0,0,0,0.25)',
+                'borderwidth': 1,
+                'bgcolor': 'rgba(255,255,255,0.9)',
+                'itemsizing': 'constant',
+            },
+            'margin': {'l': 70, 'r': 30, 't': 60, 'b': 60},
         },
     }
 
@@ -1710,7 +1764,7 @@ def run_pcoa(
 ) -> Dict[str, Any]:
     """Run PCoA and return structured results."""
     params = parameters or {}
-    metric = params.get('metric', 'braycurtis')
+    metric = params.get('metric') or params.get('distance_metric') or 'braycurtis'
     engine = AnalysisEngine()
     dist_matrix = engine.beta_diversity(df, distance=metric)
     pcoa_result = engine.pcoa(dist_matrix)
@@ -1736,16 +1790,19 @@ def run_pcoa(
         vx = ve[0] if len(ve) > 0 else 0.0
         vy = ve[1] if len(ve) > 1 else 0.0
         # Optional continuous metadata column scales marker size (the paper
-        # sizes dots by bleeding severity).
+        # sizes dots by bleeding severity). Non-numeric entries are coerced
+        # to NaN and skipped instead of aborting the whole plot.
         point_sizes = None
         size_column = params.get('size_column')
         if metadata_df is not None and size_column and size_column in metadata_df.columns:
+            numeric = pd.to_numeric(metadata_df[size_column], errors='coerce')
             point_sizes = {
-                str(s): float(metadata_df.loc[s, size_column])
+                str(s): float(numeric.loc[s])
                 for s in samples_df.index
-                if s in metadata_df.index
-                and pd.notna(metadata_df.loc[s, size_column])
+                if s in numeric.index and pd.notna(numeric.loc[s])
             }
+            if not point_sizes:
+                point_sizes = None
         results['plot_data'] = _ordination_scatter_plot(
             samples_df, 'PC1', 'PC2',
             xlabel=f'PC1 ({vx:.1f}%)',
@@ -1753,6 +1810,8 @@ def run_pcoa(
             title=f'Microbiome PCoA ({metric})',
             group_metadata=results.get('group_metadata'),
             point_sizes=point_sizes,
+            group_label=group_column,
+            size_label=size_column if point_sizes else None,
         )
 
     return results
@@ -1765,7 +1824,7 @@ def run_nmds(
 ) -> Dict[str, Any]:
     """Run NMDS and return structured results."""
     params = parameters or {}
-    metric = params.get('metric', 'braycurtis')
+    metric = params.get('metric') or params.get('distance_metric') or 'braycurtis'
     n_components = params.get('n_components', 2)
     engine = AnalysisEngine()
     dist_matrix = engine.beta_diversity(df, distance=metric)
@@ -1792,12 +1851,24 @@ def run_nmds(
     if 'NMDS1' in coords_df.columns and 'NMDS2' in coords_df.columns:
         stress = results['stress']
         stress_txt = f'{stress:.4f}' if isinstance(stress, (int, float)) else 'n/a'
+        point_sizes = None
+        size_column = params.get('size_column')
+        if metadata_df is not None and size_column and size_column in metadata_df.columns:
+            numeric = pd.to_numeric(metadata_df[size_column], errors='coerce')
+            point_sizes = {
+                str(s): float(numeric.loc[s])
+                for s in coords_df.index
+                if s in numeric.index and pd.notna(numeric.loc[s])
+            } or None
         results['plot_data'] = _ordination_scatter_plot(
             coords_df, 'NMDS1', 'NMDS2',
             xlabel='NMDS1',
             ylabel='NMDS2',
             title=f'Microbiome NMDS ({metric}, stress={stress_txt})',
             group_metadata=results.get('group_metadata'),
+            point_sizes=point_sizes,
+            group_label=group_column,
+            size_label=size_column if point_sizes else None,
         )
 
     return results

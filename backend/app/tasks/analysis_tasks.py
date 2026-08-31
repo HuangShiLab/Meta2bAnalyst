@@ -370,6 +370,7 @@ def pcoa_task(
     session_id: str,
     distance: str = "braycurtis",
     grouping: Optional[str] = None,
+    size_column: Optional[str] = None,
 ) -> Dict[str, Any]:
     """PCoA asynchronous task."""
     _update_task_state(self, "STARTED", {"progress": 10, "message": "Loading data..."})
@@ -380,16 +381,11 @@ def pcoa_task(
     
     _update_task_state(self, "STARTED", {"progress": 40, "message": "Computing PCoA..."})
     
-    params = {"metric": distance, "group_column": grouping}
+    # run_pcoa renders the publication-style scatter itself (per-group 95%
+    # ellipses, severity-scaled markers); earlier code overwrote it with a
+    # bare scatter here, hiding the paper-style figure from async runs.
+    params = {"metric": distance, "group_column": grouping, "size_column": size_column}
     result_data = run_pcoa(df, metadata_df, params)
-    
-    # Generate Plotly scatter
-    if metadata_df is not None and grouping and grouping in metadata_df.columns:
-        engine = AnalysisEngine()
-        dist_matrix = engine.beta_diversity(df, distance=distance)
-        pcoa_result = engine.pcoa(dist_matrix)
-        plot_data = engine.plotly_pcoa_scatter(pcoa_result, metadata_df, grouping)
-        result_data["plot_data"] = plot_data
     
     _update_task_state(self, "STARTED", {"progress": 80, "message": "Saving results..."})
     result_path = _save_result(session_id, self.request.id, "pcoa", result_data)
@@ -605,6 +601,8 @@ def nmds_task(
     session_id: str,
     distance: str = "braycurtis",
     n_components: int = 2,
+    grouping: Optional[str] = None,
+    size_column: Optional[str] = None,
 ) -> Dict[str, Any]:
     """NMDS asynchronous task."""
     _update_task_state(self, "STARTED", {"progress": 10, "message": "Loading data..."})
@@ -615,7 +613,7 @@ def nmds_task(
     
     _update_task_state(self, "STARTED", {"progress": 40, "message": "Computing NMDS..."})
     
-    params = {"metric": distance, "n_components": n_components}
+    params = {"metric": distance, "n_components": n_components, "group_column": grouping, "size_column": size_column}
     result_data = run_nmds(df, metadata_df, params)
     
     _update_task_state(self, "STARTED", {"progress": 80, "message": "Saving results..."})
