@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,9 +11,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
 import { StatusAlert } from "@/components/shared/StatusAlert";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { filterData, getInspection } from "@/utils/api";
 
 export function FilterPage() {
   const navigate = useNavigate();
+  const sessionId = useSessionStore((s) => s.sessionId);
   const { setFilterParams } = useSessionStore();
 
   const [minCount, setMinCount] = useState(4);
@@ -22,15 +25,22 @@ export function FilterPage() {
   const [varianceRemove, setVarianceRemove] = useState(10);
   const [varianceBased, setVarianceBased] = useState<"iqr" | "sd" | "cv">("iqr");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [result, setResult] = useState<{ before: number; after: number } | null>(null);
-  const [showResult, setShowResult] = useState(false);
+  const [nSamples, setNSamples] = useState<number | null>(null);
+  const [result, setResult] = useState<{ before: number; after: number; samplesRemoved: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    getInspection(sessionId)
+      .then((d) => setNSamples(d.sample_count))
+      .catch(() => setNSamples(null));
+  }, [sessionId]);
 
   const handleSubmit = async () => {
+    if (!sessionId) return;
     setIsSubmitting(true);
-    setShowResult(false);
-
-    // Simulate processing
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    setError(null);
+    setResult(null);
 
     const filterParams = {
       removeConstantFeatures: false,
@@ -42,12 +52,30 @@ export function FilterPage() {
       lowVarianceBasedOn: varianceBased,
     };
 
-    setFilterParams(filterParams);
-
-    const afterCount = Math.floor(2920 * (1 - (varianceRemove / 100) * 0.3) - (countMethod === "prevalence" ? (prevalence / 100) * 500 : 0));
-    setResult({ before: 2920, after: Math.max(afterCount, 100) });
-    setShowResult(true);
-    setIsSubmitting(false);
+    try {
+      const minSamples =
+        countMethod === "prevalence" && nSamples
+          ? Math.max(1, Math.round((prevalence / 100) * nSamples))
+          : 1;
+      const resp = await filterData(sessionId, {
+        min_samples: minSamples,
+        min_abundance: minCount,
+        abundance_method: countMethod,
+        variance_remove_ratio: varianceRemove / 100,
+        variance_based: varianceBased,
+      });
+      setFilterParams(filterParams);
+      setResult({
+        before: resp.row_count_before,
+        after: resp.row_count_after,
+        samplesRemoved: resp.samples_removed,
+      });
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "Filtering failed");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleReset = () => {
@@ -57,15 +85,23 @@ export function FilterPage() {
     setVarianceRemove(10);
     setVarianceBased("iqr");
     setResult(null);
-    setShowResult(false);
+    setError(null);
   };
 
   return (
     <div className={cn("mx-auto max-w-3xl space-y-6")}>
+      {!sessionId && <NoSessionBanner />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Data Filtering</h1>
         <p className="text-muted-foreground">Remove low-count and low-variance features to improve analysis quality</p>
       </div>
+
+      {error && <StatusAlert status="error" title="Filtering failed" description={error} />}
+      {nSamples != null && (
+        <p className="text-sm text-muted-foreground">
+          Current table: {nSamples} samples. Prevalence {prevalence}% ≈ at least {Math.max(1, Math.round((prevalence / 100) * nSamples))} samples.
+        </p>
+      )}
 
       {/* Low Count Filter */}
       <Card>
@@ -268,11 +304,11 @@ export function FilterPage() {
       </div>
 
       {/* Result Preview */}
-      {showResult && result && (
+      {result && (
         <StatusAlert
           status="success"
           title="Filtering Complete"
-          description={`Feature count changed: ${result.before.toLocaleString()} → ${result.after.toLocaleString()} (removed ${result.before - result.after} features)`}
+          description={`Feature count changed: ${result.before.toLocaleString()} → ${result.after.toLocaleString()} (removed ${result.before - result.after} features${result.samplesRemoved ? `, ${result.samplesRemoved} samples` : ""}). Downstream analyses will use the filtered table.`}
         />
       )}
 
@@ -282,7 +318,7 @@ export function FilterPage() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           Previous: Inspection
         </Button>
-        <Button onClick={() => navigate("/normalize")} disabled={!showResult}>
+        <Button onClick={() => navigate("/normalize")} disabled={!result}>
           Proceed to Normalize
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>

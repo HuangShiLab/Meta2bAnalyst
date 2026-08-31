@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Home } from "@/pages/Home";
 import { UploadPage } from "@/pages/Upload";
+import { Inspection } from "@/pages/Inspection";
+import { FilterPage } from "@/pages/Filter";
+import { Normalize } from "@/pages/Normalize";
 import { Microbiome } from "@/pages/Microbiome";
 import { MultiOmics } from "@/pages/MultiOmics";
 import { MultiSite } from "@/pages/MultiSite";
@@ -16,6 +19,9 @@ function App() {
         <Route element={<MainLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/upload" element={<UploadPage />} />
+          <Route path="/inspection" element={<Inspection />} />
+          <Route path="/filter" element={<FilterPage />} />
+          <Route path="/normalize" element={<Normalize />} />
           <Route path="/microbiome" element={<Microbiome />} />
           <Route path="/multi-omics" element={<MultiOmics />} />
           <Route path="/multi-site" element={<MultiSite />} />

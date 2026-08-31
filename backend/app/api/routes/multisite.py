@@ -35,6 +35,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _sanitize_json(obj: Any) -> Any:
+    """Recursively convert numpy types to native Python so result_data is JSON-serializable."""
+    import numpy as np
+    import pandas as pd
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, pd.DataFrame):
+        return _sanitize_json(obj.to_dict(orient="records"))
+    if isinstance(obj, pd.Series):
+        return _sanitize_json(obj.to_dict())
+    return obj
+
+
 # ─────────────────────────────── Request Models
 
 class MultiSitePCoARequest(BaseModel):
@@ -135,7 +158,7 @@ async def analyze_multisite_pcoa(
             connect_subjects=request.connect_subjects,
         )
         job.status = 'completed'
-        job.result_data = result
+        job.result_data = _sanitize_json(result)
         job.completed_at = datetime.utcnow()
         db.commit()
 
@@ -145,7 +168,7 @@ async def analyze_multisite_pcoa(
             job_type='multisite_pcoa',
             status='completed',
             parameters=job.parameters,
-            result_data=result,
+            result_data=job.result_data,
             started_at=job.started_at,
             completed_at=job.completed_at,
         )
@@ -194,7 +217,7 @@ async def analyze_multisite_permanova(
             permutations=request.permutations,
         )
         job.status = 'completed'
-        job.result_data = result
+        job.result_data = _sanitize_json(result)
         job.completed_at = datetime.utcnow()
         db.commit()
 
@@ -204,7 +227,7 @@ async def analyze_multisite_permanova(
             job_type='multisite_permanova',
             status='completed',
             parameters=job.parameters,
-            result_data=result,
+            result_data=job.result_data,
             started_at=job.started_at,
             completed_at=job.completed_at,
         )
@@ -254,7 +277,7 @@ async def analyze_multisite_markers(
             fc_threshold=request.fc_threshold,
         )
         job.status = 'completed'
-        job.result_data = result
+        job.result_data = _sanitize_json(result)
         job.completed_at = datetime.utcnow()
         db.commit()
 
@@ -264,7 +287,7 @@ async def analyze_multisite_markers(
             job_type='multisite_markers',
             status='completed',
             parameters=job.parameters,
-            result_data=result,
+            result_data=job.result_data,
             started_at=job.started_at,
             completed_at=job.completed_at,
         )
@@ -314,7 +337,7 @@ async def analyze_multisite_temporal(
             distance_metric=request.distance_metric,
         )
         job.status = 'completed'
-        job.result_data = result
+        job.result_data = _sanitize_json(result)
         job.completed_at = datetime.utcnow()
         db.commit()
 
@@ -324,7 +347,7 @@ async def analyze_multisite_temporal(
             job_type='multisite_temporal',
             status='completed',
             parameters=job.parameters,
-            result_data=result,
+            result_data=job.result_data,
             started_at=job.started_at,
             completed_at=job.completed_at,
         )
@@ -371,7 +394,7 @@ async def analyze_multisite_network_compare(
             threshold=request.threshold,
         )
         job.status = 'completed'
-        job.result_data = result
+        job.result_data = _sanitize_json(result)
         job.completed_at = datetime.utcnow()
         db.commit()
 
@@ -381,7 +404,7 @@ async def analyze_multisite_network_compare(
             job_type='multisite_network_compare',
             status='completed',
             parameters=job.parameters,
-            result_data=result,
+            result_data=job.result_data,
             started_at=job.started_at,
             completed_at=job.completed_at,
         )

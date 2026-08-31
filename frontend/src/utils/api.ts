@@ -202,8 +202,10 @@ export const runVolcano = async (
   sessionId: string,
   params: DifferentialParams
 ): Promise<AnalysisJobResponse> => {
+  // No separate backend endpoint: the volcano plot is the differential
+  // analysis' plot_data, produced by /analyze/differential.
   const response = await api.post<AnalysisJobResponse>(
-    `/sessions/${sessionId}/analyze/volcano`,
+    `/sessions/${sessionId}/analyze/differential`,
     params
   );
   return response.data;
@@ -708,5 +710,88 @@ export const runAdvancedDimred = async (
     `/sessions/${sessionId}/analyze/advanced-dimred`,
     params
   );
+  return response.data;
+};
+
+// Data preparation APIs (inspect / filter / normalize) — real backend calls.
+
+export interface InspectionResponse {
+  session_id: string;
+  file_type: string;
+  sample_count: number;
+  feature_count: number;
+  sample_names: string[];
+  summary: {
+    total_reads: number;
+    mean_reads_per_sample: number;
+    median_reads_per_sample: number;
+    min_reads_per_sample: number;
+    max_reads_per_sample: number;
+    sparsity: number;
+    top_features?: Record<string, number>;
+  };
+  preview?: Record<string, unknown>[];
+  library_sizes?: Record<string, number>;
+  metadata?: {
+    metadata_samples?: number;
+    table_samples?: number;
+    matched_samples?: number;
+    match_ratio?: number;
+    n_metadata_columns?: number;
+    unmatched_table_samples?: string[];
+    unmatched_metadata_samples?: string[];
+    error?: string;
+  } | null;
+}
+
+export const getInspection = async (sessionId: string): Promise<InspectionResponse> => {
+  const response = await api.get<InspectionResponse>(`/sessions/${sessionId}/inspect`);
+  return response.data;
+};
+
+export interface FilterApiRequest {
+  min_samples?: number;
+  min_abundance?: number;
+  max_features?: number | null;
+  variance_remove_ratio?: number;
+  variance_based?: "iqr" | "sd" | "cv";
+  abundance_method?: "prevalence" | "mean" | "median";
+}
+
+export interface FilterApiResponse {
+  row_count_before: number;
+  row_count_after: number;
+  column_count_before: number;
+  column_count_after: number;
+  samples_removed: number;
+  features_removed: number;
+  status: string;
+}
+
+export const filterData = async (
+  sessionId: string,
+  params: FilterApiRequest
+): Promise<FilterApiResponse> => {
+  const response = await api.post<FilterApiResponse>(`/sessions/${sessionId}/filter`, params);
+  return response.data;
+};
+
+export interface NormalizeApiRequest {
+  method: "relative" | "tss" | "css" | "uq" | "rle" | "tmm" | "clr" | "rarefaction" | "none";
+  target_depth?: number | null;
+  log_transform?: boolean;
+}
+
+export interface NormalizeApiResponse {
+  method: string;
+  status: string;
+  [key: string]: unknown;
+}
+
+export const normalizeDataApi = async (
+  sessionId: string,
+  params: NormalizeApiRequest
+): Promise<NormalizeApiResponse> => {
+  const response = await api.post<NormalizeApiResponse>(`/sessions/${sessionId}/normalize`, params);
   return response.data;
 };

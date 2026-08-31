@@ -82,6 +82,8 @@ class DataInspectionResponse(BaseModel):
     feature_names: List[str]
     summary: Dict[str, Any]
     preview: Optional[List[Dict[str, Any]]] = None
+    library_sizes: Optional[Dict[str, float]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class FilterRequest(BaseModel):
@@ -91,6 +93,9 @@ class FilterRequest(BaseModel):
     max_features: Optional[int] = Field(default=None, ge=1, description="Maximum number of features to keep")
     sample_filter: Optional[List[str]] = Field(default=None, description="List of sample names to keep")
     feature_filter: Optional[List[str]] = Field(default=None, description="List of feature names to keep")
+    variance_remove_ratio: Optional[float] = Field(default=0.0, ge=0.0, le=0.9, description="Fraction of lowest-dispersion features to remove")
+    variance_based: Optional[str] = Field(default="iqr", description="Dispersion measure: iqr, sd, or cv")
+    abundance_method: Optional[str] = Field(default="prevalence", description="Low-count filter mode: prevalence, mean, or median")
 
     @field_validator("max_features")
     def max_features_must_be_positive(cls, v):
@@ -119,7 +124,7 @@ class NormalizeRequest(BaseModel):
 
     @field_validator("method")
     def method_must_be_valid(cls, v):
-        allowed = {"relative", "css", "tmm", "tss", "rarefaction", "none", "log", "clr", "log10"}
+        allowed = {"relative", "css", "tmm", "tss", "rarefaction", "none", "log", "clr", "log10", "rle", "uq"}
         if v not in allowed:
             raise ValueError(f"method must be one of {allowed}")
         return v

@@ -10,9 +10,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
 import { StatusAlert } from "@/components/shared/StatusAlert";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { normalizeDataApi, type NormalizeApiRequest } from "@/utils/api";
 
 export function Normalize() {
   const navigate = useNavigate();
+  const sessionId = useSessionStore((s) => s.sessionId);
   const { setNormalizationParams } = useSessionStore();
 
   const [rarefaction, setRarefaction] = useState<"none" | "rarefy">("none");
@@ -20,33 +23,58 @@ export function Normalize() {
   const [scaling, setScaling] = useState<"none" | "tss" | "css" | "uq">("tss");
   const [transformation, setTransformation] = useState<"none" | "clr" | "rle" | "tmm">("none");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showResult, setShowResult] = useState(false);
+  const [resultMsg, setResultMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const scalingSelected = scaling !== "none";
 
   const handleSubmit = async () => {
+    if (!sessionId) return;
     setIsSubmitting(true);
-    setShowResult(false);
+    setResultMsg(null);
+    setError(null);
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Resolve the UI's three groups into the single backend method pipeline:
+    // rarefaction wins, then scaling, then transformation.
+    let method: NormalizeApiRequest["method"] = "none";
+    let target_depth: number | null = null;
+    if (rarefaction === "rarefy") {
+      method = "rarefaction";
+      target_depth = rarefactionReads;
+    } else if (scalingSelected) {
+      method = scaling;
+    } else if (transformation !== "none") {
+      method = transformation;
+    }
 
-    setNormalizationParams({
-      rarefaction,
-      rarefactionReads: rarefaction === "rarefy" ? rarefactionReads : 0,
-      scaling,
-      transformation: scalingSelected ? "none" : transformation,
-    });
-
-    setShowResult(true);
-    setIsSubmitting(false);
+    try {
+      const resp = await normalizeDataApi(sessionId, { method, target_depth });
+      setNormalizationParams({
+        rarefaction,
+        rarefactionReads: rarefaction === "rarefy" ? rarefactionReads : 0,
+        scaling,
+        transformation: scalingSelected ? "none" : transformation,
+      });
+      setResultMsg(
+        `${String(resp.message ?? "Normalization applied")} (method=${resp.method}, table ${resp.row_count} × ${resp.column_count}). Downstream analyses will use the normalized table.`
+      );
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "Normalization failed");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className={cn("mx-auto max-w-3xl space-y-6")}>
+      {!sessionId && <NoSessionBanner />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Data Normalization</h1>
         <p className="text-muted-foreground">Normalize data to eliminate sequencing depth bias</p>
       </div>
+
+      {error && <StatusAlert status="error" title="Normalization failed" description={error} />}
 
       {/* Warning */}
       <StatusAlert
@@ -229,11 +257,11 @@ export function Normalize() {
         </Button>
       </div>
 
-      {showResult && (
+      {resultMsg && (
         <StatusAlert
           status="success"
           title="Normalization Complete"
-          description={`Configuration saved: ${rarefaction !== "none" ? "rarefaction" : "no rarefaction"} → ${scaling !== "none" ? scaling.toUpperCase() : "no scaling"} → ${!scalingSelected && transformation !== "none" ? transformation.toUpperCase() : "no transformation"}`}
+          description={resultMsg}
         />
       )}
 
@@ -243,7 +271,7 @@ export function Normalize() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           Previous: Filter
         </Button>
-        <Button onClick={() => navigate("/analysis-species")}>
+        <Button onClick={() => navigate("/microbiome")}>
           Proceed to Analysis
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>

@@ -1,50 +1,50 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowRight, ArrowLeft, CheckCircle, XCircle, AlertTriangle, FileBarChart } from "lucide-react";
+import { ArrowRight, ArrowLeft, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DataCard } from "@/components/shared/DataCard";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
+import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { StatusAlert } from "@/components/shared/StatusAlert";
 import type { PlotlyFigure } from "@/types";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import { useSessionStore } from "@/stores/sessionStore";
+import { getInspection, type InspectionResponse } from "@/utils/api";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 export function Inspection() {
   const navigate = useNavigate();
+  const sessionId = useSessionStore((s) => s.sessionId);
 
-  const [removeConstant, setRemoveConstant] = useState(false);
-  const [removeSingleton, setRemoveSingleton] = useState<"none" | "one-sample" | "one-total">("none");
-  const [stats, setStats] = useState({
-    dataType: "Species Abundance Table",
-    samples: 34,
-    features: 2920,
-    totalReads: 180573,
-    avgReads: 5310,
-    sampleMatch: true,
-    normalized: false,
-    factors: 7,
-  });
+  const [data, setData] = useState<InspectionResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleUpdateOverview = () => {
-    // Simulate update based on filter params
-    const newFeatures = removeConstant ? stats.features - 120 : stats.features;
-    setStats((prev) => ({ ...prev, features: removeSingleton !== "none" ? newFeatures - 45 : newFeatures }));
-  };
+  useEffect(() => {
+    if (!sessionId) return;
+    setLoading(true);
+    setError(null);
+    getInspection(sessionId)
+      .then(setData)
+      .catch((e) => {
+        const detail = e?.response?.data?.detail;
+        setError(typeof detail === "string" ? detail : "Failed to load inspection data");
+      })
+      .finally(() => setLoading(false));
+  }, [sessionId]);
 
-  const librarySizeFigure: PlotlyFigure = useMemo(() => {
-    const sampleNames = Array.from({ length: 34 }, (_, i) => `Sample_${String(i + 1).padStart(2, "0")}`);
-    const sizes = sampleNames.map(() => Math.floor(Math.random() * 8000) + 2000);
+  const librarySizeFigure: PlotlyFigure | null = useMemo(() => {
+    if (!data?.library_sizes) return null;
+    const entries = Object.entries(data.library_sizes);
     return {
       data: [
         {
-          x: sampleNames,
-          y: sizes,
+          x: entries.map(([k]) => k),
+          y: entries.map(([, v]) => v),
           type: "bar",
           marker: { color: "#1e40af" },
           name: "Library Size",
@@ -52,143 +52,142 @@ export function Inspection() {
       ],
       layout: {
         title: { text: "Library Size Distribution", font: { size: 16 } },
-        xaxis: { title: "Sample", tickangle: -45 },
-        yaxis: { title: "Reads" },
+        xaxis: { title: "Sample", tickangle: -45, automargin: true },
+        yaxis: { title: "Total Abundance / Reads" },
         height: 400,
       },
     };
-  }, []);
+  }, [data]);
 
-  const metadataColumns = useMemo(
-    () => [
-      { field: "sample" as const, headerName: "Sample", width: 120 },
-      { field: "group" as const, headerName: "Group", width: 100 },
-      { field: "treatment" as const, headerName: "Treatment", width: 120 },
-      { field: "age" as const, headerName: "Age", width: 80 },
-      { field: "gender" as const, headerName: "Gender", width: 100 },
-      { field: "bmi" as const, headerName: "BMI", width: 90 },
-      { field: "location" as const, headerName: "Location", width: 130 },
-    ],
-    []
-  );
+  const previewColumns = useMemo(() => {
+    if (!data?.preview?.length) return [];
+    return Object.keys(data.preview[0]).map((k) => ({
+      field: k,
+      headerName: k,
+      width: 130,
+    }));
+  }, [data]);
 
-  const metadataRows = useMemo(
-    () => [
-      { sample: "Sample_01", group: "Control", treatment: "A", age: 24, gender: "M", bmi: 22.5, location: "Beijing" },
-      { sample: "Sample_02", group: "Treatment", treatment: "B", age: 30, gender: "F", bmi: 24.1, location: "Shanghai" },
-      { sample: "Sample_03", group: "Control", treatment: "A", age: 28, gender: "M", bmi: 21.8, location: "Beijing" },
-      { sample: "Sample_04", group: "Treatment", treatment: "B", age: 35, gender: "F", bmi: 26.3, location: "Guangzhou" },
-      { sample: "Sample_05", group: "Treatment", treatment: "C", age: 29, gender: "M", bmi: 23.7, location: "Shanghai" },
-    ],
-    []
-  );
+  const meta = data?.metadata;
+  const sampleMatched = meta ? (meta.matched_samples ?? 0) > 0 && meta.match_ratio === 1 : null;
 
   return (
     <div className={cn("mx-auto max-w-5xl space-y-6")}>
+      {!sessionId && <NoSessionBanner />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Data Integrity Check</h1>
         <p className="text-muted-foreground">Review data quality and sample matching before filtering</p>
       </div>
 
-      {/* Quick Filter Params */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Quick Filter</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="remove-constant"
-                checked={removeConstant}
-                onCheckedChange={(checked) => setRemoveConstant(checked === true)}
-              />
-              <Label htmlFor="remove-constant" className="cursor-pointer">
-                Remove constant features (same value across all samples)
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Remove Singletons:</span>
-              <RadioGroup
-                value={removeSingleton}
-                onValueChange={(v) => setRemoveSingleton(v as typeof removeSingleton)}
-                className="flex items-center gap-4"
-              >
-                <div className="flex items-center gap-1.5">
-                  <RadioGroupItem value="none" id="singleton-none" />
-                  <Label htmlFor="singleton-none" className="cursor-pointer text-sm">None</Label>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <RadioGroupItem value="one-sample" id="singleton-one-sample" />
-                  <Label htmlFor="singleton-one-sample" className="cursor-pointer text-sm">One sample</Label>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <RadioGroupItem value="one-total" id="singleton-one-total" />
-                  <Label htmlFor="singleton-one-total" className="cursor-pointer text-sm">One total count</Label>
-                </div>
-              </RadioGroup>
-            </div>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleUpdateOverview}>
-            <FileBarChart className="mr-2 h-4 w-4" />
-            Update Overview
-          </Button>
-        </CardContent>
-      </Card>
+      {error && <StatusAlert status="error" title="Inspection failed" description={error} />}
+      {loading && <p className="text-sm text-muted-foreground">Loading inspection data…</p>}
 
-      {/* Data Overview Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <DataCard title="Data Type" value={stats.dataType} badge="Species Abundance" badgeVariant="default" />
-        <DataCard title="Samples" value={stats.samples} description="Samples" />
-        <DataCard title="Features" value={stats.features.toLocaleString()} description="Features (OTUs/ASVs)" />
-        <DataCard title="Total Reads" value={stats.totalReads.toLocaleString()} description="Total reads" />
-        <DataCard title="Avg Reads/Sample" value={stats.avgReads.toLocaleString()} description="Reads per sample" />
-        <DataCard
-          title="Sample Name Matching"
-          value={stats.sampleMatch ? "Matched" : "Not Matched"}
-          badge={stats.sampleMatch ? "✓ Yes" : "✗ No"}
-          badgeVariant={stats.sampleMatch ? "default" : "destructive"}
-          icon={stats.sampleMatch ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
-        />
-        <DataCard
-          title="Normalization Check"
-          value={stats.normalized ? "Normalized" : "Raw Counts"}
-          badge={stats.normalized ? "✓ Yes" : "⚠ No"}
-          badgeVariant={stats.normalized ? "default" : "secondary"}
-          icon={stats.normalized ? <CheckCircle className="h-4 w-4 text-green-500" /> : <AlertTriangle className="h-4 w-4 text-accent" />}
-        />
-        <DataCard title="Experimental Factors" value={stats.factors} description="Factors in metadata" />
-      </div>
-
-      {/* Library Size Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Library Size Distribution</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-80">
-            <PlotlyChart figure={librarySizeFigure} className="h-full" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Metadata Preview */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Metadata Overview (First 5 Rows)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="ag-theme-quartz" style={{ height: 220 }}>
-            <AgGridReact
-              rowData={metadataRows}
-              columnDefs={metadataColumns}
-              defaultColDef={{ sortable: true, resizable: true }}
-              pagination={false}
-              domLayout="autoHeight"
+      {data && (
+        <>
+          {/* Data Overview Stats — all from the real uploaded feature table */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <DataCard title="Data Type" value={data.file_type} badge="Feature Table" badgeVariant="default" />
+            <DataCard title="Samples" value={data.sample_count} description="Samples" />
+            <DataCard title="Features" value={data.feature_count.toLocaleString()} description="Features (OTUs/ASVs/genera)" />
+            <DataCard title="Total Reads" value={Math.round(data.summary.total_reads).toLocaleString()} description="Sum over all samples" />
+            <DataCard title="Avg Reads/Sample" value={Math.round(data.summary.mean_reads_per_sample).toLocaleString()} description={`Median ${Math.round(data.summary.median_reads_per_sample).toLocaleString()}`} />
+            <DataCard
+              title="Sparsity"
+              value={`${(data.summary.sparsity * 100).toFixed(1)}%`}
+              description="Zero fraction of the matrix"
+            />
+            <DataCard
+              title="Sample Name Matching"
+              value={
+                meta == null
+                  ? "No metadata"
+                  : meta.error
+                    ? "Parse error"
+                    : `${meta.matched_samples}/${meta.table_samples} matched`
+              }
+              badge={meta == null ? "—" : sampleMatched ? "✓ 100%" : `✗ ${((meta.match_ratio ?? 0) * 100).toFixed(0)}%`}
+              badgeVariant={meta != null && !meta.error && sampleMatched ? "default" : "destructive"}
+              icon={
+                meta != null && !meta.error && sampleMatched ? (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )
+              }
+            />
+            <DataCard
+              title="Metadata Columns"
+              value={meta?.n_metadata_columns ?? "—"}
+              description="Variables in metadata"
             />
           </div>
-        </CardContent>
-      </Card>
+
+          {meta && !meta.error && !sampleMatched && (
+            <StatusAlert
+              status="warning"
+              title="Sample IDs do not fully match between feature table and metadata"
+              description={`${meta.matched_samples} of ${meta.table_samples} feature-table samples were found in the metadata. Unmatched in table: ${(meta.unmatched_table_samples ?? []).slice(0, 5).join(", ") || "none"}${(meta.unmatched_table_samples?.length ?? 0) > 5 ? " …" : ""}. Unmatched in metadata: ${(meta.unmatched_metadata_samples ?? []).slice(0, 5).join(", ") || "none"}${(meta.unmatched_metadata_samples?.length ?? 0) > 5 ? " …" : ""}. Please fix the IDs and re-upload, or downstream analyses will only use the matched subset.`}
+            />
+          )}
+
+          {/* Library Size Chart */}
+          {librarySizeFigure && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Library Size Distribution</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <PlotlyChart figure={librarySizeFigure} className="h-full" />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Real feature table preview */}
+          {data.preview && data.preview.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Feature Table Preview (first 5 × 5)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="ag-theme-quartz" style={{ height: 220 }}>
+                  <AgGridReact
+                    rowData={data.preview}
+                    columnDefs={previewColumns}
+                    defaultColDef={{ sortable: true, resizable: true }}
+                    pagination={false}
+                    domLayout="autoHeight"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Top features */}
+          {data.summary.top_features && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Top 10 Features by Mean Abundance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-1 text-sm">
+                  {Object.entries(data.summary.top_features).map(([name, v]) => (
+                    <li key={name} className="flex justify-between border-b border-muted pb-1">
+                      <span className="font-mono">{name}</span>
+                      <span className="text-muted-foreground">{v.toFixed(4)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
+      {!data && !loading && !error && sessionId && (
+        <StatusAlert status="info" title="No data" description="Nothing to inspect yet." />
+      )}
 
       {/* Bottom Navigation */}
       <div className="flex items-center justify-between pt-4">
@@ -196,11 +195,18 @@ export function Inspection() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           Previous: Upload
         </Button>
-        <Button onClick={() => navigate("/filter")}>
+        <Button onClick={() => navigate("/filter")} disabled={!data}>
           Proceed to Filter
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
+
+      {!data && !loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <AlertTriangle className="h-4 w-4" />
+          Upload a feature table first — this page shows real statistics of your uploaded data.
+        </div>
+      )}
     </div>
   );
 }

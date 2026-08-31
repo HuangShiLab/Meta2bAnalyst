@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session as DBSession
 
 from app.database import get_db
+from app.config import settings
 from app.models import DataFile, Session as SessionModel
 from app.schemas import (
     DataInspectionResponse,
@@ -29,11 +30,15 @@ router = APIRouter()
 
 
 def get_feature_table_path(session_id: str, db: DBSession) -> Optional[Path]:
-    """Get the feature table file path for a session."""
+    """Get the feature table file path for a session (latest processed version first)."""
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
-        .filter(DataFile.file_type.in_(["feature_table", "biom", "shared"]))
+        .filter(
+            (DataFile.file_type.in_(["feature_table", "biom", "shared", "microbiome", "filtered_feature_table"]))
+            | (DataFile.file_type.like("normalized\\_%", escape="\\"))
+        )
+        .order_by(DataFile.id.desc())
         .first()
     )
     if data_file:
@@ -121,7 +126,37 @@ async def inspect_data(
     # Preview first few rows (transposed for display: samples as rows)
     preview_df = df.iloc[:5, :5].T.reset_index()
     preview = preview_df.to_dict(orient="records")
-    
+
+    # Per-sample library sizes for the inspection bar chart
+    library_sizes = {str(s): float(v) for s, v in df.sum(axis=0).items()}
+
+    # Metadata cross-check: how many feature-table samples appear in metadata
+    metadata_info: Optional[Dict[str, Any]] = None
+    metadata_path = get_metadata_path(session_id, db)
+    if metadata_path and metadata_path.exists():
+        try:
+            # Metadata files are samples x variables with a '#SampleID' index
+            # column; read directly so the '#' header is not dropped.
+            try:
+                mdf = pd.read_csv(metadata_path, sep="\t", index_col=0)
+            except Exception:
+                mdf = pd.read_csv(metadata_path, index_col=0)
+            meta_samples = [str(s) for s in mdf.index]
+            table_samples = [str(s) for s in df.columns]
+            matched = sorted(set(table_samples) & set(meta_samples))
+            metadata_info = {
+                "metadata_samples": len(meta_samples),
+                "table_samples": len(table_samples),
+                "matched_samples": len(matched),
+                "match_ratio": round(len(matched) / max(len(table_samples), 1), 4),
+                "n_metadata_columns": int(mdf.shape[1]),
+                "unmatched_table_samples": sorted(set(table_samples) - set(meta_samples))[:20],
+                "unmatched_metadata_samples": sorted(set(meta_samples) - set(table_samples))[:20],
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse metadata for inspection: {e}")
+            metadata_info = {"error": str(e)}
+
     return DataInspectionResponse(
         session_id=session_id,
         file_id=data_file.id if data_file else 0,
@@ -134,6 +169,8 @@ async def inspect_data(
         feature_names=list(df.index),
         summary=summary,
         preview=preview,
+        library_sizes=library_sizes,
+        metadata=metadata_info,
     )
 
 
@@ -167,10 +204,14 @@ async def filter_data_endpoint(
             max_features=request.max_features,
             sample_filter=request.sample_filter,
             feature_filter=request.feature_filter,
+            variance_remove_ratio=request.variance_remove_ratio or 0.0,
+            variance_based=request.variance_based or "iqr",
+            abundance_method=request.abundance_method or "prevalence",
         )
         
         # Save filtered data
-        session_dir = Path("./uploads") / session_id
+        session_dir = Path(settings.UPLOAD_DIR) / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
         filtered_path = session_dir / "filtered_feature_table.tsv"
         filtered_df.to_csv(filtered_path, sep="\t")
         
@@ -238,7 +279,8 @@ async def normalize_data_endpoint(
         )
         
         # Save normalized data
-        session_dir = Path("./uploads") / session_id
+        session_dir = Path(settings.UPLOAD_DIR) / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
         normalized_path = session_dir / f"normalized_{request.method}.tsv"
         normalized_df.to_csv(normalized_path, sep="\t")
         
@@ -316,7 +358,13 @@ async def get_metadata_columns(
         )
 
     try:
-        meta_df, _ = parse_data_file(Path(record.file_path), "metadata")
+        # Read directly like analysis routes do: the leading '#SampleID' header
+        # must not be treated as a comment line (parse_data_file would skip it
+        # and misalign every column).
+        try:
+            meta_df = pd.read_csv(record.file_path, sep="\t", index_col=0)
+        except Exception:
+            meta_df = pd.read_csv(record.file_path, index_col=0)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse metadata: {e}")
 

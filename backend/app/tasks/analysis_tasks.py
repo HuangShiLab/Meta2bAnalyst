@@ -47,12 +47,36 @@ def _update_task_state(self, state: str, meta: Dict[str, Any]) -> None:
 
 
 # Feature-table file types in order of preference for the single-omics
-# (microbiome) analyses these tasks implement. 'metabolome' is last so a
-# multi-omics session never silently runs microbiome stats on the wrong omics.
+# (microbiome) analyses these tasks implement. Processed tables (normalized,
+# filtered) come FIRST so Filter/Normalize page operations actually take effect
+# downstream; 'metabolome' is last so a multi-omics session never silently runs
+# microbiome stats on the wrong omics.
 _FEATURE_TYPE_PREFERENCE = (
-    'microbiome', 'metaphlan', 'feature_table', 'filtered_feature_table',
-    'normalized_relative', 'biom', 'shared', 'metabolome',
+    'filtered_feature_table', 'microbiome', 'metaphlan', 'feature_table',
+    'biom', 'shared', 'metabolome',
 )
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert numpy/pandas types so kombu can JSON-encode task returns."""
+    import numpy as np
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, pd.DataFrame):
+        return _sanitize_for_json(obj.to_dict(orient="records"))
+    if isinstance(obj, pd.Series):
+        return _sanitize_for_json(obj.to_dict())
+    return obj
 
 
 def _load_session_data(session_id: str) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
@@ -79,11 +103,21 @@ def _load_session_data(session_id: str) -> tuple[Optional[pd.DataFrame], Optiona
 
     metadata_df = _load_metadata(files)
 
+    # Normalized tables (file_type 'normalized_<method>') take top priority —
+    # they are the product of the Normalize page and must drive downstream stats.
+    normalized_file = next(
+        (f for f in files if f.file_type and f.file_type.startswith("normalized_")), None
+    )
+
     df = None
-    for wanted in _FEATURE_TYPE_PREFERENCE:
-        data_file = next((f for f in files if f.file_type == wanted), None)
+    candidates = ([normalized_file] if normalized_file else []) + [
+        next((f for f in files if f.file_type == wanted), None)
+        for wanted in _FEATURE_TYPE_PREFERENCE
+    ]
+    for data_file in candidates:
         if data_file is None:
             continue
+        wanted = data_file.file_type
         try:
             parsed, _ = parse_data_file(Path(data_file.file_path), file_type=wanted, use_chunks=True)
         except Exception as e:
@@ -103,7 +137,8 @@ def _load_session_data(session_id: str) -> tuple[Optional[pd.DataFrame], Optiona
     # Legacy fallback for sessions with no DB rows (should not happen, but
     # keeps old uploads usable): glob the upload dir, EXCLUDING metadata files.
     if df is None:
-        uploads_dir = Path("./uploads") / session_id
+        from app.config import settings
+        uploads_dir = Path(settings.UPLOAD_DIR) / session_id
         for file_path in sorted(uploads_dir.glob("*")):
             if not (file_path.is_file() and file_path.suffix in (".csv", ".tsv", ".txt", ".biom", ".shared")):
                 continue
@@ -193,7 +228,7 @@ def alpha_diversity_task(
         "task": "alpha_diversity",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -230,7 +265,7 @@ def beta_diversity_task(
         "task": "beta_diversity",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -299,10 +334,15 @@ def differential_task(
             diff_df = diff_df.rename(columns={"log2_fold_change": "log2FC"})
         if "log2FoldChange" in diff_df.columns:
             diff_df = diff_df.rename(columns={"log2FoldChange": "log2FC"})
-        if "padj" in diff_df.columns:
-            diff_df = diff_df.rename(columns={"padj": "pvalue"})
-        if "FDR" in diff_df.columns:
-            diff_df = diff_df.rename(columns={"FDR": "pvalue"})
+        # Rename adjusted-p aliases to 'pvalue' only when no raw 'pvalue'
+        # column exists — otherwise the rename creates duplicate 'pvalue'
+        # columns and plotly_volcano crashes on column assignment.
+        if "pvalue" not in diff_df.columns:
+            if "padj" in diff_df.columns:
+                diff_df = diff_df.rename(columns={"padj": "pvalue"})
+            if "FDR" in diff_df.columns:
+                diff_df = diff_df.rename(columns={"FDR": "pvalue"})
+        diff_df = diff_df.loc[:, ~diff_df.columns.duplicated()]
         if "pvalue" in diff_df.columns and "log2FC" in diff_df.columns:
             plot_data = engine.plotly_volcano(diff_df)
             result_data["plot_data"] = plot_data
@@ -316,7 +356,7 @@ def differential_task(
         "task": "differential",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -360,7 +400,7 @@ def pcoa_task(
         "task": "pcoa",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -400,7 +440,7 @@ def heatmap_task(
         "task": "heatmap",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -438,7 +478,7 @@ def random_forest_task(
         "task": "random_forest",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "feature_count": len(df.index),
         "sample_count": len(df.columns),
     }
@@ -486,7 +526,7 @@ def strain_composition_task(
         "task": "strain_composition",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "species": species,
     }
 
@@ -552,7 +592,7 @@ def strain_differential_task(
         "task": "strain_differential",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
         "species": species,
     }
 
@@ -587,7 +627,7 @@ def nmds_task(
         "task": "nmds",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
     }
 
 
@@ -624,7 +664,7 @@ def permanova_task(
         "task": "permanova",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
     }
 
 
@@ -661,5 +701,5 @@ def anosim_task(
         "task": "anosim",
         "status": "SUCCESS",
         "result_path": result_path,
-        "result_data": result_data,
+        "result_data": _sanitize_for_json(result_data),
     }

@@ -182,10 +182,13 @@ def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
-        .filter(DataFile.file_type.in_([
-            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative',
-            'microbiome', 'metabolome'
-        ]))
+        .filter(
+            DataFile.file_type.in_([
+                'feature_table', 'biom', 'shared', 'filtered_feature_table',
+                'microbiome', 'metabolome'
+            ])
+            | DataFile.file_type.like('normalized\\_%', escape='\\')
+        )
         .order_by(DataFile.id.desc())
         .first()
     )
@@ -238,10 +241,13 @@ def get_dataframe_by_name(session_id: str, db: DBSession, name_pattern: str) -> 
     data_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
-        .filter(DataFile.file_type.in_([
-            'feature_table', 'biom', 'shared', 'filtered_feature_table', 'normalized_relative',
-            'microbiome', 'metabolome'
-        ]))
+        .filter(
+            DataFile.file_type.in_([
+                'feature_table', 'biom', 'shared', 'filtered_feature_table',
+                'microbiome', 'metabolome'
+            ])
+            | DataFile.file_type.like('normalized\\_%', escape='\\')
+        )
         .filter(DataFile.original_name.ilike(f'%{name_pattern}%'))
         .order_by(DataFile.id.desc())
         .first()

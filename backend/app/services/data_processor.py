@@ -519,6 +519,9 @@ def filter_data(
     max_features: Optional[int] = None,
     sample_filter: Optional[List[str]] = None,
     feature_filter: Optional[List[str]] = None,
+    variance_remove_ratio: float = 0.0,
+    variance_based: str = "iqr",
+    abundance_method: str = "prevalence",
 ) -> pd.DataFrame:
     """
     Filter data based on various criteria.
@@ -530,6 +533,16 @@ def filter_data(
         max_features: Maximum number of top features to keep (by mean abundance).
         sample_filter: List of sample names to keep.
         feature_filter: List of feature names to keep.
+        variance_remove_ratio: Remove this fraction (0-0.9) of features with the
+            lowest dispersion. 0 disables the low-variance filter.
+        variance_based: Dispersion measure for the low-variance filter:
+            'iqr' (inter-quartile range), 'sd' (standard deviation), or
+            'cv' (coefficient of variation).
+        abundance_method: How the low-count filter is applied:
+            'prevalence' (default): keep features exceeding min_abundance in at
+                least min_samples samples;
+            'mean': keep features whose mean abundance >= min_abundance;
+            'median': keep features whose median abundance >= min_abundance.
 
     Returns:
         Filtered DataFrame.
@@ -549,11 +562,36 @@ def filter_data(
         filtered = filtered.loc[valid_features]
         logger.info(f"Filtered to {len(valid_features)} features")
 
-    # Filter by minimum abundance (presence in at least min_samples)
-    if min_abundance > 0 or min_samples > 1:
+    # Filter by abundance
+    if abundance_method == "mean":
+        if min_abundance > 0:
+            filtered = filtered[filtered.mean(axis=1) >= min_abundance]
+            logger.info(f"After mean-abundance filter (>= {min_abundance}): {len(filtered)} features")
+    elif abundance_method == "median":
+        if min_abundance > 0:
+            filtered = filtered[filtered.median(axis=1) >= min_abundance]
+            logger.info(f"After median-abundance filter (>= {min_abundance}): {len(filtered)} features")
+    elif min_abundance > 0 or min_samples > 1:
+        # prevalence: present above min_abundance in at least min_samples samples
         presence = (filtered > min_abundance).sum(axis=1)
         filtered = filtered[presence >= min_samples]
-        logger.info(f"After abundance filter: {len(filtered)} features")
+        logger.info(f"After prevalence filter: {len(filtered)} features")
+
+    # Remove low-dispersion features (they carry little discriminative signal)
+    if variance_remove_ratio > 0 and len(filtered) > 1:
+        ratio = min(variance_remove_ratio, 0.9)
+        if variance_based == "sd":
+            dispersion = filtered.std(axis=1)
+        elif variance_based == "cv":
+            mean = filtered.mean(axis=1)
+            dispersion = filtered.std(axis=1) / mean.replace(0, np.nan)
+            dispersion = dispersion.fillna(0.0)
+        else:  # iqr
+            dispersion = filtered.quantile(0.75, axis=1) - filtered.quantile(0.25, axis=1)
+        n_keep = max(1, int(round(len(filtered) * (1 - ratio))))
+        keep = dispersion.sort_values(ascending=False).head(n_keep).index
+        filtered = filtered.loc[keep]
+        logger.info(f"After {variance_based} low-variance filter ({ratio:.0%} removed): {len(filtered)} features")
 
     # Keep top features by mean abundance
     if max_features is not None and len(filtered) > max_features:
