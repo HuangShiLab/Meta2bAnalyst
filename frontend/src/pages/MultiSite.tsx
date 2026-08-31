@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useRequiredSession } from "@/hooks/useRequiredSession";
 import { useMetadataColumns } from "@/hooks/useMetadataColumns";
 import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { StatusAlert } from "@/components/shared/StatusAlert";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
 import type { PlotlyFigure, AnalysisJobResponse } from "@/types";
@@ -185,7 +186,7 @@ function ResultSection({
 export function MultiSite() {
   const sessionStore = useSessionStore();
   const setCurrentStep = useSessionStore((state) => state.setCurrentStep);
-  const { runAnalysis, isLoading, result, clearResult } = useAnalysis();
+  const { runAnalysis, isLoading, result, clearResult, error: analysisError } = useAnalysis();
 
   useEffect(() => {
     setCurrentStep("multi-site");
@@ -384,6 +385,7 @@ export function MultiSite() {
   return (
     <div data-testid="multi-site-page" className={cn("space-y-6")}>
       {!hasSession && <NoSessionBanner />}
+      {analysisError && <StatusAlert status="error" title="Analysis failed" description={analysisError} />}
       <div>
         <h1 data-testid="multi-site-title" className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Globe className="h-6 w-6" /> Multi-Site Integration

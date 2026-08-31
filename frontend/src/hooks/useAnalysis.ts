@@ -288,9 +288,26 @@ export function useAnalysis() {
             throw new Error(`Unknown analysis type: ${type}`);
         }
 
-        setResultsCache((prev) => ({ ...prev, [cacheKey]: response }));
-        setState({ isLoading: false, error: null, result: response });
-        return response;
+        // Queued (Celery) endpoints return {status:'pending', job_id} — poll
+        // until the worker finishes, then load the stored result. Synchronous
+        // endpoints return the payload directly. Both are normalized into the
+        // flat AnalysisJobResponse shape the result sections render; without
+        // this, queued analyses silently rendered nothing.
+        let payload = response as unknown as RawJobPayload;
+        if (payload?.status === "pending" || payload?.status === "running") {
+          if (payload.job_id === undefined || payload.job_id === null) {
+            throw new Error("Analysis was queued but no job id was returned");
+          }
+          payload = await waitForJobResult(sessionId, payload.job_id);
+        }
+        const normalized = normalizeJobPayload(payload);
+        const normalizedHasContent = Boolean(
+          normalized.plot_data || normalized.statistics || normalized.data
+        );
+
+        setResultsCache((prev) => ({ ...prev, ...(normalizedHasContent ? { [cacheKey]: normalized } : {}) }));
+        setState({ isLoading: false, error: null, result: normalized });
+        return normalized;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Analysis failed";
         setState({ isLoading: false, error: message, result: null });

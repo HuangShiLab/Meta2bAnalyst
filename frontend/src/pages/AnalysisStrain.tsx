@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useRequiredSession } from "@/hooks/useRequiredSession";
 import { useMetadataColumns } from "@/hooks/useMetadataColumns";
 import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { StatusAlert } from "@/components/shared/StatusAlert";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV } from "@/utils/api";
 import type { AnalysisJobResponse } from "@/types";
@@ -196,7 +197,7 @@ function ResultSection({
 export function AnalysisStrain() {
   const sessionStore = useSessionStore();
   const setCurrentStep = useSessionStore((state) => state.setCurrentStep);
-  const { runAnalysis, isLoading, result, clearResult } = useAnalysis();
+  const { runAnalysis, isLoading, result, clearResult, error: analysisError } = useAnalysis();
 
   useEffect(() => {
     setCurrentStep("microbiome");
@@ -340,6 +341,7 @@ export function AnalysisStrain() {
   return (
     <div className={cn("space-y-6")}>
       {!hasSession && <NoSessionBanner />}
+      {analysisError && <StatusAlert status="error" title="Analysis failed" description={analysisError} />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Strain Analysis ⭐</h1>
         <p className="text-muted-foreground">
