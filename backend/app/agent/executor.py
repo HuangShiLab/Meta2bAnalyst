@@ -94,6 +94,7 @@ def _get_module_function(module_name: str) -> Callable:
             run_anosim,
             run_random_forest,
             run_heatmap,
+            run_alpha_diversity,
         )
         from app.services.aldex2 import run_aldex2_analysis
         from app.services.songbird import run_songbird_analysis
@@ -345,6 +346,27 @@ def _get_module_function(module_name: str) -> Callable:
                 "fc_threshold": kw.get("fc_threshold", 1.5),
             }
             return run_metabolomics_marker_discovery(df.T, metadata_df, **params)
+
+        def _run_microbiome_alpha(df, metadata_df=None, **kw):
+            """Alpha diversity via the full service (group stats + tests),
+            with the publication-style boxplot promoted to plot_data so the
+            agent chat renders a figure inline. Previously this called the
+            bare AnalysisEngine.alpha_diversity, whose plain dict result had
+            neither statistics nor a figure, so the step rendered empty."""
+            group_column = kw.get("group_column")
+            metrics = kw.get("metrics") or kw.get("indices") or ["shannon", "simpson"]
+            result = run_alpha_diversity(
+                df, metadata_df,
+                parameters={"indices": metrics, "group_column": group_column},
+            )
+            if metadata_df is not None and group_column and group_column in metadata_df.columns:
+                engine = AnalysisEngine()
+                alpha_df = engine.alpha_diversity(df, metrics=metrics)
+                metric0 = next((m for m in metrics if m in alpha_df.columns), alpha_df.columns[0])
+                result["plot_data"] = engine.plotly_alpha_boxplot(
+                    alpha_df, metadata_df, group_column, metric0
+                )
+            return result
 
         def _run_procrustes(df, df2=None, metadata_df=None, **kw):
             params = dict(kw)
@@ -618,10 +640,10 @@ def _get_module_function(module_name: str) -> Callable:
                 n_components=kw.get("n_components", 10),
                 transformation=kw.get("transformation", "zscore"),
             ),
-            "microbiome_alpha": lambda df, metadata_df=None, **kw: AnalysisEngine().alpha_diversity(
-                df,
-                metrics=kw.get("metrics", ["shannon", "simpson"]),
-            ),
+            # Use the full run_alpha_diversity (per-group stats + tests), and
+            # attach the publication-style boxplot as plot_data so the agent
+            # chat renders a figure inline instead of a bare dict.
+            "microbiome_alpha": _run_microbiome_alpha,
             "metabolome_alpha": lambda df, metadata_df=None, **kw: run_metabolomics_alpha_diversity(
                 df.T, metadata_df,
                 group_column=kw.get("group_column"),

@@ -1092,24 +1092,49 @@ class AnalysisEngine:
         plot_data = []
 
         groups = metadata.loc[samples, group_var].unique()
-        for group in groups:
+        for i, group in enumerate(groups):
+            color = _PLOTLY_GROUP_COLORS[i % len(_PLOTLY_GROUP_COLORS)]
             group_samples = metadata[metadata[group_var] == group].index.intersection(samples)
             values = alpha_df.loc[group_samples, metric].dropna().values
             plot_data.append(
                 go.Box(
                     y=values,
                     name=str(group),
+                    # Jittered per-sample points over the box: journals expect
+                    # the underlying distribution to be visible, not just the
+                    # five-number summary.
+                    boxpoints='all',
+                    jitter=0.4,
+                    pointpos=0,
                     boxmean=True,
+                    marker={'color': color, 'size': 6, 'opacity': 0.75,
+                            'line': {'color': 'rgba(0,0,0,0.3)', 'width': 0.5}},
+                    line={'color': color},
+                    fillcolor=_hex_to_rgba(color, 0.25),
                 )
             )
 
         fig = go.Figure(data=plot_data)
+        axis_style = dict(
+            showline=True, linecolor='black', linewidth=1.2, mirror=True,
+            ticks='outside', tickwidth=1, tickcolor='black',
+            zeroline=False, showgrid=False,
+        )
         fig.update_layout(
-            title=f'{metric.capitalize()} Diversity by {group_var}',
+            title={'text': f'{metric.capitalize()} Diversity by {group_var}', 'font': {'size': 17}},
             yaxis_title=metric.capitalize(),
             xaxis_title=group_var,
             boxmode='group',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font={'family': 'Arial, "Helvetica Neue", sans-serif', 'size': 13, 'color': 'black'},
+            legend={'title': {'text': f'<b>{group_var}</b>'},
+                    'bordercolor': 'rgba(0,0,0,0.25)', 'borderwidth': 1,
+                    'bgcolor': 'rgba(255,255,255,0.9)'},
+            margin={'l': 70, 'r': 30, 't': 60, 'b': 60},
         )
+        fig.update_xaxes(**axis_style)
+        fig.update_yaxes(**axis_style)
         return fig.to_dict()
 
     def plotly_pcoa_scatter(

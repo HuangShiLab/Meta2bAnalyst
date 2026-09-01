@@ -468,7 +468,7 @@ def _get_recommended_steps(data_info: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 MODULE_KEYWORDS = {
     # Community Structure
-    "microbiome_pcoa": ["pcoa", "bray-curtis", "principal coordinate", "microbiome.*ordination", "微生物组.*pcoa", "bray", "ordination"],
+    "microbiome_pcoa": ["pcoa", "bray-curtis", "principal coordinate", "microbiome.*ordination", "微生物组.*pcoa", "bray", "ordination", "beta.*diversit", "beta 多样性", "β多样性"],
     "metabolome_pca": ["pca", "principal component", "metabolome.*pca", "代谢组.*pca", "代谢物.*主成分", "pca.*metabolome"],
     "microbiome_nmds": ["nmds", "non-metric", "multidimensional.*scaling"],
     "tsne": ["tsne", "t-sne", "tsne.*plot"],
