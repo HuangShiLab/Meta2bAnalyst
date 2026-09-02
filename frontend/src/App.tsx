@@ -18,38 +18,45 @@ import { useAuthStore } from "@/stores/authStore";
 
 function RequireAuth() {
   const token = useAuthStore((s) => s.token);
-  const fetchMe = useAuthStore((s) => s.fetchMe);
+  if (!token) return <Navigate to="/login" replace />;
+  return <Outlet />;
+}
 
+// Pages are browsable as a guest (demo sessions stay analyzable); only the
+// account page requires a signed-in user. When a token exists, refresh the
+// cached profile once per mount.
+function UserRefresher() {
+  const token = useAuthStore((s) => s.token);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
   useEffect(() => {
     if (token) fetchMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-
-  if (!token) return <Navigate to="/login" replace />;
-  return <Outlet />;
+  return null;
 }
 
 function App() {
   return (
     <BrowserRouter>
+      <UserRefresher />
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route element={<RequireAuth />}>
-          <Route element={<MainLayout />}>
-            <Route path="/" element={<Home />} />
-            <Route path="/upload" element={<UploadPage />} />
-            <Route path="/inspection" element={<Inspection />} />
-            <Route path="/filter" element={<FilterPage />} />
-            <Route path="/normalize" element={<Normalize />} />
-            <Route path="/microbiome" element={<Microbiome />} />
-            <Route path="/multi-omics" element={<MultiOmics />} />
-            <Route path="/multi-site" element={<MultiSite />} />
-            <Route path="/agent" element={<Agent />} />
-            <Route path="/results" element={<Results />} />
+        <Route element={<MainLayout />}>
+          <Route path="/" element={<Home />} />
+          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/inspection" element={<Inspection />} />
+          <Route path="/filter" element={<FilterPage />} />
+          <Route path="/normalize" element={<Normalize />} />
+          <Route path="/microbiome" element={<Microbiome />} />
+          <Route path="/multi-omics" element={<MultiOmics />} />
+          <Route path="/multi-site" element={<MultiSite />} />
+          <Route path="/agent" element={<Agent />} />
+          <Route path="/results" element={<Results />} />
+          <Route element={<RequireAuth />}>
             <Route path="/account" element={<Account />} />
           </Route>
-          <Route path="/workflow-builder" element={<WorkflowBuilder />} />
         </Route>
+        <Route path="/workflow-builder" element={<WorkflowBuilder />} />
       </Routes>
     </BrowserRouter>
   );

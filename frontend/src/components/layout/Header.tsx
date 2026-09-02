@@ -55,7 +55,7 @@ export function Header({ className }: HeaderProps) {
             <Code2 className="h-4 w-4" />
             <span className="hidden sm:inline">GitHub</span>
           </a>
-          {token && (
+          {token ? (
             <>
               <Link
                 to="/account"
@@ -73,6 +73,20 @@ export function Header({ className }: HeaderProps) {
                 <LogOut className="h-4 w-4" />
                 <span className="hidden sm:inline">Sign out</span>
               </button>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-muted-foreground">
+                <UserIcon className="h-4 w-4" />
+                Guest
+              </span>
+              <Link
+                to="/login"
+                className="flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-primary/80"
+              >
+                <LogOut className="h-4 w-4 rotate-180" />
+                Sign in
+              </Link>
             </>
           )}
         </div>

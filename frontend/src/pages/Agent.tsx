@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useAuthStore } from "@/stores/authStore";
 import { authHeaders } from "@/utils/api";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { AgentChat } from "@/components/shared/AgentChat";
@@ -284,6 +285,7 @@ function StatsCard({ title, stats }: { title: string; stats: Record<string, unkn
 
 export function Agent() {
   const navigate = useNavigate();
+  const isAuthenticated = !!useAuthStore((s) => s.token);
   const setCurrentStep = useSessionStore((state) => state.setCurrentStep);
   const sessionId = useSessionStore((state) => state.sessionId);
   const setSessionId = useSessionStore((state) => state.setSessionId);
@@ -731,6 +733,7 @@ export function Agent() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {isAuthenticated && (
             <Select
               value=""
               onValueChange={(v) => {
@@ -765,6 +768,7 @@ export function Agent() {
                 ))}
               </SelectContent>
             </Select>
+            )}
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
               <Switch checked={useLlm} onCheckedChange={setUseLlm} />
               LLM assist
@@ -1130,8 +1134,12 @@ export function Agent() {
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
                     {sessions.length > 0
-                      ? "Load a demo dataset from the top-right selector, or upload your own data on the Upload page."
-                      : "No analysis session yet. Click Load demo dataset at the top right, or upload your data first."}
+                      ? isAuthenticated
+                        ? "Load a demo dataset from the top-right selector, or upload your own data on the Upload page."
+                        : "Pick a shared demo session below to explore. Sign in to load fresh demo datasets or upload your own data."
+                      : isAuthenticated
+                        ? "No analysis session yet. Click Load demo dataset at the top right, or upload your data first."
+                        : "No shared demo session is available right now. Sign in to load demo datasets or upload your own data."}
                   </span>
                 </div>
                 <Button size="sm" onClick={() => navigate("/upload")} className="gap-1 shrink-0">

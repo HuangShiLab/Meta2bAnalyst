@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useDropzone } from "react-dropzone";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 import { Upload, FileType, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, FileText, HelpCircle, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useAuthStore } from "@/stores/authStore";
 import { StatusAlert } from "@/components/shared/StatusAlert";
 import { createSession, uploadFile } from "@/utils/api";
 import type { UploadFormat, UploadFile } from "@/types";
@@ -72,6 +73,7 @@ const formatConfigs: Record<UploadFormat, { label: string; description: string; 
 
 export function UploadPage() {
   const navigate = useNavigate();
+  const isAuthenticated = !!useAuthStore((s) => s.token);
   const { uploadFormat, setUploadFormat, uploadedFiles, addUploadedFile, removeUploadedFile } = useSessionStore();
   const setSessionId = useSessionStore((state) => state.setSessionId);
   const [selectedFormat, setSelectedFormat] = useState<UploadFormat>(uploadFormat || "tsv");
@@ -295,6 +297,21 @@ export function UploadPage() {
         <h1 data-testid="upload-title" className="text-2xl font-bold tracking-tight">Data Upload</h1>
         <p data-testid="upload-desc" className="text-muted-foreground">Select data format and upload files required for analysis</p>
       </div>
+
+      {!isAuthenticated && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            You are browsing as a <strong>guest</strong>. Demo datasets stay
+            available on the Agent and analysis pages, but uploading your own
+            data requires an account —{" "}
+            <Link to="/login" className="font-medium text-primary underline">
+              sign in
+            </Link>{" "}
+            first.
+          </p>
+        </div>
+      )}
 
       {/* Format Selection */}
       <Card>

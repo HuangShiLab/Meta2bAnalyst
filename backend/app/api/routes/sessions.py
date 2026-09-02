@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session as DBSession
 
+from app.config import settings
 from app.database import get_db
 from app.models import Session as SessionModel
 from app.models import User
@@ -99,7 +100,10 @@ async def list_sessions(
     try:
         query = db.query(SessionModel)
         user = _request_user(http_request)
-        if user and user.role != "admin":
+        if settings.AUTH_REQUIRED and user is None:
+            # Guest: only shared (ownerless/demo) sessions are visible.
+            query = query.filter(SessionModel.user_id.is_(None))
+        elif user and user.role != "admin":
             query = query.filter(
                 (SessionModel.user_id == user.id) | (SessionModel.user_id.is_(None))
             )

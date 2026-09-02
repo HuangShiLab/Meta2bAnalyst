@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,13 @@ export function Login() {
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Sign in
             </Button>
+            <p className="text-center text-sm text-muted-foreground">
+              Just exploring?{" "}
+              <Link to="/" className="text-primary underline">
+                Continue as guest
+              </Link>{" "}
+              — demo datasets work without an account.
+            </p>
           </form>
         </CardContent>
       </Card>

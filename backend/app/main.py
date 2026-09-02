@@ -80,12 +80,24 @@ app.add_middleware(
 
 
 # ── Authentication gate ──────────────────────────────────────────────────
-# Every /api/** call needs a valid Bearer token, except the login endpoint
-# and health/docs paths. Paths scoped to a session additionally enforce
-# ownership: the owner and admins may proceed; ownerless sessions (demo data,
-# pre-auth legacy data) are shared with every authenticated user.
+# Guests (no token) may browse pages and run analyses on shared (ownerless)
+# demo sessions. Anything that creates or mutates data — creating sessions,
+# uploading files, filtering/normalizing shared data, deleting, saving
+# workflow templates — requires a signed-in account. Authenticated users
+# additionally get ownership checks on session-scoped paths: the owner and
+# admins may proceed; ownerless sessions (demo data) stay shared.
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
 _SESSION_PATH_RE = re.compile(r"^/api/v1/sessions/([^/]+)")
+# Session sub-paths that mutate stored data; blocked for guests.
+_GUEST_BLOCKED_SESSION_SUBPATHS = (
+    "/upload",
+    "/upload-chunk",
+    "/upload-chunk-complete",
+    "/filter",
+    "/normalize",
+)
+
+_GUEST_401 = {"detail": "Sign in to upload or modify your own data"}
 
 
 @app.middleware("http")
@@ -107,18 +119,38 @@ async def auth_gate(request: Request, call_next):
     header = request.headers.get("Authorization", "")
     token = header[7:] if header.startswith("Bearer ") else request.cookies.get("m2b_token")
     payload = verify_token(token) if token else None
-    if not payload:
+    if token and not payload:
+        # A token was presented but is invalid/expired — not a guest.
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.id == payload["sub"]).first()
-        if not user or not user.is_active:
-            return JSONResponse(status_code=401, content={"detail": "Account disabled or removed"})
-        request.state.user = user
+        user = None
+        if payload:
+            user = db.query(User).filter(User.id == payload["sub"]).first()
+            if not user or not user.is_active:
+                return JSONResponse(status_code=401, content={"detail": "Account disabled or removed"})
+            request.state.user = user
 
         match = _SESSION_PATH_RE.match(path)
-        if match:
+        if user is None:
+            # ── Guest rules ──
+            if request.method == "POST" and path == "/api/v1/sessions":
+                return JSONResponse(status_code=401, content=_GUEST_401)
+            if request.method == "POST" and path == "/api/v1/workflows":
+                return JSONResponse(status_code=401, content=_GUEST_401)
+            if match:
+                sess = db.query(SessionModel).filter(SessionModel.id == match.group(1)).first()
+                if sess and sess.user_id is not None:
+                    # Someone's private session: guests may not touch it.
+                    return JSONResponse(status_code=401, content=_GUEST_401)
+                if sess:
+                    rest = path[match.end():]
+                    if request.method == "DELETE" or any(
+                        rest.startswith(sub) for sub in _GUEST_BLOCKED_SESSION_SUBPATHS
+                    ):
+                        return JSONResponse(status_code=401, content=_GUEST_401)
+        elif match:
             sess = db.query(SessionModel).filter(SessionModel.id == match.group(1)).first()
             if sess and not user_can_access_session(user, sess):
                 return JSONResponse(
