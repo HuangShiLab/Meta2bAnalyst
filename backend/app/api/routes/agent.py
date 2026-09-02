@@ -297,6 +297,14 @@ async def create_plan(request: PlanRequest, db: DBSession = Depends(get_db)):
                 if files:
                     context["session_files"] = [f.original_name or f.file_path for f in files]
                     context["file_types"] = [f.file_type for f in files if f.file_type]
+                # Give the planner the actual metadata table: the
+                # experimental-design adjustments and the ordination
+                # size-column default (e.g. Bleeding) both key off it, and
+                # without it they never fire for API-driven plans.
+                from app.api.routes.analysis import get_metadata_df
+                metadata_df = get_metadata_df(request.session_id, db)
+                if metadata_df is not None:
+                    context["metadata"] = metadata_df
             except Exception:
                 pass
 

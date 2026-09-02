@@ -719,6 +719,23 @@ def _prune_dangling_dependencies(steps: List[PlanStep]) -> None:
         step.depends_on = [d for d in step.depends_on if d in valid]
 
 
+_SEVERITY_COLUMN_PATTERNS = ("bleeding", "severity", "bop", "bleed")
+
+
+def _default_size_column(metadata_df: pd.DataFrame) -> Optional[str]:
+    """Pick a numeric severity-like metadata column (e.g. Bleeding) used to
+    scale ordination marker sizes, matching the source publication's PCoA
+    panels. Returns None when no such column exists or it is not numeric."""
+    for col in metadata_df.columns:
+        name = str(col).lower()
+        if not any(p in name for p in _SEVERITY_COLUMN_PATTERNS):
+            continue
+        numeric = pd.to_numeric(metadata_df[col], errors="coerce")
+        if numeric.notna().sum() >= 3 and numeric.nunique() > 1:
+            return str(col)
+    return None
+
+
 def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     """Apply domain best practices to the plan."""
     q = query.lower()
@@ -1242,6 +1259,18 @@ def _build_plan(
 
     # Apply best practices
     steps_raw = _apply_best_practices(steps_raw, query)
+
+    # Paper-style default: grouped ordinations scale marker size by a numeric
+    # severity-like metadata column (e.g. Bleeding) when one exists, matching
+    # the source publication's PCoA panels. Users can still edit the step's
+    # parameters before confirming.
+    if isinstance(metadata_df, pd.DataFrame) and not metadata_df.empty:
+        size_col = _default_size_column(metadata_df)
+        if size_col:
+            for s in steps_raw:
+                if s["module"] in ("microbiome_pcoa", "microbiome_nmds", "metabolome_pca"):
+                    s.setdefault("params", {})
+                    s["params"].setdefault("size_column", size_col)
 
     # Resolve auto-dependencies for integration methods
     ordination_steps = {}
