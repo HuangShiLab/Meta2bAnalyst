@@ -17,6 +17,7 @@ export type AnalysisStep =
   | 'multi-site'
   | 'agent'
   | 'workflow-builder'
+  | 'account'
   | 'results';
 
 export type DataFormat = 'species' | 'function' | 'strain' | 'multiomics';

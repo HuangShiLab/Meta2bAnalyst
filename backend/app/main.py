@@ -3,6 +3,7 @@ Meta2bAnalyst - FastAPI Application Entry Point
 """
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 
@@ -12,9 +13,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import agent, analysis, data, export, multisite, sessions, strain, upload, workflows
+from app.api.routes import agent, analysis, auth, data, export, multisite, sessions, strain, upload, workflows
 from app.config import settings
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 
 # Configure logging
 os.makedirs("logs", exist_ok=True)
@@ -37,6 +38,23 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created/verified.")
+        # create_all never alters existing tables: add sessions.user_id to
+        # databases created before multi-user auth shipped.
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()]
+            if "user_id" not in cols:
+                conn.exec_driver_sql("ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
+                conn.commit()
+                logger.info("Migrated sessions table: added user_id column.")
+        # Seed the first admin account when auth is on and no users exist.
+        if settings.AUTH_REQUIRED:
+            from app.api.routes.auth import ensure_default_admin
+
+            db = SessionLocal()
+            try:
+                ensure_default_admin(db)
+            finally:
+                db.close()
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
     yield
@@ -59,6 +77,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Authentication gate ──────────────────────────────────────────────────
+# Every /api/** call needs a valid Bearer token, except the login endpoint
+# and health/docs paths. Paths scoped to a session additionally enforce
+# ownership: the owner and admins may proceed; ownerless sessions (demo data,
+# pre-auth legacy data) are shared with every authenticated user.
+_PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+_SESSION_PATH_RE = re.compile(r"^/api/v1/sessions/([^/]+)")
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    if not settings.AUTH_REQUIRED:
+        return await call_next(request)
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path in _PUBLIC_PATHS
+        or path.startswith("/api/v1/auth/")
+        or not path.startswith("/api/")
+    ):
+        return await call_next(request)
+
+    from app.models import Session as SessionModel, User
+    from app.services.auth import user_can_access_session, verify_token
+
+    header = request.headers.get("Authorization", "")
+    token = header[7:] if header.startswith("Bearer ") else request.cookies.get("m2b_token")
+    payload = verify_token(token) if token else None
+    if not payload:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload["sub"]).first()
+        if not user or not user.is_active:
+            return JSONResponse(status_code=401, content={"detail": "Account disabled or removed"})
+        request.state.user = user
+
+        match = _SESSION_PATH_RE.match(path)
+        if match:
+            sess = db.query(SessionModel).filter(SessionModel.id == match.group(1)).first()
+            if sess and not user_can_access_session(user, sess):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "You do not have access to this session"},
+                )
+    finally:
+        db.close()
+
+    return await call_next(request)
 
 
 def _field_path(error: dict) -> str:
@@ -120,6 +190,7 @@ async def health_check():
 
 
 # API v1 router
+app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(sessions.router, prefix="/api/v1", tags=["sessions"])
 app.include_router(upload.router, prefix="/api/v1", tags=["upload"])
 app.include_router(data.router, prefix="/api/v1", tags=["data"])

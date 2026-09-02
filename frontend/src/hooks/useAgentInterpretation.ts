@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { authHeaders } from "@/utils/api";
 
 export interface InterpretFullResponse {
   integrated_narrative: string;
@@ -44,7 +45,7 @@ export function useAgentInterpretation(): UseAgentInterpretationReturn {
     try {
       const res = await fetch("/api/v1/agent/interpret-full", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           results,
           metadata_summary: metadataSummary,

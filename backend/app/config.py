@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
 
+    # Lightweight multi-user auth (app/services/auth.py). AUTH_SECRET signs
+    # login tokens — set it in production or tokens die on every restart.
+    # ADMIN_USERNAME/ADMIN_PASSWORD seed the first account when the users
+    # table is empty; change the password after first login. AUTH_REQUIRED is
+    # only disabled by the test suite.
+    AUTH_SECRET: Optional[str] = None
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: Optional[str] = None
+    USER_QUOTA_MB: int = 500
+    AUTH_REQUIRED: bool = True
+
     # External LLM (Kimi / Moonshot, OpenAI-compatible API)
     # Used by app.services.llm_client to enhance agent interpretations.
     # Leave KIMI_API_KEY empty to run KB-only (no external calls).

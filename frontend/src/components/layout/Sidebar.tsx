@@ -6,7 +6,7 @@ import {
   Layers,
   Bot,
   Dna,
-  Globe, Workflow,
+  Globe, Workflow, Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalysisStep } from "@/types";
@@ -19,6 +19,7 @@ const steps: { id: AnalysisStep; label: string; icon: React.ReactNode; path: str
   { id: "multi-site", label: "Multi-site", icon: <Globe className="h-4 w-4" />, path: "/multi-site" },
   { id: "agent", label: "Agent", icon: <Bot className="h-4 w-4" />, path: "/agent" },
   { id: "workflow-builder", label: "Workflow Builder", icon: <Workflow className="h-4 w-4" />, path: "/workflow-builder" },
+  { id: "account", label: "My Data", icon: <Database className="h-4 w-4" />, path: "/account" },
   { id: "results", label: "Results", icon: <CheckCircle className="h-4 w-4" />, path: "/results" },
 ];
 

@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useWorkflowStore, type StepResult } from "@/stores/workflowStore";
+import { authHeaders } from "@/utils/api";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import {
   Dialog,
@@ -535,7 +536,7 @@ export default function WorkflowBuilder() {
 
   const fetchTemplates = useCallback(() => {
     axios
-      .get(`${API_BASE}/workflows`)
+      .get(`${API_BASE}/workflows`, { headers: authHeaders() })
       .then((res) => setTemplates(res.data))
       .catch(() => setTemplates([]));
   }, []);
@@ -543,14 +544,14 @@ export default function WorkflowBuilder() {
   // Fetch module registry and saved templates on mount
   useEffect(() => {
     axios
-      .get(`${API_BASE}/agent/modules`)
+      .get(`${API_BASE}/agent/modules`, { headers: authHeaders() })
       .then((res) => {
         setRegistry(res.data.modules, res.data.categories);
       })
       .catch((err) => console.error("Failed to load modules:", err));
     fetchTemplates();
     axios
-      .get(`${API_BASE}/sessions`)
+      .get(`${API_BASE}/sessions`, { headers: authHeaders() })
       .then((res) => setSessions(res.data.sessions || []))
       .catch(() => setSessions([]));
   }, [setRegistry, fetchTemplates]);
@@ -564,7 +565,7 @@ export default function WorkflowBuilder() {
         description: saveDesc.trim() || null,
         plan: toPlanJSON(),
         layout: nodes.map((n) => ({ id: n.id, x: Math.round(n.x), y: Math.round(n.y) })),
-      });
+      }, { headers: authHeaders() });
       setSaveOpen(false);
       setSaveName("");
       setSaveDesc("");
@@ -578,7 +579,7 @@ export default function WorkflowBuilder() {
 
   const handleLoad = async (templateId: string) => {
     try {
-      const res = await axios.get(`${API_BASE}/workflows/${templateId}`);
+      const res = await axios.get(`${API_BASE}/workflows/${templateId}`, { headers: authHeaders() });
       useWorkflowStore.getState().loadWorkflow(res.data.plan, res.data.layout);
     } catch (err: any) {
       alert(err?.response?.data?.detail || "Failed to load workflow");
@@ -601,7 +602,7 @@ export default function WorkflowBuilder() {
     try {
       const response = await fetch(`${API_BASE}/agent/execute`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ session_id: sessionId, plan }),
       });
 

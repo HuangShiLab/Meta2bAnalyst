@@ -24,6 +24,9 @@ class Session(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     name = Column(String(255), nullable=True)
+    # Owning user; NULL marks shared/demo sessions visible to every
+    # authenticated user (pre-auth deployments predate this column).
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     data_format = Column(String(50), nullable=True)  # feature_table, biom, mothur, 2brad
     analysis_level = Column(String(50), default="species")  # species, strain
     status = Column(String(50), default="created")  # created, uploading, processing, completed, error
@@ -79,6 +82,27 @@ class AnalysisJob(Base):
 
     # Relationships
     session = relationship("Session", back_populates="analysis_jobs")
+
+
+class User(Base):
+    """Application user for the lightweight multi-user deployment.
+
+    Passwords are PBKDF2-HMAC-SHA256 hashes (stdlib, no extra dependency);
+    sessions and uploads are scoped to the owning user.
+    """
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), default="student", nullable=False)  # admin, student
+    is_active = Column(Integer, default=1, nullable=False)  # 1/0, avoids a Boolean import for SQLite
+    quota_mb = Column(Integer, nullable=True)  # NULL = server default (settings.USER_QUOTA_MB)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+    sessions = relationship("Session", backref="owner")
 
 
 class WorkflowTemplate(Base):

@@ -35,6 +35,7 @@ class SessionResponse(BaseModel):
     status: str
     description: Optional[str] = None
     file_count: int = 0
+    user_id: Optional[int] = None  # NULL = shared/demo session
 
     class Config:
         from_attributes = True

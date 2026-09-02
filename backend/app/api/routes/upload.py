@@ -10,7 +10,8 @@ from typing import List, Optional
 
 import aiofiles
 import pandas as pd
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
@@ -41,6 +42,41 @@ def validate_file_extension(filename: str) -> bool:
     """Check if file extension is allowed."""
     ext = get_file_extension(filename)
     return ext in settings.ALLOWED_EXTENSIONS
+
+
+def _user_used_bytes(user_id: int, db: DBSession) -> int:
+    """Total bytes stored by every session this user owns."""
+    total = (
+        db.query(func.coalesce(func.sum(DataFile.file_size), 0))
+        .join(SessionModel, DataFile.session_id == SessionModel.id)
+        .filter(SessionModel.user_id == user_id)
+        .scalar()
+    )
+    return int(total or 0)
+
+
+def _enforce_quota(request: Request, session: SessionModel, incoming_bytes: int, db: DBSession) -> None:
+    """Reject the upload when it would push the owner past their quota.
+
+    Only applies to owned sessions: shared/demo sessions (user_id NULL) are
+    seeded by the deployment and do not consume student quotas, and admins
+    are exempt. With AUTH_REQUIRED off there is no request user and no quota.
+    """
+    user = getattr(request.state, "user", None)
+    if not user or user.role == "admin" or session.user_id != user.id:
+        return
+    quota_mb = user.quota_mb or settings.USER_QUOTA_MB
+    used = _user_used_bytes(user.id, db)
+    if used + incoming_bytes > quota_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Storage quota exceeded: {used / 1024 / 1024:.1f} MB of "
+                f"{quota_mb} MB already used; this file needs "
+                f"{incoming_bytes / 1024 / 1024:.1f} MB. Delete old sessions "
+                f"or ask the administrator for a larger quota."
+            ),
+        )
 
 
 def _load_session_metadata(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
@@ -222,6 +258,7 @@ async def upload_chunk(
 )
 async def complete_chunk_upload(
     session_id: str,
+    http_request: Request,
     upload_id: str = Form(..., description="Upload ID from chunked upload"),
     db: DBSession = Depends(get_db),
 ):
@@ -282,6 +319,12 @@ async def complete_chunk_upload(
     
     # Parse and record
     file_size = os.path.getsize(file_path)
+    try:
+        _enforce_quota(http_request, session, file_size, db)
+    except HTTPException:
+        # Over quota: the assembled file must not linger on disk unrecorded.
+        file_path.unlink(missing_ok=True)
+        raise
     described = {}
     try:
         df, detected_format = parse_data_file(file_path, upload_state["file_type"], use_chunks=True)
@@ -365,6 +408,7 @@ async def get_upload_progress(upload_id: str, session_id: str):
 )
 async def upload_file(
     session_id: str,
+    http_request: Request,
     file_type: str = Form(..., description="File type: feature_table, biom, shared, taxonomy, metadata, strain, microbiome, metabolome, metaphlan, humann3"),
     file: UploadFile = File(...),
     db: DBSession = Depends(get_db),
@@ -399,6 +443,8 @@ async def upload_file(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File size exceeds maximum of {settings.MAX_FILE_SIZE / 1024 / 1024}MB",
         )
+
+    _enforce_quota(http_request, session, file_size, db)
     
     # Reset file position for saving
     await file.seek(0)

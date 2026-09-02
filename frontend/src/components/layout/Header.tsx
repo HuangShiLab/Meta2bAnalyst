@@ -1,12 +1,23 @@
-import { Code2, BookOpen, FlaskConical } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Code2, BookOpen, FlaskConical, User as UserIcon, LogOut } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/authStore";
 
 interface HeaderProps {
   className?: string;
 }
 
 export function Header({ className }: HeaderProps) {
+  const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
+  const logout = useAuthStore((s) => s.logout);
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <header
       className={cn(
@@ -44,6 +55,26 @@ export function Header({ className }: HeaderProps) {
             <Code2 className="h-4 w-4" />
             <span className="hidden sm:inline">GitHub</span>
           </a>
+          {token && (
+            <>
+              <Link
+                to="/account"
+                className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-slate-200"
+                title="My data"
+              >
+                <UserIcon className="h-4 w-4 text-primary" />
+                <span>{user?.username ?? "…"}</span>
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-destructive"
+                title="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline">Sign out</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
     </header>

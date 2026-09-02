@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSessionStore } from "@/stores/sessionStore";
+import { authHeaders } from "@/utils/api";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { AgentChat } from "@/components/shared/AgentChat";
 import {
@@ -299,7 +300,7 @@ export function Agent() {
   >([]);
   const refreshSessions = useCallback(
     () =>
-      fetch("/api/v1/sessions")
+      fetch("/api/v1/sessions", { headers: authHeaders() })
         .then((res) => (res.ok ? res.json() : { sessions: [] }))
         .then((data) => {
           const list = data.sessions || [];
@@ -436,7 +437,7 @@ export function Agent() {
         // Execute with POST-based SSE
         const execRes = await fetch("/api/v1/agent/execute", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ session_id: sessionId, plan: planData }),
           signal: abortRef.current.signal,
         });
@@ -622,7 +623,7 @@ export function Agent() {
         // Step 1: Get plan (with explanation so the user can review it)
         const planRes = await fetch("/api/v1/agent/plan", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ query, session_id: sessionId, use_llm: useLlm, explain: true }),
           signal: abortRef.current.signal,
         });
@@ -672,7 +673,7 @@ export function Agent() {
       try {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch("/api/v1/agent/plan-from-paper", { method: "POST", body: form });
+        const res = await fetch("/api/v1/agent/plan-from-paper", { method: "POST", headers: authHeaders(), body: form });
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.detail || "Paper analysis failed");

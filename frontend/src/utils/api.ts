@@ -52,6 +52,14 @@ api.interceptors.response.use(
 
 export default api;
 
+// For bare fetch() call sites (Agent SSE, demo loader, workflow builder):
+// merges the Bearer token into a headers object the same way the axios
+// request interceptor does.
+export const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
+  const token = localStorage.getItem("token");
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+};
+
 // Session & upload APIs
 export const createSession = async (payload: {
   name: string;

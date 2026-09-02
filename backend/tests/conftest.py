@@ -7,6 +7,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
+# The auth middleware must not gate the API during tests: the suite predates
+# per-user auth and calls endpoints without tokens. Set before app import so
+# pydantic-settings picks it up.
+os.environ.setdefault("AUTH_REQUIRED", "false")
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

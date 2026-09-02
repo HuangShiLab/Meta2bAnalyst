@@ -7,6 +7,8 @@
  * so the Agent / analysis pages can run immediately.
  */
 
+import { authHeaders } from "@/utils/api";
+
 export interface DemoFile {
   /** File name under /examples/demo/<datasetId>/ */
   name: string;
@@ -83,7 +85,7 @@ export async function loadDemoDataset(
 ): Promise<string> {
   const sessionRes = await fetch("/api/v1/sessions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name: dataset.sessionName }),
   });
   if (!sessionRes.ok) {
@@ -106,6 +108,7 @@ export async function loadDemoDataset(
     form.append("file", blob, f.name);
     const uploadRes = await fetch(`/api/v1/sessions/${session.id}/upload`, {
       method: "POST",
+      headers: authHeaders(),
       body: form,
     });
     if (!uploadRes.ok) {
