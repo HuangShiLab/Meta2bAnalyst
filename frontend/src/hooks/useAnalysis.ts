@@ -117,6 +117,14 @@ const initialState: AnalysisState = {
   result: null,
 };
 
+/** Axios failures carry the backend's explanation in response.data.detail —
+ * surface it instead of the generic "Request failed with status code 400". */
+const errorMessage = (err: unknown): string => {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  return err instanceof Error ? err.message : "Analysis failed";
+};
+
 export function useAnalysis() {
   const [state, setState] = useState<AnalysisState>(initialState);
   const [resultsCache, setResultsCache] = useState<Record<string, AnalysisJobResponse>>({});
@@ -309,7 +317,7 @@ export function useAnalysis() {
         setState({ isLoading: false, error: null, result: normalized });
         return normalized;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Analysis failed";
+        const message = errorMessage(err);
         setState({ isLoading: false, error: message, result: null });
         throw err;
       }
@@ -479,7 +487,7 @@ export function useSectionAnalysis() {
         setResults((prev) => ({ ...prev, [key]: normalized }));
         return normalized;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Analysis failed";
+        const message = errorMessage(err);
         setErrors((prev) => ({ ...prev, [key]: message }));
         throw err;
       } finally {

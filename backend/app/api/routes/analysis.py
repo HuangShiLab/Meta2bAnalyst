@@ -1048,22 +1048,38 @@ async def analyze_differential(
             logger.info(f"Large dataset detected ({df.shape}), using async differential task")
             job.status = 'pending'
             db.commit()
-            try:
-                g1, g2 = resolve_comparison_groups(
-                    metadata_df, request.group_column,
-                    request.comparisons, request.reference_group,
-                )
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+            method_key = request.parameters.get('test_method', 'mannwhitney')
+            # Only pairwise tests need a two-group contrast; multi-group
+            # methods (LEfSe, MaAsLin3) must not be forced through
+            # resolve_comparison_groups — that rejected every 7-visit study.
+            pairwise = method_key in (
+                'wilcoxon', 'mannwhitney', 'ttest', 't-test',
+                'deseq2', 'DESeq2', 'edger', 'edgeR', 'ancombc', 'ANCOM-BC',
+            )
+            g1 = g2 = ""
+            if pairwise:
+                try:
+                    g1, g2 = resolve_comparison_groups(
+                        metadata_df, request.group_column,
+                        request.comparisons, request.reference_group,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+            extra = {
+                k: v for k, v in (request.parameters or {}).items()
+                if k != 'test_method'
+            }
             return _submit_async_task(
                 differential_task,
                 session_id, job, db,
                 session_id=session_id,
-                method=request.parameters.get('test_method', 'mannwhitney'),
+                method=method_key,
                 group_var=request.group_column,
-                group1=g1,
-                group2=g2,
+                group1=str(g1),
+                group2=str(g2),
                 p_adjust='BH',
+                pvalue_threshold=float(request.parameters.get('pvalue_threshold', 0.05)),
+                extra_params=extra,
             )
 
         job.status = 'running'
@@ -1199,6 +1215,12 @@ async def analyze_differential(
             result_data = run_differential_analysis(df, metadata_df, job.parameters)
             result_data.setdefault('engine', f"python::{result_data.get('test_method', test_method)}")
             result_data.setdefault('is_approximation', False)
+
+        # An analysis-level error (bad contrast, R engine failure, ...) must
+        # surface as a 400 with the explanation, not a "completed" job whose
+        # payload is just an error string.
+        if isinstance(result_data, dict) and result_data.get('error'):
+            raise HTTPException(status_code=400, detail=str(result_data['error']))
 
         # Generate Plotly volcano chart.
         #

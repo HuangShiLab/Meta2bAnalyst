@@ -80,6 +80,38 @@ class DataParser:
     # the later definitions were the ones actually in effect and are the only
     # ones kept.
 
+    # Recognised taxonomic rank headers (case-insensitive). Tables exported
+    # from GTDB/QIIME-style pipelines carry several rank columns before the
+    # sample columns; treating the first one as the index yields thousands of
+    # duplicated labels like "Bacteria".
+    _TAXONOMY_RANKS = ('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
+
+    def _set_feature_index(self, raw: pd.DataFrame) -> pd.DataFrame:
+        """Choose the feature-label column of a freshly read table.
+
+        Default: first column. If two or more taxonomy rank columns are
+        present, the deepest rank (e.g. Species) becomes the index and the
+        other rank columns are dropped, so every feature gets a unique,
+        meaningful label.
+        """
+        cols = list(raw.columns)
+        lower = [str(c).strip().lower() for c in cols]
+        rank_pos = [i for i, c in enumerate(lower) if c in self._TAXONOMY_RANKS]
+        if len(rank_pos) >= 2:
+            deepest = max(rank_pos, key=lambda i: self._TAXONOMY_RANKS.index(lower[i]))
+            feature_col = cols[deepest]
+            raw = raw.drop(columns=[cols[i] for i in rank_pos if i != deepest])
+            raw = raw.set_index(feature_col)
+            logger.info(f'Taxonomy table detected; using "{feature_col}" as feature labels')
+        else:
+            raw = raw.set_index(cols[0])
+        # Drop unlabeled rows and collapse duplicate labels.
+        raw = raw[raw.index.notna()]
+        raw = raw.apply(pd.to_numeric, errors='coerce')
+        if not raw.index.is_unique:
+            raw = raw.groupby(raw.index).sum()
+        return raw
+
     def parse_csv_tsv(self, file_path: str, sep: str = ',') -> pd.DataFrame:
         """Parse CSV/TSV feature table.
 
@@ -125,7 +157,6 @@ class DataParser:
                     df = pd.read_csv(
                         tmp_path,
                         sep=sep,
-                        index_col=0,
                         header=0,
                         engine='python',
                     )
@@ -138,14 +169,13 @@ class DataParser:
                 df = pd.read_csv(
                     file_path,
                     sep=sep,
-                    index_col=0,
                     header=0,
                     comment='#',
                     engine='python',
                 )
 
-            # Ensure numeric data (exclude index column)
-            df = df.apply(pd.to_numeric, errors='coerce')
+            # Pick the feature-label column (handles taxonomy-rank tables)
+            df = self._set_feature_index(df)
             # Drop rows/columns that are all NaN
             df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
             logger.info(

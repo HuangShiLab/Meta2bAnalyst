@@ -282,49 +282,59 @@ def differential_task(
     group1: str = "",
     group2: str = "",
     p_adjust: str = "BH",
+    pvalue_threshold: float = 0.05,
+    extra_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Differential abundance asynchronous task."""
     _update_task_state(self, "STARTED", {"progress": 10, "message": "Loading data..."})
-    
+
     df, metadata_df = _load_session_data(session_id)
     if df is None:
         raise ValueError(f"No feature table found for session {session_id}")
     if metadata_df is None:
         raise ValueError(f"No metadata found for session {session_id}")
-    
+
     _update_task_state(self, "STARTED", {"progress": 40, "message": "Running differential analysis..."})
-    
-    params = {
+
+    params: Dict[str, Any] = {
         "group_column": group_var,
         "test_method": method,
-        "pvalue_threshold": 0.05,
+        "pvalue_threshold": pvalue_threshold,
+        **(extra_params or {}),
     }
-    
-    groups = metadata_df[group_var].dropna().unique()
-    if method in ('deseq2', 'DESeq2') and len(groups) == 2:
-        g1, g2 = groups[0], groups[1]
-        diff_df = run_deseq2(df, metadata_df, group_var, g1, g2)
+    # The route resolves the contrast before dispatching; without forwarding
+    # it, run_differential_analysis would re-resolve from scratch and fail on
+    # any column with more than two levels.
+    if group1 and group2:
+        params["comparisons"] = [group1, group2]
+
+    if method in ('deseq2', 'DESeq2'):
+        diff_df = run_deseq2(df, metadata_df, group_var, group1, group2)
         result_data = {
             'group_column': group_var,
-            'group1': str(g1),
-            'group2': str(g2),
+            'group1': str(group1),
+            'group2': str(group2),
             'test_method': 'DESeq2',
-            'significant_features': diff_df[diff_df['padj'] < 0.05].to_dict(orient='records'),
+            'significant_features': diff_df[diff_df['padj'] < pvalue_threshold].to_dict(orient='records'),
             'all_features': diff_df.to_dict(orient='records'),
         }
-    elif method in ('edger', 'edgeR') and len(groups) == 2:
-        g1, g2 = groups[0], groups[1]
-        diff_df = run_edger(df, metadata_df, group_var, g1, g2)
+    elif method in ('edger', 'edgeR'):
+        diff_df = run_edger(df, metadata_df, group_var, group1, group2)
         result_data = {
             'group_column': group_var,
-            'group1': str(g1),
-            'group2': str(g2),
+            'group1': str(group1),
+            'group2': str(group2),
             'test_method': 'edgeR',
-            'significant_features': diff_df[diff_df['FDR'] < 0.05].to_dict(orient='records'),
+            'significant_features': diff_df[diff_df['FDR'] < pvalue_threshold].to_dict(orient='records'),
             'all_features': diff_df.to_dict(orient='records'),
         }
     else:
         result_data = run_differential_analysis(df, metadata_df, params)
+
+    # An analysis-level error (bad contrast, R failure, ...) must fail the job
+    # instead of being stored as a "successful" result with an error payload.
+    if isinstance(result_data, dict) and result_data.get('error'):
+        raise ValueError(str(result_data['error']))
     
     # Generate volcano plot
     if "all_features" in result_data and len(result_data["all_features"]) > 0:

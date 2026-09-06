@@ -1899,6 +1899,15 @@ def run_nmds(
     return results
 
 
+def _r_has(pkg: str) -> bool:
+    """Lazy R-package probe (import here avoids a circular import at module load)."""
+    try:
+        from app.services.r_analysis import rpackage_available
+        return rpackage_available(pkg)
+    except Exception:
+        return False
+
+
 def run_differential_analysis(
     df: pd.DataFrame,
     metadata_df: Optional[pd.DataFrame] = None,
@@ -1915,10 +1924,17 @@ def run_differential_analysis(
 
     groups = metadata_df[group_column].dropna().unique()
 
-    # ANCOM-BC: requires exactly 2 groups
+    # ANCOM-BC: pairwise — restrict to the requested contrast when the column
+    # has more than two levels, mirroring the sync route.
     if test_method in ('ancombc', 'ANCOM-BC'):
+        comparisons = params.get('comparisons')
+        if comparisons and len(comparisons) == 2:
+            pair_samples = metadata_df.index[metadata_df[group_column].isin(comparisons)]
+            metadata_df = metadata_df.loc[pair_samples]
+            df = df[df.columns.intersection(pair_samples)]
+            groups = metadata_df[group_column].dropna().unique()
         if len(groups) != 2:
-            return {'error': f'ANCOM-BC requires exactly 2 groups, found {len(groups)}'}
+            return {'error': f'ANCOM-BC requires exactly 2 groups, found {len(groups)}. Set "comparisons" to the two groups to compare.'}
         from app.services.r_analysis import run_ancombc
         zero_cut = params.get('zero_cut', 0.9)
         lib_cut = params.get('lib_cut', 0)
@@ -1930,6 +1946,8 @@ def run_differential_analysis(
         return {
             'group_column': group_column,
             'test_method': 'ANCOM-BC',
+            'engine': 'python::ancombc' if not _r_has('ancombc') else 'R::ANCOMBC',
+            'is_approximation': not _r_has('ancombc'),
             'zero_cut': zero_cut,
             'lib_cut': lib_cut,
             'struc_zero': struc_zero,
@@ -1949,6 +1967,8 @@ def run_differential_analysis(
             return {'error': str(diff_df['error'].iloc[0])}
         return {
             'test_method': 'MaAsLin3',
+            'engine': 'R::MaAsLin3' if _r_has('maaslin3') else 'python::maaslin3-ols-fallback',
+            'is_approximation': not _r_has('maaslin3'),
             'normalization': normalization,
             'transform': transform,
             'fixed_effects': fixed_effects,
@@ -1965,6 +1985,10 @@ def run_differential_analysis(
             'test_method': 'LEfSe',
             'group_column': group_column,
             'lda_threshold': lda_threshold,
+            # run_lefse is always the Python reimplementation (no R 'lefse'
+            # package exists on CRAN/Bioconductor) — say so in the result.
+            'engine': 'python::lefse-reimplementation',
+            'is_approximation': True,
             'significant_features': lefse_df[lefse_df['lda_score'].abs() >= lda_threshold].to_dict(orient='records') if 'lda_score' in lefse_df.columns else [],
             'all_features': lefse_df.to_dict(orient='records'),
         }

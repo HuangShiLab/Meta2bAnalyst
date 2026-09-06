@@ -183,6 +183,15 @@ function ResultSection({
   );
 }
 
+/** UI label → backend test_method key for the differential endpoint. */
+const DIFF_METHOD_MAP: Record<string, string> = {
+  Wilcoxon: "wilcoxon",
+  "t-test": "ttest",
+  lefse: "lefse",
+  "ANCOM-BC": "ancombc",
+  MaAsLin3: "maaslin3",
+};
+
 export function Microbiome() {
   const sessionStore = useSessionStore();
   const setCurrentStep = useSessionStore((state) => state.setCurrentStep);
@@ -230,7 +239,8 @@ export function Microbiome() {
   // ─── Tab 2: Differential Analysis ───
   const [diffMethod, setDiffMethod] = useState("Wilcoxon");
   const [diffGroup, setDiffGroup] = useState("Visit");
-  const [diffContrast, setDiffContrast] = useState("Control vs Treatment");
+  const [diffReference, setDiffReference] = useState("");
+  const [diffComparison, setDiffComparison] = useState("");
   const [diffCorrection, setDiffCorrection] = useState("BH");
   const [diffPvalue, setDiffPvalue] = useState(0.05);
   // LEfSe
@@ -282,8 +292,50 @@ export function Microbiome() {
 
   const { sessionId, hasSession } = useRequiredSession();
   // Grouping variables come from the uploaded metadata, not a fixed list.
-  const { groupingColumns } = useMetadataColumns(sessionId);
+  const { groupingColumns, levelsOf } = useMetadataColumns(sessionId);
   const metadataColumns = groupingColumns.map((c) => c.name);
+
+  // Pairwise differential methods need an explicit contrast when the chosen
+  // column has more than two levels (e.g. Visit T1..T9). The backend rejects
+  // the call with a 400 otherwise.
+  const diffIsPairwise = ["Wilcoxon", "t-test", "ANCOM-BC"].includes(diffMethod);
+  const diffLevels = levelsOf(diffGroup);
+  const diffNeedsContrast = diffIsPairwise && diffLevels.length > 2;
+
+  /** Build the AnalysisRequest body the differential endpoint expects. */
+  const buildDifferentialBody = useCallback((): Record<string, unknown> => {
+    const parameters: Record<string, unknown> = {
+      test_method: DIFF_METHOD_MAP[diffMethod] ?? "wilcoxon",
+      pvalue_threshold: diffPvalue,
+      p_adj_method: diffCorrection === "None" ? "none" : diffCorrection,
+    };
+    if (diffMethod === "ANCOM-BC") {
+      parameters.zero_cut = ancombcZeroCut;
+      parameters.lib_cut = ancombcLibCut;
+      parameters.struc_zero = ancombcStrucZero;
+      parameters.p_adj_method = ancombcPAdjMethod;
+    } else if (diffMethod === "MaAsLin3") {
+      if (maaslin3FixedEffects.length > 0) parameters.fixed_effects = maaslin3FixedEffects;
+      if (maaslin3RandomEffects.length > 0) parameters.random_effects = maaslin3RandomEffects;
+      parameters.normalization = maaslin3Normalization;
+      parameters.transform = maaslin3Transform;
+    } else if (diffMethod === "lefse") {
+      parameters.lda_threshold = lefseLdaThreshold;
+    }
+    const body: Record<string, unknown> = { group_column: diffGroup, parameters };
+    if (diffNeedsContrast) {
+      if (!diffReference || !diffComparison || diffReference === diffComparison) {
+        throw new Error(
+          `"${diffGroup}" has ${diffLevels.length} groups. Choose a reference and a comparison group below.`
+        );
+      }
+      body.comparisons = [diffReference, diffComparison];
+    }
+    return body;
+  }, [diffMethod, diffGroup, diffNeedsContrast, diffReference, diffComparison, diffLevels.length,
+      diffPvalue, diffCorrection, ancombcZeroCut, ancombcLibCut, ancombcStrucZero,
+      ancombcPAdjMethod, maaslin3FixedEffects, maaslin3RandomEffects,
+      maaslin3Normalization, maaslin3Transform, lefseLdaThreshold]);
 
   // ─── Handlers ───
 
@@ -432,27 +484,16 @@ export function Microbiome() {
 
   const handleRunDifferential = useCallback(async () => {
     clearResult();
-    const params: Record<string, unknown> = {
-      method: diffMethod,
-      group_column: diffGroup,
-      correction_method: diffCorrection,
-      pvalue_threshold: diffPvalue,
-    };
-    if (diffMethod === 'ANCOM-BC') {
-      params.zero_cut = ancombcZeroCut;
-      params.lib_cut = ancombcLibCut;
-      params.struc_zero = ancombcStrucZero;
-      params.padj_method = ancombcPAdjMethod;
-    } else if (diffMethod === 'MaAsLin3') {
-      params.fixed_effects = maaslin3FixedEffects;
-      params.random_effects = maaslin3RandomEffects;
-      params.normalization = maaslin3Normalization;
-      params.transform = maaslin3Transform;
-      params.reference = maaslin3Reference;
-    } else if (diffMethod === 'lefse') {
-      params.lda_threshold = lefseLdaThreshold;
+    let body: Record<string, unknown>;
+    try {
+      body = buildDifferentialBody();
+    } catch (e) {
+      // Missing contrast selection: show the explanation instead of calling
+      // the API and getting back a bare 400.
+      alert(e instanceof Error ? e.message : String(e));
+      return;
     }
-    const response = await runAnalysis("differential", sessionId, params);
+    const response = await runAnalysis("differential", sessionId, body);
 
     sessionStore.addAnalysisHistoryItem({
       id: response.job_id,
@@ -463,17 +504,21 @@ export function Microbiome() {
       plotData: response.plot_data,
       statistics: response.statistics,
       tableData: response.data,
-      params: { ...params },
+      params: { ...body },
     });
-  }, [diffMethod, diffGroup, diffCorrection, diffPvalue, ancombcZeroCut, ancombcLibCut, ancombcStrucZero, ancombcPAdjMethod, maaslin3FixedEffects, maaslin3RandomEffects, maaslin3Normalization, maaslin3Transform, maaslin3Reference, lefseLdaThreshold, runAnalysis, sessionId, clearResult, sessionStore]);
+  }, [buildDifferentialBody, diffMethod, runAnalysis, sessionId, clearResult, sessionStore]);
 
   const handleRunVolcano = useCallback(async () => {
     clearResult();
-    const response = await runAnalysis("volcano", sessionId, {
-      method: diffMethod,
-      group_column: diffGroup,
-      pvalue_threshold: diffPvalue,
-    });
+    // Volcano is the differential endpoint's plot: same request shape.
+    let body: Record<string, unknown>;
+    try {
+      body = buildDifferentialBody();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const response = await runAnalysis("volcano", sessionId, body);
     sessionStore.addAnalysisHistoryItem({
       id: response.job_id,
       type: "Volcano Plot",
@@ -483,9 +528,9 @@ export function Microbiome() {
       plotData: response.plot_data,
       statistics: response.statistics,
       tableData: response.data,
-      params: { method: diffMethod, group_column: diffGroup, pvalue_threshold: diffPvalue },
+      params: { ...body },
     });
-  }, [diffMethod, diffGroup, diffPvalue, runAnalysis, sessionId, clearResult, sessionStore]);
+  }, [buildDifferentialBody, diffMethod, diffGroup, runAnalysis, sessionId, clearResult, sessionStore]);
 
   const handleRunRandomForest = useCallback(async () => {
     clearResult();
@@ -1089,7 +1134,7 @@ export function Microbiome() {
                     </Select>
                   </ParameterItem>
                   <ParameterItem label="Group Column">
-                    <Select value={diffGroup} onValueChange={setDiffGroup}>
+                    <Select value={diffGroup} onValueChange={(v) => { setDiffGroup(v); setDiffReference(""); setDiffComparison(""); }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {metadataColumns.map((col) => (
@@ -1098,17 +1143,38 @@ export function Microbiome() {
                       </SelectContent>
                     </Select>
                   </ParameterItem>
-                  <ParameterItem label="Contrast Groups">
-                    <Select value={diffContrast} onValueChange={setDiffContrast}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Control vs Treatment">Control vs Treatment</SelectItem>
-                        <SelectItem value="Group A vs Group B">Group A vs Group B</SelectItem>
-                        <SelectItem value="Pre vs Post">Pre vs Post</SelectItem>
-                        <SelectItem value="Baseline vs Follow-up">Baseline vs Follow-up</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </ParameterItem>
+                  {diffNeedsContrast && (
+                    <>
+                      <ParameterItem
+                        label="Reference Group"
+                        tooltip={`"${diffGroup}" has ${diffLevels.length} groups — pick the baseline. Fold changes are computed as comparison / reference.`}
+                      >
+                        <Select value={diffReference} onValueChange={setDiffReference}>
+                          <SelectTrigger data-testid="select-diff-reference"><SelectValue placeholder="Select reference…" /></SelectTrigger>
+                          <SelectContent>
+                            {diffLevels.map((g) => (
+                              <SelectItem key={g} value={g}>{g}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </ParameterItem>
+                      <ParameterItem label="Comparison Group" tooltip="The group tested against the reference.">
+                        <Select value={diffComparison} onValueChange={setDiffComparison}>
+                          <SelectTrigger data-testid="select-diff-comparison"><SelectValue placeholder="Select comparison…" /></SelectTrigger>
+                          <SelectContent>
+                            {diffLevels.filter((g) => g !== diffReference).map((g) => (
+                              <SelectItem key={g} value={g}>{g}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </ParameterItem>
+                    </>
+                  )}
+                  {diffIsPairwise && diffLevels.length === 2 && (
+                    <p className="text-xs text-muted-foreground">
+                      Two groups detected ({diffLevels.join(" vs ")}); they will be compared directly.
+                    </p>
+                  )}
                   <ParameterItem label="Multiple Testing Correction">
                     <Select value={diffCorrection} onValueChange={setDiffCorrection}>
                       <SelectTrigger><SelectValue /></SelectTrigger>

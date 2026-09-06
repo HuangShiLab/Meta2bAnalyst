@@ -259,64 +259,91 @@ def _python_lefse(
 ) -> pd.DataFrame:
     """Python fallback for LEfSe biomarker discovery.
 
-    Steps:
-        1. Kruskal-Wallis test to screen differential features.
-        2. Compute LDA score as standardized mean difference on relative abundance.
-        3. Filter by LDA threshold.
+    Follows the classic LEfSe protocol so scores land on the familiar
+    log10 LDA scale (default threshold 2.0):
+      1. TSS-normalize to relative abundance.
+      2. Kruskal-Wallis screen (p < 0.05).
+      3. LDA on linear relative abundance; per-feature score =
+         log10(|scaling| x effect size), where effect size is the largest
+         pairwise distance between class means projected on LD1.
+      4. Enriched group = class with the highest mean relative abundance.
+
+    (The previous approximation reported a Cohen's-d-like ratio on raw
+    counts, whose scale never reaches the 2.0 default, so every run came
+    back empty; and it labelled every feature with the dataset-wide modal
+    group instead of the enriched one.)
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: feature, group, lda_score, pvalue
     """
     from scipy.stats import kruskal
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
-    groups = metadata_df[group_var].dropna().unique()
+    sample_groups = metadata_df[group_var].dropna()
+    groups = list(sample_groups.unique())
     if len(groups) < 2:
         return pd.DataFrame()
 
-    sample_groups = metadata_df[group_var].dropna()
     valid_samples = sample_groups.index.intersection(count_df.columns)
-    count_df = count_df[valid_samples]
+    count_df = count_df[valid_samples].astype(float)
     sample_groups = sample_groups.loc[valid_samples]
 
-    results = []
-    for feature in count_df.index:
-        group_values = [count_df.loc[feature, sample_groups == g].dropna().astype(float).values for g in groups]
+    # Step 1: relative abundance (TSS), the scale LEfSe operates on.
+    rel = count_df.div(count_df.sum(axis=0).replace(0, np.nan), axis=1).fillna(0.0)
+
+    # Step 2: Kruskal-Wallis screen.
+    screened = []
+    for feature in rel.index:
+        group_values = [rel.loc[feature, sample_groups == g].values for g in groups]
         group_values = [gv for gv in group_values if len(gv) > 0]
         if len(group_values) < 2:
             continue
         try:
-            stat, pvalue = kruskal(*group_values)
+            _, pvalue = kruskal(*group_values)
         except Exception:
             continue
-        if pvalue > 0.05:
-            continue
-        results.append({
-            'feature': feature,
-            'pvalue': float(pvalue),
-            'group': str(sample_groups.mode()[0]) if len(sample_groups.mode()) > 0 else str(groups[0]),
-        })
+        if pvalue < 0.05:
+            screened.append((feature, float(pvalue)))
 
-    if not results:
+    if not screened:
         return pd.DataFrame(columns=['feature', 'group', 'lda_score', 'pvalue'])
 
-    # LDA Effect Size calculation on relative abundance (TSS-normalized data)
-    sig_features = [r['feature'] for r in results]
-    lda_scores = []
-    for feature in sig_features:
-        group_means = []
-        group_stds = []
-        for g in groups:
-            vals = count_df.loc[feature, sample_groups == g].dropna().astype(float).values
-            if len(vals) > 0:
-                group_means.append(np.mean(vals))
-                group_stds.append(np.std(vals, ddof=1) if len(vals) > 1 else 0.0)
-        if len(group_means) >= 2:
-            max_diff = max(abs(m1 - m2) for i, m1 in enumerate(group_means) for m2 in group_means[i+1:])
-            pooled_std = np.sqrt(np.mean([s**2 for s in group_stds if s > 0])) if any(s > 0 for s in group_stds) else 1e-6
-            lda_score = max_diff / pooled_std if pooled_std > 0 else 0.0
-        else:
-            lda_score = 0.0
-        lda_scores.append(lda_score)
+    sig_features = [f for f, _ in screened]
+    pvalue_of = dict(screened)
 
-    for i, r in enumerate(results):
-        r['lda_score'] = float(lda_scores[i]) if i < len(lda_scores) else 0.0
+    # Step 3: LDA effect sizes on linear relative abundance — the original
+    # LEfSe runs LDA on the linear (CPM-scaled) abundances, not log values;
+    # log input shrinks the scalings so much that no feature ever reaches
+    # the customary 2.0 threshold.
+    X = rel.loc[sig_features].T.values  # samples × features
+    y = sample_groups.astype(str).values
+    clf = LinearDiscriminantAnalysis()
+    clf.fit(X, y)
+
+    scaling = clf.scalings_[:, 0]
+    projected_means = clf.means_ @ scaling
+    if len(projected_means) > 1:
+        effect_size = max(
+            abs(a - b)
+            for i, a in enumerate(projected_means)
+            for b in projected_means[i + 1:]
+        )
+    else:
+        effect_size = 0.0
+    lda_scores = np.log10(np.abs(scaling) * effect_size + 1e-12)
+
+    results = []
+    for i, feature in enumerate(sig_features):
+        means = {g: float(rel.loc[feature, sample_groups == g].mean()) for g in groups}
+        enriched = max(means, key=means.get)
+        results.append({
+            'feature': feature,
+            'pvalue': pvalue_of[feature],
+            'group': str(enriched),
+            'lda_score': float(lda_scores[i]),
+        })
 
     result_df = pd.DataFrame(results)
     result_df = result_df[result_df['lda_score'] > (lda_threshold - 1e-6)]
@@ -1048,9 +1075,11 @@ def _python_maaslin3_fallback(
 
         # Build design matrix
         X = meta[available_effects].copy()
-        # Handle categorical variables
-        for col in X.columns:
-            if X[col].dtype == 'object' or X[col].dtype.name == 'category':
+        # Handle categorical variables. Note: pandas 3 / Arrow-backed string
+        # columns have dtype 'str', not 'object' — checking only for 'object'
+        # silently skipped the dummies and the model collapsed to a constant.
+        for col in list(X.columns):
+            if not pd.api.types.is_numeric_dtype(X[col]):
                 X = pd.get_dummies(X, columns=[col], drop_first=True)
 
         X = X.fillna(0)

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
 from app.models import AnalysisJob, Session as SessionModel
 from app.schemas import AnalysisResponse, ErrorResponse
-from app.api.routes.analysis import get_dataframe, get_metadata_df
+from app.api.routes.analysis import get_all_dataframes_by_type, get_dataframe, get_metadata_df
 from app.services.multisite_analysis import (
     run_multisite_pcoa,
     run_multisite_permanova,
@@ -33,6 +33,85 @@ from app.services.multisite_analysis import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _get_multisite_data(session_id: str, db: DBSession):
+    """Merge every per-site table into one features x samples matrix plus a
+    concatenated metadata frame.
+
+    Multi-site sessions carry one feature table + one metadata file per body
+    site; get_dataframe()/get_metadata_df() silently return only the most
+    recently uploaded file, which would run "cross-site" analyses on a single
+    site. Feature tables are outer-joined on the feature index (a feature
+    absent from one site gets abundance 0 there); metadata frames are
+    row-concatenated, first occurrence wins on duplicate sample IDs.
+    """
+    import pandas as pd
+    from pathlib import Path
+    from app.models import DataFile
+    from app.services.data_parser import parse_data_file
+
+    meta_files = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == 'metadata')
+        .order_by(DataFile.id.asc())
+        .all()
+    )
+    frames = []
+    for mf in meta_files:
+        try:
+            frame = pd.read_csv(mf.file_path, sep='\t', index_col=0)
+            if frame.shape[1] <= 1:
+                frame = pd.read_csv(mf.file_path, index_col=0)
+            frames.append(frame)
+        except Exception:
+            logger.warning(f'Could not parse metadata file {mf.file_path}', exc_info=True)
+    metadata_df = None
+    if frames:
+        metadata_df = frames[0] if len(frames) == 1 else pd.concat(frames)
+        metadata_df = metadata_df[~metadata_df.index.duplicated(keep='first')]
+    sample_ids = {str(i) for i in metadata_df.index} if metadata_df is not None else set()
+
+    # Load every per-site microbiome table directly. get_all_dataframes_by_type
+    # validates sample IDs against get_metadata_df(), which only sees the most
+    # recently uploaded metadata file — per-site tables whose samples live in
+    # another site's metadata would be silently dropped.
+    ft_files = (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == 'microbiome')
+        .order_by(DataFile.id.asc())
+        .all()
+    )
+    if not ft_files:
+        return get_dataframe(session_id, db), metadata_df
+
+    merged = None
+    for f in ft_files:
+        t, _ = parse_data_file(Path(f.file_path), file_type='microbiome')
+        # Orient to features x samples by comparing labels with metadata IDs.
+        if sample_ids:
+            col_hits = sum(1 for c in t.columns if str(c) in sample_ids)
+            row_hits = sum(1 for i in t.index if str(i) in sample_ids)
+            if row_hits > col_hits:
+                t = t.T
+        if merged is None:
+            merged = t
+        else:
+            merged = merged.join(t, how='outer', rsuffix='__dup')
+            dup_cols = [c for c in merged.columns if str(c).endswith('__dup')]
+            if dup_cols:
+                logger.warning(f'Duplicate sample IDs across site tables in {f.original_name}: {dup_cols}')
+                merged = merged.drop(columns=dup_cols)
+    df = merged.fillna(0) if merged is not None else get_dataframe(session_id, db)
+    return df, metadata_df
+
+
+def _error_status(e: Exception) -> int:
+    """Map analysis exceptions to HTTP codes: bad input/columns are client
+    errors (400), everything else is a server error (500)."""
+    return 400 if isinstance(e, (ValueError, KeyError)) else 500
 
 
 def _sanitize_json(obj: Any) -> Any:
@@ -140,8 +219,8 @@ async def analyze_multisite_pcoa(
     # get_dataframe returns the canonical features x samples orientation
     # (app/services/orientation.py); every multisite service documents its input
     # as samples x taxa, so transpose once here.
-    df = get_dataframe(session_id, db).T
-    metadata_df = get_metadata_df(session_id, db)
+    df, metadata_df = _get_multisite_data(session_id, db)
+    df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required for multi-site analysis')
 
@@ -177,7 +256,7 @@ async def analyze_multisite_pcoa(
         job.status = 'failed'
         job.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=500, detail=f'Multi-site PCoA failed: {str(e)}')
+        raise HTTPException(status_code=_error_status(e), detail=f'Multi-site PCoA failed: {str(e)}')
 
 
 # ─────────────────────────────── 2. Multi-site PERMANOVA
@@ -201,8 +280,8 @@ async def analyze_multisite_permanova(
     # get_dataframe returns the canonical features x samples orientation
     # (app/services/orientation.py); every multisite service documents its input
     # as samples x taxa, so transpose once here.
-    df = get_dataframe(session_id, db).T
-    metadata_df = get_metadata_df(session_id, db)
+    df, metadata_df = _get_multisite_data(session_id, db)
+    df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
 
@@ -236,7 +315,7 @@ async def analyze_multisite_permanova(
         job.status = 'failed'
         job.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=500, detail=f'Multi-site PERMANOVA failed: {str(e)}')
+        raise HTTPException(status_code=_error_status(e), detail=f'Multi-site PERMANOVA failed: {str(e)}')
 
 
 # ─────────────────────────────── 3. Multi-site Markers
@@ -260,8 +339,8 @@ async def analyze_multisite_markers(
     # get_dataframe returns the canonical features x samples orientation
     # (app/services/orientation.py); every multisite service documents its input
     # as samples x taxa, so transpose once here.
-    df = get_dataframe(session_id, db).T
-    metadata_df = get_metadata_df(session_id, db)
+    df, metadata_df = _get_multisite_data(session_id, db)
+    df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
 
@@ -296,7 +375,7 @@ async def analyze_multisite_markers(
         job.status = 'failed'
         job.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=500, detail=f'Multi-site markers failed: {str(e)}')
+        raise HTTPException(status_code=_error_status(e), detail=f'Multi-site markers failed: {str(e)}')
 
 
 # ─────────────────────────────── 4. Multi-site Temporal
@@ -320,8 +399,8 @@ async def analyze_multisite_temporal(
     # get_dataframe returns the canonical features x samples orientation
     # (app/services/orientation.py); every multisite service documents its input
     # as samples x taxa, so transpose once here.
-    df = get_dataframe(session_id, db).T
-    metadata_df = get_metadata_df(session_id, db)
+    df, metadata_df = _get_multisite_data(session_id, db)
+    df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
 
@@ -356,7 +435,7 @@ async def analyze_multisite_temporal(
         job.status = 'failed'
         job.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=500, detail=f'Multi-site temporal failed: {str(e)}')
+        raise HTTPException(status_code=_error_status(e), detail=f'Multi-site temporal failed: {str(e)}')
 
 
 # ─────────────────────────────── 5. Multi-site Network Compare
@@ -380,8 +459,8 @@ async def analyze_multisite_network_compare(
     # get_dataframe returns the canonical features x samples orientation
     # (app/services/orientation.py); every multisite service documents its input
     # as samples x taxa, so transpose once here.
-    df = get_dataframe(session_id, db).T
-    metadata_df = get_metadata_df(session_id, db)
+    df, metadata_df = _get_multisite_data(session_id, db)
+    df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
 
@@ -413,4 +492,4 @@ async def analyze_multisite_network_compare(
         job.status = 'failed'
         job.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=500, detail=f'Multi-site network compare failed: {str(e)}')
+        raise HTTPException(status_code=_error_status(e), detail=f'Multi-site network compare failed: {str(e)}')
