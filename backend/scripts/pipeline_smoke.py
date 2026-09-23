@@ -30,30 +30,32 @@ REPO = BACKEND.parent
 def _find_data_dir() -> Path:
     """Locate the example datasets.
 
-    In a checkout they sit at the repository root; in the container image they
-    are copied to /app/examples. Resolving both keeps `python
-    scripts/pipeline_smoke.py` working in either place. Override with
-    META2B_DATA_DIR.
+    In a checkout they sit at sample_data/ under the repository root; in the
+    container image they are copied to /app/sample_data (docker/backend.Dockerfile).
+    Resolving both keeps `python scripts/pipeline_smoke.py` working in either
+    place. Override with META2B_DATA_DIR.
     """
     candidates = [
         Path(os.environ["META2B_DATA_DIR"]) if os.environ.get("META2B_DATA_DIR") else None,
-        REPO / "sample_data",    # source checkout (datasets live here since 2026-08-26)
-        REPO,                    # legacy layout: datasets at repo root
-        BACKEND / "examples",    # container image
-        Path("/app/examples"),
+        REPO / "sample_data",     # source checkout (datasets live here since 2026-08-26)
+        BACKEND / "sample_data",  # container image (/app/sample_data)
     ]
     for candidate in candidates:
-        if candidate and (candidate / "Huang_mBio_metadata.tsv").exists():
+        if candidate and (candidate / "microbiome" / "Matched_metadata_261.tsv").exists():
             return candidate
-    return REPO
+    raise SystemExit(
+        "Huang mBio datasets not found (looked in: "
+        + ", ".join(str(c) for c in candidates if c)
+        + "). Set META2B_DATA_DIR to the sample_data/ directory."
+    )
 
 
 DATA_DIR = _find_data_dir()
 
-# Real datasets shipped with the repo.
-MICROBIOME = DATA_DIR / "Huang_mBio_microbiome.tsv"  # 261 samples x 44 genera (samples in rows)
-METABOLOME = DATA_DIR / "Huang_mBio_metabolome.tsv"  # 261 samples x 1125 metabolites
-METADATA = DATA_DIR / "Huang_mBio_metadata.tsv"      # Visit(7)/Plaque(2)/Bleeding/Subject(24)
+# Real datasets shipped with the repo (four-category layout since 2026-08-26).
+MICROBIOME = DATA_DIR / "microbiome" / "Matched_microbes_abd_261.tsv"    # 261 samples x 44 genera (samples in rows)
+METABOLOME = DATA_DIR / "metabolome" / "Matched_metabolites_abd_261.txt"  # 261 samples x 1125 metabolites
+METADATA = DATA_DIR / "microbiome" / "Matched_metadata_261.tsv"           # Visit(7)/Plaque(2)/Bleeding/Subject(24)
 STRAIN = BACKEND / "examples" / "strain2bscan_output.csv"
 
 N_SAMPLES = 261

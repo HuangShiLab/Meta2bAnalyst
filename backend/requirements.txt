@@ -4,6 +4,8 @@ uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 aiofiles>=23.0.0
 httpx>=0.25.0
+# MCP server exposing the platform as agent tools (app/mcp_server.py).
+fastmcp>=2.10
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 sqlalchemy>=2.0.0

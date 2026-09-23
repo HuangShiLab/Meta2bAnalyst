@@ -2129,6 +2129,38 @@ def functional_prediction(
     db.add(job)
     db.commit()
     db.refresh(job)
+    # If an external "paper agent" MCP server provides functional prediction
+    # (Paper2Agent-style), prefer it over the local mock reference table.
+    from app.services.mcp_client import call_capability, provider_for
+
+    if provider_for('functional_prediction') is not None:
+        try:
+            result_data = call_capability(
+                'functional_prediction',
+                {
+                    'abundance_table': df.to_dict(),
+                    'metadata': metadata_df.to_dict() if metadata_df is not None else None,
+                    'parameters': request.model_dump(),
+                },
+            )
+            _save_result(session_id, job, result_data)
+            job.status = 'completed'
+            job.completed_at = datetime.utcnow()
+            db.commit()
+            return AnalysisResponse(
+                job_id=job.id,
+                session_id=session_id,
+                job_type=job.job_type,
+                status=job.status,
+                result_data=job.result_data,
+                completed_at=job.completed_at,
+            )
+        except Exception as e:
+            logger.error(f'External functional-prediction MCP failed: {e}', exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f'External functional-prediction server failed: {e}',
+            )
     provenance = _guard_unvalidated(
         'PICRUSt2/Tax4Fun', request,
         'the KO reference database is a small mock table hard-coded in '

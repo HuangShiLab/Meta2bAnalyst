@@ -57,8 +57,15 @@ async def lifespan(app: FastAPI):
                 db.close()
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-    yield
+    async with mcp_asgi.lifespan(app):
+        yield
     logger.info("Meta2bAnalyst API shutting down...")
+
+
+# MCP server (Paper2Agent-style tool interface to the whole platform).
+from app.mcp_server import create_mcp_app
+
+mcp_asgi = create_mcp_app()
 
 
 # Create FastAPI app
@@ -232,5 +239,8 @@ app.include_router(multisite.router, prefix="/api/v1", tags=["multisite"])
 app.include_router(strain.router, prefix="/api/v1", tags=["strain"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["workflows"])
+
+# MCP endpoint for agent clients (Claude Code, Kimi, Codex): tools at /mcp/.
+app.mount("/mcp", mcp_asgi)
 
 logger.info("Meta2bAnalyst API initialized with all routes.")

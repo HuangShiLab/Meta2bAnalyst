@@ -1,17 +1,18 @@
-# Meta2bAnalyst - local single-user test deployment.
+# Meta2bAnalyst - intranet multi-user deployment.
 #
 # Usage (from the repository root):
-#     docker compose -f docker/docker-compose.yml up --build
+#     docker compose -f docker/docker-compose.yml up --build -d
 #     open http://localhost:8080
 #
-# ⚠ THERE IS NO PER-USER AUTHENTICATION. `GET /api/v1/sessions` lists every
-# session on the server and `DELETE /api/v1/sessions/{id}` erases its files.
-# The frontend can be gated with a single shared password (M2B_ACCESS_PASSWORD,
-# see the frontend service below) — that is a classroom door, not accounts:
-# every logged-in user still sees and can delete ALL sessions.
-# Default binding stays 127.0.0.1 (single-user). For intranet/classroom use:
-#   M2B_BIND_ADDR=0.0.0.0 M2B_ACCESS_PASSWORD=... docker compose -f docker/docker-compose.yml up -d
-# Never bind 0.0.0.0 without M2B_ACCESS_PASSWORD set.
+# The backend enforces per-user login (app/services/auth.py: login, per-user
+# sessions, storage quota, guest mode for shared demo sessions). The first
+# admin account is seeded when the users table is empty; without ADMIN_PASSWORD
+# its initial password is printed once in the backend log.
+# Binding lives in docker/.env: M2B_BIND_ADDR=0.0.0.0 serves the LAN (that
+# file also carries AUTH_SECRET so login tokens survive restarts); set it
+# back to 127.0.0.1 for single-user local-only access.
+# M2B_ACCESS_PASSWORD optionally adds a shared nginx basic-auth gate in front
+# of the whole site, on top of the app login.
 
 name: meta2banalyst
 
@@ -54,6 +55,10 @@ services:
       CORS_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
       ENVIRONMENT: production
       DEBUG: "false"
+      # Auth: AUTH_SECRET keeps login tokens valid across restarts (docker/.env);
+      # ADMIN_PASSWORD only seeds the first admin on an empty database.
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # LLM assist (planner fallback + narrative interpretation). Leave
       # KIMI_API_KEY unset to run KB-only; values come from docker/.env
       # (gitignored) or the shell environment.
@@ -64,6 +69,8 @@ services:
       - uploads_data:/app/uploads
       - logs_data:/app/logs
       - db_data:/app/data
+      # Demo datasets for the MCP load_demo_dataset tool (read-only).
+      - ../sample_data:/app/sample_data:ro
     depends_on:
       redis:
         condition: service_healthy

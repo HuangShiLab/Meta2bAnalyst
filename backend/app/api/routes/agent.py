@@ -262,6 +262,29 @@ async def search_knowledge_base(q: str, limit: int = 20):
     }
 
 
+@router.get("/knowledge/paper-cards", response_model=Dict[str, Any])
+async def list_paper_cards_endpoint():
+    """List paper knowledge cards (one per PMID cited in the KB), most
+    associations first. Each card summarises what that paper contributes:
+    diseases covered, enriched/depleted taxa, study types."""
+    from app.services.paper_cards import list_paper_cards
+
+    cards = list_paper_cards()
+    return {"n_papers": len(cards), "papers": cards}
+
+
+@router.get("/knowledge/paper-cards/{pmid}", response_model=Dict[str, Any])
+async def get_paper_card_endpoint(pmid: str):
+    """Get the full knowledge card for one PMID, including every
+    taxon-disease association the KB drew from it."""
+    from app.services.paper_cards import get_paper_card
+
+    card = get_paper_card(pmid)
+    if card is None:
+        raise HTTPException(status_code=404, detail=f"No paper card for PMID {pmid}")
+    return card
+
+
 # ───────────────────────────────────────────────────────────────
 # PLANNING
 # ───────────────────────────────────────────────────────────────

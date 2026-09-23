@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     KIMI_BASE_URL: str = "https://api.moonshot.cn/v1"
     KIMI_MODEL: str = "moonshot-v1-8k"
 
+    # External "paper agent" MCP servers (Paper2Agent direction B). JSON list,
+    # see app/services/mcp_client.py docstring. Empty = channel disabled.
+    EXTERNAL_MCP_SERVERS: str = ""
+
     # CORS (production should be restricted)
     # NoDecode: pydantic-settings would otherwise JSON-decode this list field
     # at the env-source level, before validators run, crashing on a plain

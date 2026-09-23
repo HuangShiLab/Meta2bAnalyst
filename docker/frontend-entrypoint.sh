@@ -10,6 +10,11 @@
 # localhost-only is then the deployer's port-binding choice).
 set -eu
 
+# nginx loads EVERY *.conf in conf.d/, so open.conf and auth.conf must not
+# both stay there -- with both present, the first one alphabetically (auth.conf)
+# captures every request whose Host does not literally match "localhost",
+# gating the whole site behind basic auth even when no password is set.
+confd=/etc/nginx/conf.d
 if [ -n "${ACCESS_PASSWORD:-}" ]; then
     user="${ACCESS_USER:-student}"
     # htpasswd comes from apache2-utils (installed in the final stage).
@@ -17,11 +22,12 @@ if [ -n "${ACCESS_PASSWORD:-}" ]; then
     # 644 not 640: nginx workers run as the nginx user and must be able to
     # read the file, or every authenticated request fails with a 500.
     chmod 644 /etc/nginx/.htpasswd
-    cp /etc/nginx/conf.d/auth.conf /etc/nginx/conf.d/default.conf
+    cp "$confd/auth.conf" "$confd/default.conf"
     echo "[entrypoint] access gate ON (user: $user)"
 else
-    cp /etc/nginx/conf.d/open.conf /etc/nginx/conf.d/default.conf
+    cp "$confd/open.conf" "$confd/default.conf"
     echo "[entrypoint] access gate OFF (ACCESS_PASSWORD not set)"
 fi
+rm -f "$confd/open.conf" "$confd/auth.conf"
 
 exec nginx -g 'daemon off;'

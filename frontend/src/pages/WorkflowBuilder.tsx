@@ -43,7 +43,9 @@ import {
   FolderOpen,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Relative default: works same-origin through the nginx proxy (docker) and the
+// vite dev proxy, so LAN/remote visitors are not sent to their own localhost.
+const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
 const CATEGORY_COLORS: Record<string, string> = {
   preprocessing: "bg-amber-100 text-amber-800 border-amber-300",
   individual_omics: "bg-blue-100 text-blue-800 border-blue-300",
