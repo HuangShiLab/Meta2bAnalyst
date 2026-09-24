@@ -197,6 +197,28 @@ class KnowledgeBase:
         rows = self._query("SELECT * FROM taxon")
         by_key = {self.normalize_taxon_name(r["name"]): r for r in rows}
 
+        hit = self._match_by_key(key, by_key, limit)
+        if hit:
+            return hit
+
+        # GTDB-style labels such as "Vei_Veillonella." or "Rs__Rs_045_Group"
+        # embed the genus as a token; retry with each token (longest first).
+        stopwords = {"group", "unclassified", "uncultured", "unknown", "bacterium", "sp"}
+        tokens = sorted(
+            {t for t in key.replace(".", "_").split("_") if len(t) >= 4 and t not in stopwords},
+            key=len, reverse=True,
+        )
+        for token in tokens:
+            hit = self._match_by_key(token, by_key, limit)
+            if hit:
+                return hit
+        return []
+
+    @staticmethod
+    def _match_by_key(key: str, by_key: Dict[str, sqlite3.Row], limit: int) -> List[sqlite3.Row]:
+        key = key.strip("._")
+        if not key:
+            return []
         if key in by_key:                                   # exact, after normalising
             return [by_key[key]]
 
