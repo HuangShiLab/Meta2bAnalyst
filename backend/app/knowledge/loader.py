@@ -278,12 +278,23 @@ class KnowledgeBase:
             """,
             (kw, kw, kw, kw, kw, limit),
         )
+        taxa = [self._row_to_taxon(r) for r in taxon_rows]
+        # Substring LIKE misses renamed labels ("Vei_Veillonella.", GTDB
+        # prefixed forms); fall back to the normalised fuzzy matcher and merge.
+        if len(taxa) < limit:
+            seen = {t["name"] for t in taxa}
+            for hit in self.fuzzy_lookup_taxon(keyword, limit=limit):
+                if hit["name"] not in seen:
+                    taxa.append(hit)
+                    seen.add(hit["name"])
+                if len(taxa) >= limit:
+                    break
         disease_rows = self._query(
             "SELECT * FROM disease WHERE name LIKE ? OR description LIKE ? LIMIT ?",
             (kw, kw, limit),
         )
         return {
-            "taxa": [self._row_to_taxon(r) for r in taxon_rows],
+            "taxa": taxa,
             "diseases": [self._row_to_disease(r) for r in disease_rows],
         }
 
