@@ -1,0 +1,21 @@
+# node_modules is reinstalled inside the image from package-lock.json; shipping
+# the host copy is both slow and wrong (native deps are platform-specific).
+node_modules/
+dist/
+build/
+
+# Test output
+test-results/
+playwright-report/
+e2e/
+
+# Build caches
+.vite/
+*.tsbuildinfo
+
+# Local scratch / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
+.env.local

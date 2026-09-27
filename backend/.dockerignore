@@ -1,0 +1,36 @@
+# Keep the build context small. Without this, `docker build` uploads the 503 MB
+# virtualenv and 159 MB of accumulated uploads before it runs a single step.
+
+# Virtualenvs (the image builds its own)
+venv/
+.venv/
+env/
+
+# Runtime data - must never end up in an image
+uploads/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+celerydb.sqlite
+*.pid
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local scratch / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# Test + docs artefacts not needed at runtime
+tests/
+r_package_status.txt
