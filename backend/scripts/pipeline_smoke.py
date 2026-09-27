@@ -68,6 +68,9 @@ class Result:
         self.name, self.status, self.ok, self.note = name, status, ok, note
 
 
+_TOKEN: Optional[str] = None  # Bearer token, set by --username/--password login
+
+
 def _request(method: str, url: str, body: Any = None, files: Dict[str, Path] = None,
              form: Dict[str, str] = None, timeout: int = 900):
     """Minimal HTTP client (stdlib only, so the harness has no extra deps)."""
@@ -93,6 +96,9 @@ def _request(method: str, url: str, body: Any = None, files: Dict[str, Path] = N
         headers = {"Content-Type": "application/json"}
     else:
         data, headers = None, {}
+
+    if _TOKEN:
+        headers["Authorization"] = f"Bearer {_TOKEN}"
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -135,6 +141,10 @@ def main() -> int:
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--json", default=None, help="write full results here")
     ap.add_argument("--keep", action="store_true", help="do not delete the session afterwards")
+    ap.add_argument("--username", default=os.environ.get("ADMIN_USER", "admin"),
+                    help="login username (server enforces auth)")
+    ap.add_argument("--password", default=os.environ.get("ADMIN_PASSWORD"),
+                    help="login password (default: ADMIN_PASSWORD env)")
     args = ap.parse_args()
     api = args.base.rstrip("/") + "/api/v1"
 
@@ -162,6 +172,17 @@ def main() -> int:
     if status != 200:
         print(f"server not reachable at {args.base} ({status}: {health})")
         return 1
+
+    # ── Auth (server enforces per-user login since 2026-09) ──────────────
+    global _TOKEN
+    status, auth = _request("POST", f"{api}/auth/login",
+                            {"username": args.username, "password": args.password or ""})
+    if status != 200 or not (isinstance(auth, dict) and auth.get("token")):
+        print(f"login failed for {args.username!r} ({status}: {auth}); "
+              f"pass --password or set ADMIN_PASSWORD")
+        return 1
+    _TOKEN = auth["token"]
+    print(f"  logged in as {auth['user']['username']} ({auth['user']['role']})")
 
     # ── Session + upload ────────────────────────────────────────────────
     print("-- session & upload")
