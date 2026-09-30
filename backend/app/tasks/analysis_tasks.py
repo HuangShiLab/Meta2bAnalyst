@@ -28,7 +28,7 @@ from app.services.analysis_engine import (
 )
 from app.services.strain_analyzer import StrainAnalyzer
 from app.services.data_parser import parse_data_file
-from app.utils.tabular import read_indexed_table
+from app.utils.tabular import read_delimited, read_indexed_table
 from app.services.orientation import resolve_feature_table, OrientationError
 
 logger = logging.getLogger(__name__)
@@ -504,7 +504,7 @@ def strain_composition_task(
     for file_path in uploads_dir.glob("*"):
         if file_path.is_file() and "strain" in file_path.name.lower():
             try:
-                strain_df = pd.read_csv(file_path, sep="\t")
+                strain_df = read_delimited(file_path)
                 strain_df.columns = [c.lower().strip() for c in strain_df.columns]
                 if "abundance" in strain_df.columns:
                     strain_df["abundance"] = pd.to_numeric(strain_df["abundance"], errors="coerce")
@@ -552,7 +552,7 @@ def strain_differential_task(
     for file_path in uploads_dir.glob("*"):
         if file_path.is_file() and "strain" in file_path.name.lower():
             try:
-                strain_df = pd.read_csv(file_path, sep="\t")
+                strain_df = read_delimited(file_path)
                 strain_df.columns = [c.lower().strip() for c in strain_df.columns]
                 if "abundance" in strain_df.columns:
                     strain_df["abundance"] = pd.to_numeric(strain_df["abundance"], errors="coerce")

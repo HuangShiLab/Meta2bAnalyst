@@ -25,7 +25,7 @@ from app.services.strain_analyzer import (
 )
 from app.tasks.analysis_tasks import strain_composition_task, strain_differential_task
 from app.utils.session_manager import SessionManager
-from app.utils.tabular import read_indexed_table
+from app.utils.tabular import read_delimited, read_indexed_table
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -75,7 +75,7 @@ def get_strain_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
         )
 
     try:
-        df = pd.read_csv(data_file.file_path, sep='\t')
+        df = read_delimited(data_file.file_path)
         # Standardize column names
         df.columns = [c.lower().strip() for c in df.columns]
         # Ensure numeric abundance
@@ -125,20 +125,30 @@ def _should_use_async(df: pd.DataFrame) -> bool:
     return n_rows > ASYNC_FEATURE_THRESHOLD or n_strains > ASYNC_SAMPLE_THRESHOLD
 
 
-def _submit_async_task(task_func, session_id: str, job: AnalysisJob, **kwargs) -> StrainAnalysisResponse:
-    """Submit a Celery async task and return pending response."""
+def _submit_async_task(task_func, _session_id: str, job: AnalysisJob, db: DBSession, **kwargs) -> StrainAnalysisResponse:
+    """Submit a Celery async task and return a pending response.
+
+    ``kwargs`` holds the Celery task's own arguments, which include a
+    ``session_id``; naming this one ``_session_id`` avoids the
+    "got multiple values for argument 'session_id'" TypeError that made the
+    async path 500 for large strain datasets. The celery_task_id must be
+    committed BEFORE returning, or the status endpoint (which looks it up via
+    job.parameters) can never see the task and the job stays pending forever.
+    """
     try:
         celery_job = task_func.delay(**kwargs)
         job.parameters = {**(job.parameters or {}), 'celery_task_id': celery_job.id}
+        db.commit()
         return StrainAnalysisResponse(
             job_id=job.id,
-            session_id=session_id,
+            session_id=_session_id,
             species=kwargs.get('species', ''),
             analysis_type=job.job_type,
             status='pending',
             message='Async task submitted',
         )
     except Exception as e:
+        db.rollback()
         logger.error(f'Failed to submit async task: {e}')
         raise HTTPException(status_code=500, detail=f'Failed to submit async task: {str(e)}')
 
@@ -268,7 +278,7 @@ async def analyze_strain_composition(
             db.commit()
             return _submit_async_task(
                 strain_composition_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 species=request.species,
             )
@@ -490,7 +500,7 @@ async def analyze_strain_differential(
             db.commit()
             return _submit_async_task(
                 strain_differential_task,
-                session_id, job,
+                session_id, job, db,
                 session_id=session_id,
                 group_var=group_var,
                 species=request.species,

@@ -303,18 +303,23 @@ def _run_paired_aldex2_r(
             ord <- order(coldata[[subject_var]], coldata[[group_var]])
             counts <- counts[, ord, drop=FALSE]
             coldata <- coldata[ord, , drop=FALSE]
-            # Run ALDEx2
+            # aldex.ttest returns only the p-value columns; rab.*/diff.*/effect
+            # come from aldex.effect. The old code selected effect columns straight
+            # off aldex.ttest's output ("undefined columns selected").
             conds <- coldata[[group_var]]
             x <- aldex.clr(reads = counts, conds = conds, mc.samples = 128)
-            res <- aldex.ttest(x, paired.test = TRUE)
+            res <- cbind(aldex.ttest(x, paired.test = TRUE), aldex.effect(x))
             res$feature <- rownames(res)
             rownames(res) <- NULL
-            # Rename for consistency
-            res <- res[, c("feature", "we.ep", "we.eBH", "wi.ep", "wi.eBH",
-                           "rab.all", "rab.win.g1", "rab.win.g2",
-                           "diff.btw", "diff.win")]
-            colnames(res)[2:5] <- c("we_pvalue", "we_padj", "wi_pvalue", "wi_padj")
-            return(res)
+            # rab.win columns carry the *actual* condition names (rab.win.T4),
+            # not g1/g2 -- normalize them when present.
+            for (pair in list(c(make.names(paste0("rab.win.", g1)), "rab.win.g1"),
+                              c(make.names(paste0("rab.win.", g2)), "rab.win.g2"))) {
+                if (pair[1] %in% colnames(res)) colnames(res)[colnames(res) == pair[1]] <- pair[2]
+            }
+            want <- c("feature", "we.ep", "we.eBH", "wi.ep", "wi.eBH", "rab.all",
+                      "rab.win.g1", "rab.win.g2", "diff.btw", "diff.win", "effect")
+            res[, intersect(want, colnames(res)), drop = FALSE]
         }
         ''')
         r_func = ro.r["run_paired_aldex2"]
@@ -322,9 +327,16 @@ def _run_paired_aldex2_r(
         result_df = ro.conversion.rpy2py(result_r)
 
     result_df = result_df.dropna(subset=["feature"])
-    result_df["padj"] = result_df["wi_padj"]
-    result_df["pvalue"] = result_df["wi_pvalue"]
-    result_df["effect"] = result_df["diff.btw"]
+    # Prefer the paired Wilcoxon columns; fall back to Welch's when the
+    # installed ALDEx2 does not provide them. Keyed by name, not position.
+    if "wi.ep" in result_df.columns and "wi.eBH" in result_df.columns:
+        result_df["pvalue"] = result_df["wi.ep"]
+        result_df["padj"] = result_df["wi.eBH"]
+    else:
+        result_df["pvalue"] = result_df["we.ep"]
+        result_df["padj"] = result_df["we.eBH"]
+    if "effect" not in result_df.columns:
+        result_df["effect"] = result_df.get("diff.btw")
     result_df["significant"] = result_df["padj"] < pvalue_threshold
     result_df = result_df.sort_values("padj")
 

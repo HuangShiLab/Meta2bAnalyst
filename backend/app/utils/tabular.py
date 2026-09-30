@@ -2,6 +2,23 @@
 import pandas as pd
 
 
+def read_delimited(path, **kwargs) -> pd.DataFrame:
+    """Read a TSV *or* CSV keeping every column (delimiter sniffed).
+
+    Same rationale as read_indexed_table, for tables whose first column is
+    data (e.g. strain tables: sample_id, species, strain, abundance) rather
+    than an index.
+    """
+    try:
+        return pd.read_csv(path, sep=None, engine="python", **kwargs)
+    except Exception:
+        pass
+    try:
+        return pd.read_csv(path, sep="\t", **kwargs)
+    except Exception:
+        return pd.read_csv(path, **kwargs)
+
+
 def read_indexed_table(path, index_col: int = 0) -> pd.DataFrame:
     """Read a TSV *or* CSV into a DataFrame indexed by its first column.
 
