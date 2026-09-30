@@ -46,13 +46,15 @@ async def lifespan(app: FastAPI):
                 conn.exec_driver_sql("ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
                 conn.commit()
                 logger.info("Migrated sessions table: added user_id column.")
-        # Seed the first admin account when auth is on and no users exist.
+        # Seed the first admin account when auth is on and no users exist,
+        # plus the built-in classroom test accounts (student01..studentNN).
         if settings.AUTH_REQUIRED:
-            from app.api.routes.auth import ensure_default_admin
+            from app.api.routes.auth import ensure_default_admin, ensure_student_accounts
 
             db = SessionLocal()
             try:
                 ensure_default_admin(db)
+                ensure_student_accounts(db)
             finally:
                 db.close()
     except Exception as e:

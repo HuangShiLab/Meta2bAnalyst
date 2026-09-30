@@ -178,6 +178,43 @@ def delete_user(
     return {"status": "deleted", "username": user.username}
 
 
+def ensure_student_accounts(db: DBSession) -> None:
+    """Seed the built-in classroom accounts (student01..studentNN) at startup.
+
+    Only fills gaps: usernames that already exist are skipped, so a restart
+    never resets a password someone has changed. Note this also means a
+    deleted test account reappears on the next restart — disable with
+    SEED_STUDENT_ACCOUNTS=false to stop seeding entirely.
+    """
+    if not settings.SEED_STUDENT_ACCOUNTS or settings.STUDENT_ACCOUNT_COUNT <= 0:
+        return
+    names = [f"student{i:02d}" for i in range(1, settings.STUDENT_ACCOUNT_COUNT + 1)]
+    existing = {
+        row.username
+        for row in db.query(User.username).filter(User.username.in_(names)).all()
+    }
+    created = 0
+    for name in names:
+        if name in existing:
+            continue
+        db.add(
+            User(
+                username=name,
+                password_hash=hash_password(settings.STUDENT_ACCOUNT_PASSWORD),
+                role="student",
+            )
+        )
+        created += 1
+    if created:
+        db.commit()
+        logger.info(
+            "Seeded %d built-in student accounts (student01..student%02d); "
+            "initial password from STUDENT_ACCOUNT_PASSWORD.",
+            created,
+            settings.STUDENT_ACCOUNT_COUNT,
+        )
+
+
 def ensure_default_admin(db: DBSession) -> None:
     """Seed the first admin account when the users table is empty.
 

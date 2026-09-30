@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     USER_QUOTA_MB: int = 500
     AUTH_REQUIRED: bool = True
 
+    # Built-in classroom test accounts, seeded at startup by
+    # ensure_student_accounts(): student01..studentNN with the initial
+    # password below. Seeding only fills gaps — accounts that already exist
+    # (e.g. someone changed their password) are never touched.
+    SEED_STUDENT_ACCOUNTS: bool = True
+    STUDENT_ACCOUNT_COUNT: int = 10
+    STUDENT_ACCOUNT_PASSWORD: str = "Meta2b-2026"
+
     # External LLM (Kimi / Moonshot, OpenAI-compatible API)
     # Used by app.services.llm_client to enhance agent interpretations.
     # Leave KIMI_API_KEY empty to run KB-only (no external calls).
