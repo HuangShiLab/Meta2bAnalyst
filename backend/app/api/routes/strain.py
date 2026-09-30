@@ -100,8 +100,7 @@ def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
     if not data_file:
         return None
     try:
-        df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
-        return df
+        return read_indexed_table(data_file.file_path)
     except Exception:
         return None
 

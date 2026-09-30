@@ -118,6 +118,10 @@ export function UploadPage() {
     // Check metabolome BEFORE metadata: "metabolome" contains "meta".
     if (lower.includes("metabolome") || lower.includes("metabolite") || lower.includes("lcms")) return "metabolome";
     if (lower.includes("metadata") || lower.includes("sample") || (lower.includes("meta") && !lower.includes("metabol"))) return "metadata";
+    // Taxonomy BEFORE the microbiome rule: "taxonomy" contains "taxa", and a
+    // taxonomy file stored as microbiome would shadow the real feature table
+    // (it is uploaded after it and get_dataframe picks the newest table).
+    if (lower.includes("taxonomy") || lower.endsWith(".tax")) return "taxonomy";
     if (lower.includes("metaphlan") || lower.includes("clade")) return "microbiome";
     if (lower.includes("humann3") || lower.includes("humann") || lower.includes("pathabundance") || lower.includes("genefamilies")) return "metabolome";
     if (lower.includes("microbiome") || lower.includes("microbial") || lower.includes("16s") || lower.includes("otu") || lower.includes("asv") || lower.includes("taxa")) return "microbiome";

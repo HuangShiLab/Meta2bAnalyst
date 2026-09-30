@@ -53,6 +53,7 @@ from app.services.analysis_engine import (
     run_o2pls_analysis,
 )
 from app.services.data_parser import parse_data_file
+from app.utils.tabular import read_indexed_table
 from app.services.orientation import (
     OrientationError,
     assert_sample_alignment,
@@ -225,13 +226,9 @@ def get_metadata_df(session_id: str, db: DBSession) -> Optional[pd.DataFrame]:
     if not data_file:
         return None
     try:
-        # Multi-omics metadata is almost always tab-separated; try that first,
-        # then fall back to comma-separated.
-        try:
-            df = pd.read_csv(data_file.file_path, sep='\t', index_col=0)
-        except Exception:
-            df = pd.read_csv(data_file.file_path, index_col=0)
-        return df
+        # Uploads accept both TSV and CSV metadata; the sniffer in
+        # read_indexed_table reads either correctly.
+        return read_indexed_table(data_file.file_path)
     except Exception:
         return None
 

@@ -22,6 +22,7 @@ from app.schemas import (
     NormalizeResponse,
 )
 from app.services.data_parser import parse_data_file
+from app.utils.tabular import read_indexed_table
 from app.services.data_processor import filter_data, normalize_data
 from app.services.data_validator import validate_data_for_analysis as validate_data_integrity
 
@@ -137,10 +138,7 @@ async def inspect_data(
         try:
             # Metadata files are samples x variables with a '#SampleID' index
             # column; read directly so the '#' header is not dropped.
-            try:
-                mdf = pd.read_csv(metadata_path, sep="\t", index_col=0)
-            except Exception:
-                mdf = pd.read_csv(metadata_path, index_col=0)
+            mdf = read_indexed_table(metadata_path)
             meta_samples = [str(s) for s in mdf.index]
             table_samples = [str(s) for s in df.columns]
             matched = sorted(set(table_samples) & set(meta_samples))
@@ -361,10 +359,7 @@ async def get_metadata_columns(
         # Read directly like analysis routes do: the leading '#SampleID' header
         # must not be treated as a comment line (parse_data_file would skip it
         # and misalign every column).
-        try:
-            meta_df = pd.read_csv(record.file_path, sep="\t", index_col=0)
-        except Exception:
-            meta_df = pd.read_csv(record.file_path, index_col=0)
+        meta_df = read_indexed_table(record.file_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse metadata: {e}")
 

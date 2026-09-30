@@ -28,6 +28,7 @@ from app.services.analysis_engine import (
 )
 from app.services.strain_analyzer import StrainAnalyzer
 from app.services.data_parser import parse_data_file
+from app.utils.tabular import read_indexed_table
 from app.services.orientation import resolve_feature_table, OrientationError
 
 logger = logging.getLogger(__name__)
@@ -156,15 +157,12 @@ def _load_session_data(session_id: str) -> tuple[Optional[pd.DataFrame], Optiona
 
 
 def _load_metadata(files) -> Optional[pd.DataFrame]:
-    """Newest metadata file for the session, tab- then comma-separated."""
+    """Newest metadata file for the session (TSV or CSV, delimiter sniffed)."""
     data_file = next((f for f in files if f.file_type == 'metadata'), None)
     if data_file is None:
         return None
     try:
-        try:
-            return pd.read_csv(data_file.file_path, sep='\t', index_col=0)
-        except Exception:
-            return pd.read_csv(data_file.file_path, index_col=0)
+        return read_indexed_table(data_file.file_path)
     except Exception:
         return None
 
@@ -570,7 +568,7 @@ def strain_differential_task(
     for file_path in uploads_dir.glob("*"):
         if file_path.is_file() and "metadata" in file_path.name.lower():
             try:
-                metadata_df = pd.read_csv(file_path, sep="\t", index_col=0)
+                metadata_df = read_indexed_table(file_path)
                 break
             except Exception:
                 continue

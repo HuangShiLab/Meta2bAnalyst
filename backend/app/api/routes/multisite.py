@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.database import get_db
 from app.models import AnalysisJob, Session as SessionModel
+from app.utils.tabular import read_indexed_table
 from app.schemas import AnalysisResponse, ErrorResponse
 from app.api.routes.analysis import get_all_dataframes_by_type, get_dataframe, get_metadata_df
 from app.services.multisite_analysis import (
@@ -61,10 +62,7 @@ def _get_multisite_data(session_id: str, db: DBSession):
     frames = []
     for mf in meta_files:
         try:
-            frame = pd.read_csv(mf.file_path, sep='\t', index_col=0)
-            if frame.shape[1] <= 1:
-                frame = pd.read_csv(mf.file_path, index_col=0)
-            frames.append(frame)
+            frames.append(read_indexed_table(mf.file_path))
         except Exception:
             logger.warning(f'Could not parse metadata file {mf.file_path}', exc_info=True)
     metadata_df = None
