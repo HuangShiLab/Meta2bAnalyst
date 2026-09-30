@@ -1114,7 +1114,7 @@ class AnalysisEngine:
             'matrix': cm.tolist(),
         }
 
-        return {
+        result = {
             'accuracy': accuracy,
             'cv_mean_accuracy': float(cv_scores.mean()),
             'cv_std_accuracy': float(cv_scores.std()),
@@ -1126,6 +1126,13 @@ class AnalysisEngine:
             'class_labels': le.classes_.tolist(),
             'confusion_matrix': cm_dict,
         }
+
+        # Attach the figures here, not only in the sync route: large datasets
+        # go through the Celery task (random_forest_task), which never added
+        # them, so async runs rendered no chart in the UI.
+        result['plot_data'] = self.plotly_rf_feature_importance(importance_df, top_n=20)
+        result['confusion_matrix_plot'] = self.plotly_confusion_matrix(cm_dict)
+        return result
 
     # ─────────────────────────────── Plotly Chart Generators
 

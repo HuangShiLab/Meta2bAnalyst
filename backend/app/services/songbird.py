@@ -468,6 +468,45 @@ def run_songbird(
         'ranked_coefficients': ranked_data,
         'volcano_style': volcano_data
     }
+
+    # The frontend renders Plotly figures ({data, layout}); the raw spec above
+    # never drew anything (clicks looked like "no response"). Emit a real
+    # figure as plot_data and keep the raw spec under plot_spec.
+    ranked_traces = []
+    for ci, cls in enumerate(ranked_data['classes']):
+        ranked_traces.append({
+            'type': 'bar',
+            'orientation': 'h',
+            'name': cls,
+            'y': ranked_data['feature_ids'],
+            'x': ranked_data['coefficients'][ci] if ci < len(ranked_data['coefficients']) else [],
+            'marker': {'color': ranked_data['colors'][ci % len(ranked_data['colors'])]},
+        })
+    if ranked_traces:
+        plotly_fig = {
+            'data': ranked_traces,
+            'layout': {
+                'title': 'Songbird Ranked Coefficients',
+                'barmode': 'group',
+                'xaxis': {'title': 'Multinomial coefficient (log-fold change)'},
+                'yaxis': {'title': 'Feature', 'automargin': True},
+                'height': max(400, 24 * len(ranked_data['feature_ids'])),
+            },
+        }
+    else:
+        plotly_fig = {
+            'data': [{
+                'type': 'scatter', 'mode': 'markers',
+                'x': volcano_data['x'], 'y': volcano_data['y'],
+                'text': volcano_data['feature_ids'],
+                'marker': {'color': '#1f77b4', 'size': 8},
+            }],
+            'layout': {
+                'title': 'Songbird Coefficient vs Significance',
+                'xaxis': {'title': 'Coefficient'},
+                'yaxis': {'title': '-log10(p-value)'},
+            },
+        }
     
     stats_summary = {
         'n_features': n_features,
@@ -486,7 +525,8 @@ def run_songbird(
     }
     
     return {
-        'plot_data': plot_data,
+        'plot_data': plotly_fig,
+        'plot_spec': plot_data,
         'statistics': stats_summary,
         'results_table': results_df,
         'model': fit_results.get('model')

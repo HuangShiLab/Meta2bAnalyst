@@ -615,16 +615,42 @@ def run_enterotype(
     
     # Cluster assignments as Series
     cluster_assignments = pd.Series(labels, index=sample_ids, name='enterotype')
-    
-    return {
-        'plot_data': {
-            'pcoa_scatter': pcoa_scatter,
-            'cluster_bar': composition.get('stacked_bar', {
-                'labels': [f"Cluster {i+1}" for i in unique_labels],
-                'values': [cluster_sizes[i] for i in unique_labels],
-                'proportions': [cluster_sizes[i] / n_samples for i in unique_labels]
-            })
+
+    # The frontend renders Plotly figures ({data, layout}); the raw spec below
+    # never drew anything (clicks looked like "no response"). Emit a real
+    # figure as plot_data and keep the raw spec under plot_spec.
+    plot_spec = {
+        'pcoa_scatter': pcoa_scatter,
+        'cluster_bar': composition.get('stacked_bar', {
+            'labels': [f"Cluster {i+1}" for i in unique_labels],
+            'values': [cluster_sizes[i] for i in unique_labels],
+            'proportions': [cluster_sizes[i] / n_samples for i in unique_labels]
+        })
+    }
+    cluster_traces = []
+    for lab in unique_labels:
+        idx = [i for i, l in enumerate(labels) if l == lab]
+        cluster_traces.append({
+            'type': 'scatter',
+            'mode': 'markers',
+            'name': f'Enterotype {lab + 1} (n={len(idx)})',
+            'x': [pcoa_scatter['x'][i] for i in idx],
+            'y': [pcoa_scatter['y'][i] for i in idx],
+            'text': [pcoa_scatter['sample_ids'][i] for i in idx],
+            'marker': {'color': point_colors[idx[0]] if idx else '#1f77b4', 'size': 9},
+        })
+    plotly_fig = {
+        'data': cluster_traces,
+        'layout': {
+            'title': f'Enterotype Clustering (PAM, {n_clusters} clusters, silhouette={stats_summary["silhouette_score"]:.3f})',
+            'xaxis': {'title': pcoa_scatter['axis_labels'][0]},
+            'yaxis': {'title': pcoa_scatter['axis_labels'][1]},
         },
+    }
+
+    return {
+        'plot_data': plotly_fig,
+        'plot_spec': plot_spec,
         'statistics': stats_summary,
         'cluster_assignments': cluster_assignments,
         'distance_matrix': dist_matrix,

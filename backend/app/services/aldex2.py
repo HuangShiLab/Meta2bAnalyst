@@ -361,7 +361,7 @@ def run_aldex2(
         n_up = int(significant.sum())
         n_down = 0
     
-    plot_data = {
+    plot_spec = {
         'volcano': {
             'x': effects.tolist(),
             'y': log_pvalues.tolist(),
@@ -374,6 +374,50 @@ def run_aldex2(
                 'neg_log_alpha': -np.log10(alpha)
             }
         }
+    }
+
+    # The frontend renders Plotly figures ({data, layout}); the raw spec above
+    # never drew anything (clicks looked like "no response"). Emit a real
+    # figure as plot_data and keep the raw spec under plot_spec.
+    _palette = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd']
+    _label_set = []
+    for lbl in group_labels:
+        if lbl not in _label_set:
+            _label_set.append(lbl)
+    _color_map = {lbl: ('#7f7f7f' if lbl == 'ns' else _palette[i % len(_palette)])
+                  for i, lbl in enumerate(_label_set)}
+    volcano_traces = []
+    for lbl in _label_set:
+        idx = [i for i, g in enumerate(group_labels) if g == lbl]
+        if not idx:
+            continue
+        volcano_traces.append({
+            'type': 'scatter',
+            'mode': 'markers',
+            'name': lbl,
+            'x': [effects[i] for i in idx],
+            'y': [log_pvalues[i] for i in idx],
+            'text': [feature_ids[i] for i in idx],
+            'marker': {'color': _color_map[lbl], 'size': 8},
+        })
+    _x_max = float(np.max(np.abs(effects))) if len(effects) else 1.0
+    _y_max = float(np.max(log_pvalues)) if len(log_pvalues) else 1.0
+    plot_data = {
+        'data': volcano_traces,
+        'layout': {
+            'title': f'ALDEx2 Volcano ({test_used})',
+            'xaxis': {'title': 'Effect size (median CLR difference)'},
+            'yaxis': {'title': '-log10(adjusted p-value)'},
+            'shapes': [
+                {'type': 'line', 'x0': effect_threshold, 'x1': effect_threshold,
+                 'y0': 0, 'y1': _y_max, 'line': {'color': 'gray', 'width': 1, 'dash': 'dash'}},
+                {'type': 'line', 'x0': -effect_threshold, 'x1': -effect_threshold,
+                 'y0': 0, 'y1': _y_max, 'line': {'color': 'gray', 'width': 1, 'dash': 'dash'}},
+                {'type': 'line', 'x0': -_x_max, 'x1': _x_max,
+                 'y0': -np.log10(alpha), 'y1': -np.log10(alpha),
+                 'line': {'color': 'gray', 'width': 1, 'dash': 'dash'}},
+            ],
+        },
     }
     
     # Summary statistics
@@ -395,6 +439,7 @@ def run_aldex2(
     
     return {
         'plot_data': plot_data,
+        'plot_spec': plot_spec,
         'statistics': stats_summary,
         'results_table': results_table
     }
