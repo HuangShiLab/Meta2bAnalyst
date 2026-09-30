@@ -107,72 +107,73 @@ def _build_volcano_plot(
     return fig
 
 
-def _validate_paired_structure(
-    metadata_df: pd.DataFrame, subject_column: str, group_column: str
-) -> None:
-    """Ensure every subject has exactly 2 samples and both groups are present."""
-    if subject_column not in metadata_df.columns:
-        raise ValueError(f"subject_column '{subject_column}' not found in metadata")
-    if group_column not in metadata_df.columns:
-        raise ValueError(f"group_column '{group_column}' not found in metadata")
-
-    subject_counts = metadata_df[subject_column].value_counts()
-    bad_subjects = subject_counts[subject_counts != 2]
-    if not bad_subjects.empty:
-        raise ValueError(
-            f"Paired test requires exactly 2 samples per subject. "
-            f"Offending subjects: {bad_subjects.to_dict()}"
-        )
-
-    groups = metadata_df[group_column].dropna().unique()
-    if len(groups) != 2:
-        raise ValueError(
-            f"Paired test requires exactly 2 groups, found {len(groups)}: {list(groups)}"
-        )
-
-
-def _pivot_paired(
+def _prepare_pairs(
     df: pd.DataFrame,
     metadata_df: pd.DataFrame,
-    subject_column: str,
     group_column: str,
-) -> tuple[pd.DataFrame, str, str]:
-    """Pivot paired data so each row = subject, columns = feature_x_group.
+    subject_column: str,
+    groups: Optional[List[str]] = None,
+) -> tuple:
+    """Select complete subject pairs for a two-level comparison.
 
-    Returns
-    -------
-    pivoted : DataFrame  (subjects x 2*features)
-    g1, g2  : group labels (sorted for stability)
+    Args:
+        df: Feature table, features x samples.
+        metadata_df: Sample metadata indexed by sample ID.
+        group_column: Factor defining the two conditions (e.g. Visit).
+        subject_column: Participant identifier used for pairing.
+        groups: The two levels to compare, reference first. Required when the
+            factor has more than two levels (e.g. ["T4", "T9"] out of seven
+            visits); defaults to the two levels, sorted.
+
+    Returns:
+        (samples_g1, samples_g2, g1, g2, n_dropped): aligned sample-ID lists,
+        one entry per subject with exactly one sample at each level, and the
+        number of subjects dropped for lacking a complete pair.
     """
+    for col in (subject_column, group_column):
+        if not col or col not in metadata_df.columns:
+            raise ValueError(f"column '{col}' not found in metadata")
+
     common = df.columns.intersection(metadata_df.index)
-    df = df[common]
-    meta = metadata_df.loc[common]
+    meta = metadata_df.loc[common, [subject_column, group_column]].dropna().astype(str)
 
-    groups = sorted(meta[group_column].dropna().unique())
-    g1, g2 = groups[0], groups[1]
+    levels = sorted(meta[group_column].unique())
+    if groups is not None:
+        groups = [str(g) for g in groups]
+        if len(groups) != 2:
+            raise ValueError(f"groups must name exactly two levels, got {groups}")
+        missing = [g for g in groups if g not in levels]
+        if missing:
+            raise ValueError(f"level(s) {missing} not found in '{group_column}' (have {levels})")
+        g1, g2 = groups
+    elif len(levels) == 2:
+        g1, g2 = levels
+    else:
+        raise ValueError(
+            f"'{group_column}' has {len(levels)} levels {levels}; pass groups=[reference, comparison] "
+            "to choose the two to compare."
+        )
 
-    # Attach group info to columns temporarily
-    col_df = pd.DataFrame({
-        "sample": df.columns,
-        "subject": meta[subject_column].values,
-        "group": meta[group_column].values,
-    })
-
-    # Long format
-    long = df.T.reset_index().melt(id_vars="index")
-    long = long.rename(columns={"index": "sample", "variable": "feature", "value": "abundance"})
-    long = long.merge(col_df, on="sample")
-
-    # Pivot to wide: subject x (feature_group)
-    wide = long.pivot_table(
-        index="subject",
-        columns=["feature", "group"],
-        values="abundance",
-        aggfunc="first",
-    )
-    # Flatten multi-index columns
-    wide.columns = [f"{feat}_{grp}" for feat, grp in wide.columns]
-    return wide, g1, g2
+    meta = meta[meta[group_column].isin([g1, g2])]
+    counts = meta.groupby([subject_column, group_column]).size()
+    if (counts > 1).any():
+        dup = counts[counts > 1].index.tolist()[:5]
+        raise ValueError(
+            f"Some subjects have more than one sample at the same level (e.g. {dup}); "
+            "pairing is ambiguous. Aggregate or remove replicates first."
+        )
+    per_subject = meta.groupby(subject_column)[group_column].nunique()
+    complete = per_subject[per_subject == 2].index
+    n_dropped = int((per_subject < 2).sum())
+    if len(complete) < 3:
+        raise ValueError(
+            f"Only {len(complete)} subjects have samples at both '{g1}' and '{g2}'; "
+            "a paired test needs at least 3."
+        )
+    meta = meta[meta[subject_column].isin(complete)].sort_values(subject_column)
+    s1 = meta.index[meta[group_column] == g1].tolist()
+    s2 = meta.index[meta[group_column] == g2].tolist()
+    return s1, s2, g1, g2, n_dropped
 
 
 def _run_paired_wilcoxon(
@@ -182,17 +183,12 @@ def _run_paired_wilcoxon(
     subject_column: str,
     transformation: str = "clr",
     pvalue_threshold: float = 0.05,
+    groups: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Python paired Wilcoxon signed-rank test per feature."""
-    _validate_paired_structure(metadata_df, subject_column, group_column)
+    """Paired Wilcoxon signed-rank test per feature (effect = g2 - g1)."""
+    s1, s2, g1, g2, n_dropped = _prepare_pairs(df, metadata_df, group_column, subject_column, groups)
 
-    common = df.columns.intersection(metadata_df.index)
-    df = df[common]
-    meta = metadata_df.loc[common]
-
-    # Transpose to samples x features for CLR
-    X = df.T
-
+    X = df[s1 + s2].T  # samples x features, the orientation _clr_transform expects
     if transformation.lower() == "clr":
         X_trans = _clr_transform(X)
     elif transformation.lower() == "log":
@@ -202,50 +198,47 @@ def _run_paired_wilcoxon(
     else:
         raise ValueError(f"Unknown transformation: {transformation}")
 
-    wide, g1, g2 = _pivot_paired(X_trans, meta, subject_column, group_column)
+    A = X_trans.loc[s1].to_numpy(dtype=float)  # subjects x features, level g1
+    B = X_trans.loc[s2].to_numpy(dtype=float)  # same subjects, level g2
 
     results = []
-    features = sorted({c.rsplit(f"_{g2}", 1)[0] for c in wide.columns if c.endswith(f"_{g2}")})
-    for feat in features:
-        col1 = f"{feat}_{g1}"
-        col2 = f"{feat}_{g2}"
-        if col1 not in wide.columns or col2 not in wide.columns:
-            continue
-        pair = wide[[col1, col2]].dropna()
-        if len(pair) < 3:
-            continue
+    for j, feat in enumerate(X_trans.columns):
+        a, b = A[:, j], B[:, j]
+        diff = b - a
+        if np.allclose(diff, 0):
+            continue  # identical in every pair: the signed-rank test is undefined
         try:
-            stat, pvalue = stats.wilcoxon(pair[col1], pair[col2], alternative="two-sided")
+            stat, pvalue = stats.wilcoxon(a, b, alternative="two-sided")
         except Exception as e:
             logger.warning(f"Wilcoxon failed for {feat}: {e}")
             continue
-        median_diff = float(pair[col2].median() - pair[col1].median())
-        mean_diff = float(pair[col2].mean() - pair[col1].mean())
         results.append({
-            "feature": feat,
-            "median_diff": median_diff,
-            "mean_diff": mean_diff,
+            "feature": str(feat),
+            "median_diff": float(np.median(diff)),
+            "mean_diff": float(np.mean(diff)),
             "statistic": float(stat),
             "pvalue": float(pvalue),
         })
 
+    stats_dict = {
+        "method": "paired_wilcoxon",
+        "engine": "python::scipy.stats.wilcoxon",
+        "transformation": transformation,
+        "groups": [g1, g2],
+        "effect_direction": f"{g2} minus {g1}",
+        "n_pairs": len(s1),
+        "n_subjects_dropped_incomplete": n_dropped,
+        "pvalue_threshold": pvalue_threshold,
+    }
     result_df = pd.DataFrame(results)
     if result_df.empty:
-        return {
-            "significant_features": result_df,
-            "volcano_plot": go.Figure(),
-            "statistics": {
-                "method": "paired_wilcoxon",
-                "n_features_tested": 0,
-                "n_significant": 0,
-                "pvalue_threshold": pvalue_threshold,
-            },
-        }
+        stats_dict.update({"n_features_tested": 0, "n_significant": 0, "n_up": 0, "n_down": 0})
+        return {"significant_features": result_df, "results": result_df,
+                "volcano_plot": go.Figure(), "statistics": stats_dict}
 
     result_df["padj"] = adjust_pvalues(result_df["pvalue"].values, "fdr_bh")
     result_df["significant"] = result_df["padj"] < pvalue_threshold
     result_df = result_df.sort_values("padj")
-
     sig_df = result_df[result_df["significant"]].copy()
 
     fig = _build_volcano_plot(
@@ -256,20 +249,15 @@ def _run_paired_wilcoxon(
         pvalue_threshold=pvalue_threshold,
         title=f"Paired Wilcoxon ({g1} vs {g2})",
     )
-
-    stats_dict = {
-        "method": "paired_wilcoxon",
-        "transformation": transformation,
+    stats_dict.update({
         "n_features_tested": int(len(result_df)),
         "n_significant": int(sig_df.shape[0]),
         "n_up": int((sig_df["median_diff"] > 0).sum()),
         "n_down": int((sig_df["median_diff"] < 0).sum()),
-        "pvalue_threshold": pvalue_threshold,
-        "groups": [g1, g2],
-    }
-
+    })
     return {
         "significant_features": sig_df,
+        "results": result_df,
         "volcano_plot": fig,
         "statistics": stats_dict,
     }
@@ -281,8 +269,9 @@ def _run_paired_aldex2_r(
     group_column: str,
     subject_column: str,
     pvalue_threshold: float = 0.05,
+    groups: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Run ALDEx2 via rpy2 for paired designs; returns None on failure."""
+    """Run ALDEx2 via rpy2 for paired designs; returns None if R/ALDEx2 is unavailable."""
     if not R_AVAILABLE:
         return None
 
@@ -292,19 +281,12 @@ def _run_paired_aldex2_r(
         logger.warning(f"ALDEx2 R package not available: {e}")
         return None
 
-    try:
-        _validate_paired_structure(metadata_df, subject_column, group_column)
-    except ValueError:
-        return None
-
-    common = df.columns.intersection(metadata_df.index)
+    s1, s2, g1, g2, _ = _prepare_pairs(df, metadata_df, group_column, subject_column, groups)
+    common = s1 + s2
     count_sub = df[common].astype(int)
     meta_sub = metadata_df.loc[common].copy()
     meta_sub[group_column] = meta_sub[group_column].astype(str)
     meta_sub[subject_column] = meta_sub[subject_column].astype(str)
-
-    groups = sorted(meta_sub[group_column].dropna().unique())
-    g1, g2 = groups[0], groups[1]
 
     with localconverter(ro.default_converter + pandas2ri.converter):
         r_counts = ro.conversion.py2rpy(count_sub)
@@ -359,6 +341,7 @@ def _run_paired_aldex2_r(
 
     return {
         "significant_features": sig_df,
+        "results": result_df,
         "volcano_plot": fig,
         "statistics": {
             "method": "paired_aldex2",
@@ -381,6 +364,8 @@ def run_paired_differential_test(
     method="paired_wilcoxon",
     transformation="clr",
     pvalue_threshold=0.05,
+    groups=None,
+    allow_approximation=False,
 ):
     """Paired differential abundance test for repeated-measures designs.
 
@@ -391,39 +376,52 @@ def run_paired_differential_test(
     metadata_df : pd.DataFrame
         Sample metadata indexed by sample ID.
     group_column : str
-        Column in metadata containing the 2-group factor.
+        Factor defining the conditions (may have more than two levels).
     subject_column : str
-        Column in metadata containing the subject ID (must have exactly 2
-        samples per subject).
+        Participant ID used for pairing.
     method : str
-        "paired_wilcoxon" or "paired_aldex2".
+        "paired_wilcoxon" (CLR + Wilcoxon signed-rank) or "paired_aldex2" (R).
     transformation : str
-        "clr" (default), "log", or "none".
+        "clr" (default), "log", or "none" (paired_wilcoxon only).
     pvalue_threshold : float
         Significance threshold for BH-adjusted p-values.
+    groups : list[str] | None
+        [reference, comparison] levels; required if group_column has >2 levels.
+        Subjects without a sample at both levels are dropped and counted.
+    allow_approximation : bool
+        paired_aldex2 without R: refuse (default) or run the paired Wilcoxon
+        test labelled as an approximation.
 
     Returns
     -------
-    dict
-        {
-            "significant_features": pd.DataFrame,
-            "volcano_plot": plotly.graph_objects.Figure,
-            "statistics": dict,
-        }
+    dict with "significant_features", "results" (all features), "volcano_plot"
+    and "statistics" (including engine and the pairing summary).
     """
     method = method.lower()
     if method == "paired_aldex2":
         result = _run_paired_aldex2_r(
-            df, metadata_df, group_column, subject_column, pvalue_threshold
+            df, metadata_df, group_column, subject_column, pvalue_threshold, groups
         )
-        if result is None:
-            logger.warning("ALDEx2 R failed; falling back to paired_wilcoxon")
-            return _run_paired_wilcoxon(
-                df, metadata_df, group_column, subject_column, transformation, pvalue_threshold
+        if result is not None:
+            return result
+        if not allow_approximation:
+            raise ValueError(
+                "paired_aldex2 requires the R package ALDEx2, which is not available on "
+                "this server. Use method='paired_wilcoxon', or resend with "
+                "allow_approximation=true to run the paired Wilcoxon test labelled as an "
+                "approximation (results must not be reported as ALDEx2)."
             )
+        result = _run_paired_wilcoxon(
+            df, metadata_df, group_column, subject_column, transformation, pvalue_threshold, groups
+        )
+        result["statistics"].update({
+            "engine": "python-approx::paired_aldex2",
+            "is_approximation": True,
+            "approximation_note": "CLR point estimate + paired Wilcoxon; no Monte-Carlo Dirichlet sampling.",
+        })
         return result
-
-    # Default / fallback
+    if method != "paired_wilcoxon":
+        raise ValueError(f"Unknown method '{method}' (use paired_wilcoxon or paired_aldex2)")
     return _run_paired_wilcoxon(
-        df, metadata_df, group_column, subject_column, transformation, pvalue_threshold
+        df, metadata_df, group_column, subject_column, transformation, pvalue_threshold, groups
     )

@@ -173,9 +173,13 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
             "distance_metric": {"type": "enum", "options": ["braycurtis", "euclidean"], "default": "braycurtis"},
             "permutations": {"type": "int", "default": 999},
             "data_type": {"type": "enum", "options": ["microbiome", "metabolome"], "default": "microbiome"},
+            "subject_column": {"type": "string", "default": None},
         },
         output_spec={"statistics": "dict", "significant_variables": "list"},
-        constraints=["Requires both data matrix and metadata with grouping variable"],
+        constraints=[
+            "Requires both data matrix and metadata with grouping variable",
+            "Repeated measures: set subject_column so permutations respect participants",
+        ],
     ),
 
     # ── Marker Discovery ────────────────────────────────────────
@@ -225,10 +229,12 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         input_requirements={"microbiome": "required", "metabolome": "required", "metadata": "optional"},
         parameters={
             "group_column": {"type": "string", "default": "Visit"},
-            "microbiome_ordination": {"type": "enum", "options": ["pcoa"], "default": "pcoa"},
-            "metabolome_ordination": {"type": "enum", "options": ["pca"], "default": "pca"},
+            "procrustes_method": {"type": "enum", "options": ["pcoa", "pca", "raw"], "default": "pcoa"},
+            "procrustes_metric_1": {"type": "enum", "options": ["braycurtis", "jaccard", "euclidean"], "default": "braycurtis"},
+            "procrustes_metric_2": {"type": "enum", "options": ["euclidean", "braycurtis"], "default": "euclidean"},
+            "n_permutations": {"type": "int", "default": 999},
         },
-        output_spec={"plot_data": "plotly", "m12": "float", "scale": "float", "correlation": "float"},
+        output_spec={"plot_data": "plotly", "m2": "float", "procrustes_r": "float", "pvalue": "float"},
         constraints=["Requires both microbiome and metabolome data"],
         depends_on=["microbiome_pcoa", "metabolome_pca"],
     ),
@@ -705,9 +711,14 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
             "method": {"type": "enum", "options": ["paired_wilcoxon", "paired_aldex2"], "default": "paired_wilcoxon"},
             "transformation": {"type": "enum", "options": ["clr", "ilr", "none"], "default": "clr"},
             "pvalue_threshold": {"type": "float", "default": 0.05},
+            "groups": {"type": "array", "default": None,
+                       "description": "[reference, comparison] levels; required when group_column has >2 levels"},
+            "allow_approximation": {"type": "bool", "default": False},
         },
-        output_spec={"significant_features": "dataframe", "volcano_plot": "plotly", "statistics": "dict"},
-        constraints=["Requires exactly 2 groups and subject_column for pairing"],
+        output_spec={"significant_features": "dataframe", "results": "dataframe",
+                     "volcano_plot": "plotly", "statistics": "dict"},
+        constraints=["Two levels of group_column (choose them with groups) and subject_column for pairing; "
+                     "subjects without both levels are dropped and counted"],
         depends_on=["data_validator"],
     ),
 

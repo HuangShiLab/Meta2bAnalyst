@@ -25,6 +25,7 @@ from app.services.strain_analyzer import (
 )
 from app.tasks.analysis_tasks import strain_composition_task, strain_differential_task
 from app.utils.session_manager import SessionManager
+from app.utils.tabular import read_indexed_table
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

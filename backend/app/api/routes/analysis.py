@@ -1308,10 +1308,16 @@ async def analyze_permanova(
                 'metric': request.parameters.get('metric', 'braycurtis'),
                 'group_column': request.group_column,
                 'n_permutations': request.parameters.get('n_permutations', 999),
+                # Participant ID column for repeated-measures designs; see
+                # AnalysisEngine.permanova for the permutation schemes.
+                'subject_column': request.parameters.get('subject_column'),
             },
             status='pending',
             started_at=datetime.utcnow(),
         )
+        subject_column = request.parameters.get('subject_column')
+        if subject_column and subject_column not in metadata_df.columns:
+            raise HTTPException(status_code=400, detail=f"subject_column '{subject_column}' not found in metadata")
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -1327,6 +1333,7 @@ async def analyze_permanova(
                 distance=request.parameters.get('metric', 'braycurtis'),
                 group_var=request.group_column,
                 n_permutations=request.parameters.get('n_permutations', 999),
+                subject_column=subject_column,
             )
 
         job.status = 'running'

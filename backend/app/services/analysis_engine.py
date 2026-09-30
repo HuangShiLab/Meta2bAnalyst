@@ -771,11 +771,21 @@ class AnalysisEngine:
         group_var: str,
         n_permutations: int = 999,
         random_seed: int = 42,
+        subject_var: Optional[str] = None,
     ) -> dict:
         """PERMANOVA (Permutational Multivariate Analysis of Variance).
 
         Anderson (2001) partitioning of the distance matrix into within- and
         between-group sums of squares, with a label-permutation test.
+
+        Repeated measures: when ``subject_var`` names the column identifying
+        participants, permutations respect the design instead of treating every
+        sample as independent. A factor that is constant within participants
+        (e.g. case/control) is tested by permuting labels among participants,
+        keeping each participant's samples together; a factor that varies within
+        participants (e.g. visit) is tested by permuting labels within each
+        participant (vegan's ``strata``). Free permutation of repeated samples
+        makes between-participant effects look far more significant than they are.
 
         Args:
             distance_matrix: Square distance matrix.
@@ -784,6 +794,8 @@ class AnalysisEngine:
             n_permutations: Number of permutations for p-value estimation.
             random_seed: Seed for the permutation RNG. Fixed by default so the
                 reported p-value is reproducible; pass None for a fresh draw.
+            subject_var: Optional column identifying participants (repeated
+                measures). None permutes samples freely.
 
         Returns:
             Dictionary with pseudo-F, R^2, p-value and the SS partition.
@@ -837,13 +849,57 @@ class AnalysisEngine:
         f_obs = _pseudo_f(ssb, ssw_obs)
         r_squared = ssb / sst if sst > 0 else float('nan')
 
+        # Permutation scheme (see docstring). Blocks are precomputed once.
+        scheme = 'free'
+        warnings_out = []
+        if subject_var is not None:
+            if subject_var not in metadata.columns:
+                raise ValueError(f"subject column '{subject_var}' not found in metadata")
+            if subject_var == group_var:
+                raise ValueError("subject column and grouping column must differ")
+            subjects = metadata.loc[samples, subject_var].astype(str).values
+            from app.services.study_design import factor_level
+            scheme = factor_level(
+                pd.DataFrame({'s': subjects, 'g': groups}), 'g', 's'
+            )
+            block_idx = [np.where(subjects == s)[0] for s in pd.unique(subjects)]
+            if scheme == 'between_subject':
+                subject_labels = np.array([groups[idx[0]] for idx in block_idx])
+                if len(block_idx) < 4:
+                    warnings_out.append(
+                        f"Only {len(block_idx)} participants: a participant-level "
+                        "permutation test has very few distinct permutations."
+                    )
+        else:
+            from app.services.study_design import detect_subject_column
+            guess = detect_subject_column(metadata.loc[samples], exclude=group_var)
+            if guess is not None:
+                warnings_out.append(
+                    f"Samples look like repeated measures of '{guess}', but samples "
+                    "were permuted freely, which assumes they are independent. "
+                    f"Re-run with subject_column='{guess}' for a valid P value."
+                )
+
+        def _permute(rng_):
+            if scheme == 'free':
+                return rng_.permutation(groups)
+            out = groups.copy()
+            if scheme == 'within_subject':
+                for idx in block_idx:
+                    out[idx] = groups[idx][rng_.permutation(len(idx))]
+            else:  # between_subject: shuffle whole participants
+                shuffled = rng_.permutation(subject_labels)
+                for lab, idx in zip(shuffled, block_idx):
+                    out[idx] = lab
+            return out
+
         # Permutation test. Uses a dedicated Generator seeded from `random_seed`
         # so repeated runs on the same data return the same p-value; the global
         # numpy RNG previously used made results irreproducible.
         rng = np.random.default_rng(random_seed)
         f_permuted = []
         for _ in range(n_permutations):
-            permuted_groups = rng.permutation(groups)
+            permuted_groups = _permute(rng)
             ssw_perm = calc_ssw(dist, permuted_groups, unique_groups)
             ssb_perm = sst - ssw_perm
             f_permuted.append(_pseudo_f(ssb_perm, ssw_perm))
@@ -851,6 +907,9 @@ class AnalysisEngine:
         pvalue = (np.sum(np.array(f_permuted) >= f_obs) + 1) / (n_permutations + 1)
 
         return {
+            'permutation_scheme': scheme,
+            'subject_column': subject_var,
+            'warnings': warnings_out,
             'pseudo_f': float(f_obs),
             'r_squared': float(r_squared),
             'pvalue': float(pvalue),
@@ -2039,13 +2098,15 @@ def run_permanova(
     metric = params.get('metric', 'braycurtis')
     group_column = params.get('group_column')
     n_permutations = params.get('n_permutations', 999)
+    subject_column = params.get('subject_column') or None
 
     if metadata_df is None or group_column not in metadata_df.columns:
         return {'error': 'Metadata with group column required for PERMANOVA'}
 
     engine = AnalysisEngine()
     dist_matrix = engine.beta_diversity(df, distance=metric)
-    result = engine.permanova(dist_matrix, metadata_df, group_column, n_permutations=n_permutations)
+    result = engine.permanova(dist_matrix, metadata_df, group_column,
+                              n_permutations=n_permutations, subject_var=subject_column)
     return result
 
 

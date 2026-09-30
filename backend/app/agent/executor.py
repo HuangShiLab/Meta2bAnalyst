@@ -372,14 +372,37 @@ def _get_module_function(module_name: str) -> Callable:
             params = dict(kw)
             params["analysis_type"] = "procrustes"
             params.setdefault("procrustes_method", "pcoa")
+            params.setdefault("n_permutations", kw.get("permutations", 999))
             return run_cross_omics_analysis(df, df2, metadata_df, parameters=params)
 
         def _run_mantel(df, df2=None, metadata_df=None, **kw):
             params = dict(kw)
             params["analysis_type"] = "mantel"
-            params.setdefault("mantel_metric", "braycurtis")
+            # Registry parameter names -> service parameter names.
+            params.setdefault("mantel_metric", kw.get("microbiome_metric", "braycurtis"))
+            params.setdefault("mantel_metric_2", kw.get("metabolome_metric", params["mantel_metric"]))
             params.setdefault("mantel_method", "pearson")
-            params.setdefault("n_permutations", 999)
+            params.setdefault("n_permutations", kw.get("permutations", 999))
+            return run_cross_omics_analysis(df, df2, metadata_df, parameters=params)
+
+        def _run_cross_correlation(df, df2=None, metadata_df=None, **kw):
+            """Genus x metabolite Spearman/Pearson correlation with BH FDR.
+
+            This module used to call the single-table correlation service, so it
+            silently returned genus-genus correlations and ignored the metabolome
+            despite its registered description. Without a second table it now
+            fails instead of answering a different question.
+            """
+            if df2 is None:
+                raise ValueError(
+                    "cross_correlation correlates microbial features with metabolites "
+                    "and needs a metabolome table; for correlations among taxa use "
+                    "network_sparcc or spiec_easi."
+                )
+            params = {
+                "analysis_type": "correlation",
+                "correlation_method": kw.get("method", "spearman"),
+            }
             return run_cross_omics_analysis(df, df2, metadata_df, parameters=params)
 
         def _run_tsne(df, metadata_df=None, **kw):
@@ -653,7 +676,9 @@ def _get_module_function(module_name: str) -> Callable:
                 df, metadata_df, parameters={
                     "metric": kw.get("distance_metric", "braycurtis"),
                     "group_column": kw.get("group_column"),
-                    "n_permutations": kw.get("n_permutations", 999),
+                    # Registry names this 'permutations'; accept both spellings.
+                    "n_permutations": kw.get("n_permutations", kw.get("permutations", 999)),
+                    "subject_column": kw.get("subject_column"),
                 }
             ),
             "microbiome_marker": _run_microbiome_marker,
@@ -669,13 +694,7 @@ def _get_module_function(module_name: str) -> Callable:
             "o2pls": lambda df, df2=None, metadata_df=None, **kw: run_o2pls_analysis(
                 df.T, df2.T if df2 is not None else None, metadata_df, **kw
             ),
-            "cross_correlation": lambda df, df2=None, metadata_df=None, **kw: run_correlation_analysis(
-                df, metadata_df, parameters={
-                    "method": kw.get("method", "spearman"),
-                    "target": "feature",
-                    "top_n_features": kw.get("top_n_genera", 15),
-                }
-            ),
+            "cross_correlation": _run_cross_correlation,
             "network_sparcc": lambda df, metadata_df=None, **kw: run_network_analysis(df, **kw),
             "pathway_kegg": lambda df, **kw: run_pathway_analysis(df, parameters=kw),
             "functional_prediction": lambda df, **kw: run_functional_prediction(df, parameters=kw),
@@ -801,6 +820,8 @@ def _get_module_function(module_name: str) -> Callable:
                 method=kw.get("method", "paired_wilcoxon"),
                 transformation=kw.get("transformation", "clr"),
                 pvalue_threshold=kw.get("pvalue_threshold", 0.05),
+                groups=kw.get("groups"),
+                allow_approximation=kw.get("allow_approximation", False),
             ),
             "ancom_bc": lambda df, metadata_df=None, **kw: run_ancom_bc(
                 df,

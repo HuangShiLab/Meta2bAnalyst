@@ -230,12 +230,17 @@ class ResultIntegrator:
         if "procrustes" in results:
             r = results["procrustes"][0]
             stats = r.get("statistics", {}) if isinstance(r, dict) else {}
-            m12 = stats.get("m12", "N/A")
-            scale = stats.get("scale", "N/A")
+            def _fmt(v, spec):
+                return format(v, spec) if isinstance(v, (int, float)) else "N/A"
+            m2 = _fmt(stats.get("m2"), ".3f")
+            r = _fmt(stats.get("procrustes_r"), ".3f")
+            p = _fmt(stats.get("pvalue"), ".3g")
 
             self.sections.append(ReportSection(
                 title="Procrustes Analysis",
-                content=f"Alignment of microbiome and metabolome configurations. m²={m12}, scale={scale}.",
+                content=(f"Symmetric Procrustes superimposition of microbiome and metabolome "
+                         f"ordinations: m²={m2} (0 = identical, 1 = unrelated), r={r}, "
+                         f"permutation P={p}."),
                 plot_data=r.get("plot_data") if isinstance(r, dict) else None,
                 statistics=stats,
                 order=self.SECTION_ORDER["procrustes"],

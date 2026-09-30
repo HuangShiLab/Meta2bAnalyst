@@ -48,71 +48,101 @@ def _sanitize_json(obj: Any) -> Any:
 def procrustes_analysis(
     X: np.ndarray,
     Y: np.ndarray,
-    scale: bool = True,
+    n_permutations: int = 999,
+    random_seed: int = 42,
 ) -> Dict[str, Any]:
-    """Perform Procrustes analysis to align two matrices.
-    
-    Finds optimal rotation, translation, and scaling to minimize sum of squared
-    differences between X and Y.
-    
+    """Symmetric Procrustes analysis with a permutation test (PROTEST).
+
+    Both configurations are centred and scaled to unit sum of squares, Y is
+    rotated (reflections allowed) onto X, and the residual sum of squares is
+    the symmetric Procrustes statistic m^2 = 1 - r^2, where r is the Procrustes
+    correlation (Gower 1975; Peres-Neto & Jackson 2001; vegan::protest).
+    m^2 lies in [0, 1]: 0 for identical configurations, 1 for none shared.
+
+    The previous implementation scaled Y by the ratio of matrix norms instead
+    of the least-squares optimum and reported SS/||X||^2 as a "normalised m2",
+    which equals 2(1 - r) and can exceed 1. The rotation itself was right.
+
     Args:
-        X: Reference matrix (n_samples x n_features1).
-        Y: Matrix to align (n_samples x n_features2).
-        scale: If True, allow scaling.
-        
+        X, Y: Configurations (n_samples x k), rows in the same sample order.
+        n_permutations: Row permutations of Y for the significance of r
+            (0 skips the test).
+        random_seed: Seed for the permutation RNG (reproducible p-values).
+
     Returns:
-        Dict with transformed Y, m2 (sum of squared errors), and transformation params.
+        Dict with the standardised X, the fitted Y, m2, procrustes_r, pvalue.
     """
-    n, m = X.shape
-    ny, my = Y.shape
-    
-    if n != ny:
-        raise ValueError(f"X and Y must have same number of rows, got {n} and {ny}")
-    
-    # Center both matrices
-    X_centered = X - X.mean(axis=0)
-    Y_centered = Y - Y.mean(axis=0)
-    
-    # Compute optimal rotation via SVD
-    XY = X_centered.T @ Y_centered
-    U, S, Vt = np.linalg.svd(XY)
-    R = U @ Vt
-    
-    # Ensure proper rotation (det(R) = 1)
-    if np.linalg.det(R) < 0:
-        U[:, -1] *= -1
-        R = U @ Vt
-    
-    # Compute optimal scaling
-    if scale:
-        norm_X = np.linalg.norm(X_centered)
-        norm_YR = np.linalg.norm(Y_centered @ R.T)
-        if norm_YR > 0:
-            s = norm_X / norm_YR
-        else:
-            s = 1.0
-    else:
-        s = 1.0
-    
-    # Transform Y
-    Y_transformed = s * (Y_centered @ R.T) + X.mean(axis=0)
-    
-    # Compute m2 (sum of squared errors)
-    m2 = np.sum((X - Y_transformed) ** 2)
-    
-    # Normalized m2 (0 = perfect fit, 1 = no fit)
-    norm_X2 = np.sum(X_centered ** 2)
-    normalized_m2 = m2 / norm_X2 if norm_X2 > 0 else 1.0
-    
+    from scipy.spatial import procrustes as _scipy_procrustes
+
+    X = np.asarray(X, dtype=float)
+    Y = np.asarray(Y, dtype=float)
+    n = X.shape[0]
+    if n != Y.shape[0]:
+        raise ValueError(f"X and Y must have same number of rows, got {n} and {Y.shape[0]}")
+    # scipy needs equal dimensionality: pad the narrower configuration with zeros
+    # (adds no variance, so the fit is unchanged).
+    k = max(X.shape[1], Y.shape[1])
+    if X.shape[1] < k:
+        X = np.hstack([X, np.zeros((n, k - X.shape[1]))])
+    if Y.shape[1] < k:
+        Y = np.hstack([Y, np.zeros((n, k - Y.shape[1]))])
+
+    X_std, Y_fit, m2 = _scipy_procrustes(X, Y)
+    r = float(np.sqrt(max(0.0, 1.0 - m2)))
+
+    pvalue = None
+    if n_permutations and n_permutations > 0:
+        rng = np.random.default_rng(random_seed)
+        hits = 0
+        for _ in range(n_permutations):
+            _, _, m2_perm = _scipy_procrustes(X, Y[rng.permutation(n)])
+            if m2_perm <= m2 + 1e-12:
+                hits += 1
+        pvalue = (hits + 1) / (n_permutations + 1)
+
     return {
-        "Y_transformed": Y_transformed,
-        "rotation_matrix": R,
-        "scale_factor": s,
-        "translation": X.mean(axis=0),
-        "m2": m2,
-        "normalized_m2": normalized_m2,
+        "X_transformed": X_std,
+        "Y_transformed": Y_fit,
+        "m2": float(m2),
+        "procrustes_r": r,
+        "pvalue": pvalue,
+        "n_permutations": int(n_permutations or 0),
         "n_samples": n,
     }
+
+
+def _zscore(df: pd.DataFrame) -> pd.DataFrame:
+    return ((df - df.mean(axis=0)) / (df.std(axis=0) + 1e-10)).fillna(0)
+
+
+def _ordinate(samples_x_features: pd.DataFrame, metric: str, n_components: int) -> Tuple[np.ndarray, str]:
+    """Ordinate one table. Euclidean -> PCA of z-scored features (identical to a
+    PCoA of Euclidean distances on them); any other metric -> PCoA of that
+    ecological distance on the supplied values."""
+    from sklearn.decomposition import PCA
+
+    n = samples_x_features.shape[0]
+    k = min(n_components, n - 1)
+    if metric == "euclidean":
+        coords = PCA(n_components=k).fit_transform(_zscore(samples_x_features))
+        return coords, "PCA of z-scored features"
+    values = samples_x_features.values.astype(float)
+    if metric in ("braycurtis", "jaccard") and (values < 0).any():
+        raise ValueError(
+            f"{metric} distance needs non-negative abundances; this table has negative "
+            "values (already log-ratio transformed?). Use metric='euclidean'."
+        )
+    zero = values.sum(axis=1) == 0
+    if zero.any():
+        raise ValueError(
+            f"{int(zero.sum())} sample(s) have zero total abundance; {metric} distance is undefined."
+        )
+    from skbio import DistanceMatrix
+    from skbio.stats.ordination import pcoa as _pcoa
+
+    dm = DistanceMatrix(squareform(pdist(values, metric=metric)))
+    coords = _pcoa(dm, number_of_dimensions=k).samples.values[:, :k]
+    return coords, f"PCoA of {metric} distances"
 
 
 def run_procrustes(
@@ -120,64 +150,67 @@ def run_procrustes(
     df2: pd.DataFrame,
     method: str = "pcoa",
     n_components: int = 2,
+    metric_1: str = "braycurtis",
+    metric_2: str = "euclidean",
+    n_permutations: int = 999,
 ) -> Dict[str, Any]:
     """Run Procrustes analysis on two feature tables.
-    
+
     Args:
-        df1: First feature table (features x samples).
-        df2: Second feature table (features x samples).
-        method: 'pcoa' or 'nmds' for dimensionality reduction before Procrustes.
-        n_components: Number of dimensions to keep.
-        
+        df1: First feature table (features x samples), e.g. microbiome counts.
+        df2: Second feature table (features x samples), e.g. metabolome.
+        method: 'pcoa' ordinates each table with its own metric (default:
+            Bray-Curtis PCoA for df1, PCA of z-scored features for df2);
+            'pca' uses PCA of z-scored features for both (the behaviour that
+            used to be mislabelled 'pcoa'); 'raw' uses the tables directly.
+        n_components: Ordination axes kept for the superimposition.
+        metric_1, metric_2: Distance metrics for method='pcoa'.
+        n_permutations: Row permutations for the PROTEST p-value.
+
     Returns:
-        Dict with Procrustes results and coordinates for plotting.
+        Dict with m2 (symmetric, 0-1), procrustes_r, pvalue and coordinates.
     """
-    # Get common samples
     common_samples = df1.columns.intersection(df2.columns)
     if len(common_samples) < 3:
         return {"error": f"Need >=3 common samples, got {len(common_samples)}"}
-    
-    df1_common = df1[common_samples].T  # samples x features
-    df2_common = df2[common_samples].T
-    
-    # Dimensionality reduction
+
+    X = df1[common_samples].T  # samples x features
+    Y = df2[common_samples].T
+
     if method == "pcoa":
-        from sklearn.decomposition import PCA
-        
-        # Standardize
-        X_std = (df1_common - df1_common.mean(axis=0)) / (df1_common.std(axis=0) + 1e-10)
-        Y_std = (df2_common - df2_common.mean(axis=0)) / (df2_common.std(axis=0) + 1e-10)
-        
-        # PCA
-        pca_X = PCA(n_components=min(n_components, len(common_samples) - 1))
-        pca_Y = PCA(n_components=min(n_components, len(common_samples) - 1))
-        
-        X_coords = pca_X.fit_transform(X_std.fillna(0))
-        Y_coords = pca_Y.fit_transform(Y_std.fillna(0))
+        X_coords, ord1 = _ordinate(X, metric_1, n_components)
+        Y_coords, ord2 = _ordinate(Y, metric_2, n_components)
+    elif method == "pca":
+        X_coords, ord1 = _ordinate(X, "euclidean", n_components)
+        Y_coords, ord2 = _ordinate(Y, "euclidean", n_components)
+    elif method == "raw":
+        X_coords, ord1 = X.values.astype(float), "raw feature values"
+        Y_coords, ord2 = Y.values.astype(float), "raw feature values"
     else:
-        # Direct use (if already same dimensionality)
-        X_coords = df1_common.values
-        Y_coords = df2_common.values
-    
-    # Procrustes
-    result = procrustes_analysis(X_coords, Y_coords, scale=True)
-    
-    # Build coordinate DataFrames
+        raise ValueError(f"Unknown Procrustes method '{method}' (use 'pcoa', 'pca' or 'raw')")
+
+    result = procrustes_analysis(X_coords, Y_coords, n_permutations=n_permutations)
+
+    Xt, Yt = result["X_transformed"], result["Y_transformed"]
     coords_df = pd.DataFrame({
         "sample": common_samples,
-        "X_PC1": X_coords[:, 0],
-        "X_PC2": X_coords[:, 1] if X_coords.shape[1] > 1 else np.zeros(len(common_samples)),
-        "Y_PC1": result["Y_transformed"][:, 0],
-        "Y_PC2": result["Y_transformed"][:, 1] if result["Y_transformed"].shape[1] > 1 else np.zeros(len(common_samples)),
+        "X_PC1": Xt[:, 0],
+        "X_PC2": Xt[:, 1] if Xt.shape[1] > 1 else np.zeros(len(common_samples)),
+        "Y_PC1": Yt[:, 0],
+        "Y_PC2": Yt[:, 1] if Yt.shape[1] > 1 else np.zeros(len(common_samples)),
     })
-    
+
     return {
         "method": method,
+        "ordination": {"table_1": ord1, "table_2": ord2, "n_components": int(X_coords.shape[1])},
         "n_common_samples": len(common_samples),
         "common_samples": list(common_samples),
         "m2": result["m2"],
-        "normalized_m2": result["normalized_m2"],
-        "scale_factor": result["scale_factor"],
+        "procrustes_r": result["procrustes_r"],
+        "pvalue": result["pvalue"],
+        "n_permutations": result["n_permutations"],
+        "statistic_note": "m2 = 1 - r^2 (symmetric Procrustes); 0 = identical, 1 = no shared structure",
+        "engine": "python::scipy.spatial.procrustes",
         "coordinates": coords_df.to_dict(orient="records"),
     }
 
@@ -189,46 +222,45 @@ def mantel_test(
     dist2: np.ndarray,
     method: str = "pearson",
     n_permutations: int = 999,
+    random_seed: int = 42,
 ) -> Dict[str, Any]:
-    """Perform Mantel test to compare two distance matrices.
-    
+    """Mantel test between two square distance matrices (scikit-bio).
+
+    The null distribution permutes *sample labels* -- rows and columns of one
+    matrix together (Mantel 1967). The previous implementation shuffled the
+    individual distances of the flattened upper triangle, which destroys the
+    dependence among distances that share a sample and produces a null
+    distribution several times too narrow (anti-conservative P values).
+
     Args:
-        dist1, dist2: Distance matrices (flattened upper triangles).
+        dist1, dist2: Square (n x n) distance matrices in the same sample order.
         method: 'pearson' or 'spearman'.
-        n_permutations: Number of permutations for p-value.
-        
-    Returns:
-        Dict with correlation coefficient and p-value.
+        n_permutations: Label permutations for the p-value.
+        random_seed: Seed for reproducible p-values.
     """
-    if len(dist1) != len(dist2):
-        raise ValueError("Distance matrices must have same number of elements")
-    
-    # Remove diagonal and lower triangle (if squareform)
-    if method == "spearman":
-        corr, _ = spearmanr(dist1, dist2)
-    else:
-        corr, _ = pearsonr(dist1, dist2)
-    
-    # Permutation test
-    rng = np.random.RandomState(seed=42)
-    perm_corrs = []
-    for _ in range(n_permutations):
-        perm = rng.permutation(len(dist2))
-        perm_dist2 = dist2[perm]
-        if method == "spearman":
-            pc, _ = spearmanr(dist1, perm_dist2)
-        else:
-            pc, _ = pearsonr(dist1, perm_dist2)
-        perm_corrs.append(pc)
-    
-    perm_corrs = np.array(perm_corrs)
-    p_value = (np.sum(np.abs(perm_corrs) >= np.abs(corr)) + 1) / (n_permutations + 1)
-    
+    from skbio import DistanceMatrix
+    from skbio.stats.distance import mantel as _skbio_mantel
+
+    d1 = np.asarray(dist1, dtype=float)
+    d2 = np.asarray(dist2, dtype=float)
+    if d1.ndim != 2 or d1.shape[0] != d1.shape[1] or d1.shape != d2.shape:
+        raise ValueError(
+            "mantel_test needs two square distance matrices of the same shape; "
+            "flattened distance vectors cannot be permuted correctly."
+        )
+    ids = [str(i) for i in range(d1.shape[0])]
+    corr, p_value, _ = _skbio_mantel(
+        DistanceMatrix(np.ascontiguousarray(d1), ids=ids),
+        DistanceMatrix(np.ascontiguousarray(d2), ids=ids),
+        method=method, permutations=n_permutations, seed=random_seed,
+    )
     return {
         "correlation": float(corr),
         "p_value": float(p_value),
         "n_permutations": n_permutations,
         "method": method,
+        "permutation_scheme": "sample labels (rows and columns permuted together)",
+        "engine": "python::skbio.stats.distance.mantel",
     }
 
 
@@ -238,38 +270,37 @@ def run_mantel(
     metric: str = "braycurtis",
     method: str = "pearson",
     n_permutations: int = 999,
+    metric_2: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run Mantel test on two feature tables.
-    
+
     Args:
         df1, df2: Feature tables (features x samples).
-        metric: Distance metric for both tables.
+        metric: Distance metric for df1 (and for df2 unless metric_2 is given).
+        metric_2: Optional separate metric for df2.
         method: 'pearson' or 'spearman'.
         n_permutations: Number of permutations.
-        
+
     Returns:
         Dict with Mantel test results.
     """
     common_samples = df1.columns.intersection(df2.columns)
     if len(common_samples) < 3:
         return {"error": f"Need >=3 common samples, got {len(common_samples)}"}
-    
-    # Compute distance matrices
+
+    metric_2 = metric_2 or metric
     dist1_matrix = squareform(pdist(df1[common_samples].T, metric=metric))
-    dist2_matrix = squareform(pdist(df2[common_samples].T, metric=metric))
-    
-    # Extract upper triangle (no diagonal)
-    n = len(common_samples)
-    idx = np.triu_indices(n, k=1)
-    dist1_flat = dist1_matrix[idx]
-    dist2_flat = dist2_matrix[idx]
-    
-    # Mantel test
-    result = mantel_test(dist1_flat, dist2_flat, method=method, n_permutations=n_permutations)
-    
+    dist2_matrix = squareform(pdist(df2[common_samples].T, metric=metric_2))
+    if np.isnan(dist1_matrix).any() or np.isnan(dist2_matrix).any():
+        return {"error": f"{metric} distance is undefined for some samples (all-zero profiles?)"}
+
+    result = mantel_test(dist1_matrix, dist2_matrix, method=method, n_permutations=n_permutations)
+
     return {
         "n_common_samples": len(common_samples),
         "common_samples": list(common_samples),
+        "metric": metric,
+        "metric_2": metric_2,
         **result,
     }
 
@@ -563,7 +594,8 @@ def run_cross_omics_analysis(
         metadata_df: Optional metadata.
         parameters: Dict with keys:
             - analysis_type: 'procrustes', 'mantel', 'correlation', or 'both' (default 'both')
-            - procrustes_method: 'pcoa' or 'raw' (default 'pcoa')
+            - procrustes_method: 'pcoa', 'pca' or 'raw' (default 'pcoa')
+            - procrustes_metric_1 / _2: metrics for 'pcoa' (default braycurtis / euclidean)
             - mantel_metric: 'braycurtis', 'euclidean' (default 'braycurtis')
             - mantel_method: 'pearson' or 'spearman' (default 'pearson')
             - n_permutations: int (default 999)
@@ -585,14 +617,13 @@ def run_cross_omics_analysis(
         f"procrustes={procrustes_method}, mantel={mantel_metric}"
     )
 
-    # If df2 not provided, create a noisy version for testing.
-    # NOTE: never fabricate df2 for the pairwise correlation analysis —
-    # a synthetic second omics table would produce meaningless correlations.
-    if df2 is None and analysis_type != "correlation":
-        rng = np.random.RandomState(seed=42)
-        noise = rng.normal(0, 0.1, df1.shape)
-        df2 = df1 + noise
-        df2 = df2.clip(lower=0)
+    # Never fabricate a second table. (This used to add noise to df1 and report
+    # Procrustes/Mantel results on the copy when no metabolome was loaded.)
+    if df2 is None:
+        raise ValueError(
+            "Cross-omics analysis needs a second omics table (e.g. metabolome) "
+            "for the same samples; none is loaded in this session."
+        )
 
     result: Dict[str, Any] = {"analysis_type": analysis_type}
 
@@ -633,22 +664,28 @@ def run_cross_omics_analysis(
 
     # 1. Procrustes analysis (if requested)
     if analysis_type in ("procrustes", "both"):
-        procrustes_result = run_procrustes(df1, df2, method=procrustes_method)
+        procrustes_result = run_procrustes(
+            df1, df2, method=procrustes_method,
+            metric_1=params.get("procrustes_metric_1", "braycurtis"),
+            metric_2=params.get("procrustes_metric_2", "euclidean"),
+            n_permutations=n_permutations,
+        )
         if "error" in procrustes_result:
             return procrustes_result
 
         result["procrustes"] = _sanitize_json({
-            "method": procrustes_method,
-            "n_common_samples": procrustes_result["n_common_samples"],
-            "m2": procrustes_result["m2"],
-            "normalized_m2": procrustes_result["normalized_m2"],
-            "scale_factor": procrustes_result["scale_factor"],
-            "coordinates": procrustes_result["coordinates"],
+            k: procrustes_result[k] for k in (
+                "method", "ordination", "n_common_samples", "m2", "procrustes_r",
+                "pvalue", "n_permutations", "statistic_note", "engine", "coordinates",
+            )
         })
 
     # 2. Mantel test (if requested)
     if analysis_type in ("mantel", "both"):
-        mantel_result = run_mantel(df1, df2, metric=mantel_metric, method=mantel_method, n_permutations=n_permutations)
+        mantel_result = run_mantel(df1, df2, metric=mantel_metric, method=mantel_method,
+                                   n_permutations=n_permutations, metric_2=params.get("mantel_metric_2"))
+        if "error" in mantel_result:
+            return mantel_result
         result["mantel"] = _sanitize_json(mantel_result)
 
     # 3. Generate plots
@@ -661,7 +698,7 @@ def run_cross_omics_analysis(
     if "mantel" in result:
         common_samples = df1.columns.intersection(df2.columns)
         dist1_matrix = squareform(pdist(df1[common_samples].T, metric=mantel_metric))
-        dist2_matrix = squareform(pdist(df2[common_samples].T, metric=mantel_metric))
+        dist2_matrix = squareform(pdist(df2[common_samples].T, metric=params.get("mantel_metric_2") or mantel_metric))
         n = len(common_samples)
         idx = np.triu_indices(n, k=1)
         dist1_flat = dist1_matrix[idx]
@@ -677,8 +714,9 @@ def run_cross_omics_analysis(
         result["plot_data"] = plots.get("procrustes_plot")
         result["statistics"] = {
             "m2": result["procrustes"]["m2"],
-            "normalized_m2": result["procrustes"]["normalized_m2"],
-            "scale_factor": result["procrustes"]["scale_factor"],
+            "procrustes_r": result["procrustes"]["procrustes_r"],
+            "pvalue": result["procrustes"]["pvalue"],
+            "n_permutations": result["procrustes"]["n_permutations"],
             "n_common_samples": result["procrustes"]["n_common_samples"],
         }
     elif analysis_type == "mantel":
@@ -693,6 +731,8 @@ def run_cross_omics_analysis(
         result["plot_data"] = plots.get("procrustes_plot")
         result["statistics"] = {
             "procrustes_m2": result["procrustes"]["m2"],
+            "procrustes_r": result["procrustes"]["procrustes_r"],
+            "procrustes_pvalue": result["procrustes"]["pvalue"],
             "mantel_correlation": result["mantel"]["correlation"],
             "mantel_pvalue": result["mantel"]["p_value"],
         }

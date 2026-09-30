@@ -50,6 +50,9 @@ class ExecutionPlan:
     # Clickable candidate intents offered when clarification_needed is set:
     # [{"label": ..., "query": ...}], nearest first.
     suggestions: List[Dict[str, str]] = field(default_factory=list)
+    # Named methods the platform cannot run (e.g. "DESeq2", "FlashWeave"). When
+    # set, clarification is final: the LLM fallback is not asked to substitute.
+    unavailable_methods: List[str] = field(default_factory=list)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -479,7 +482,10 @@ MODULE_KEYWORDS = {
     "metabolome_alpha": ["metabolome.*alpha", "metabolite.*richness"],
     
     # Differential Analysis
-    "microbiome_marker": ["microbiome.*marker", "microbiome.*differential", "clr.*wilcoxon", "微生物组.*标记", "微生物组.*差异", "differential.*abundance", "biomarker", "biomarker.*discovery", "marker.*discovery", "significant.*taxa", "significant.*feature", "differential.*marker", "diff.*taxa", "差异.*标记", "标记.*发现"],
+    "microbiome_marker": ["microbiome.*marker", "microbiome.*differential", "clr.*wilcoxon", "微生物组.*标记", "微生物组.*差异", "differential.*abundance", "biomarker", "biomarker.*discovery", "marker.*discovery", "significant.*taxa", "significant.*feature", "differential.*marker", "diff.*taxa", "差异.*标记", "标记.*发现",
+                          # "which taxa are enriched/depleted" is a differential-abundance question
+                          "差异菌", "菌.*富集", "富集.*菌", "哪些.*菌", "菌.*(增加|减少|升高|降低|变化)",
+                          r"enriched\b.*\b(taxa|bacteri\w*|genera|genus|species|microb\w*)", r"(taxa|bacteri\w*|genera|genus|species|microb\w*)\b.*\b(enriched|depleted)"],
     "metabolome_marker": ["metabolome.*marker", "metabolome.*differential", "代谢组.*标记", "代谢物.*差异", "differential.*metabolite"],
     "maaslin3": ["maaslin", "multivariate.*association", "mixed.*effect", "longitudinal.*analysis", "纵向.*分析", "重复.*测量"],
     
@@ -490,7 +496,10 @@ MODULE_KEYWORDS = {
     "network_sparcc": ["network", "sparcc", "网络", "共现", "co-occurrence", "co.*occurrence", "correlation.*network"],
     
     # Functional
-    "pathway_kegg": ["pathway", "kegg", "通路", "富集", "pathway.*enrichment", "enrichment.*analysis"],
+    # Bare "富集" (enriched) used to route here, so "哪些菌在牙龈炎进展中富集？"
+    # ("which bacteria are enriched as gingivitis progresses?") was planned as
+    # KEGG pathway enrichment. Pathway routing now needs a pathway/function word.
+    "pathway_kegg": ["pathway", "kegg", "通路", "通路.*富集", "富集.*通路", "功能.*富集", "富集分析", "pathway.*enrichment", "enrichment.*analysis"],
     "functional_prediction": ["picrust", "picrust2", "tax4fun", "piphillin", "functional.*prediction", "功能.*预测", "gene.*prediction"],
     
     # Integration
@@ -518,7 +527,7 @@ MODULE_KEYWORDS = {
     "unifrac": ["unifrac", "weighted.*unifrac", "unweighted.*unifrac", "phylogenetic.*distance"],
     
     # Strain/Source
-    "strain_analyzer": ["strain", "ani", "strain.*analysis", "菌株"],
+    "strain_analyzer": [r"\bstrain", r"\bani\b", "strain.*analysis", "菌株"],
     "source_tracking": ["feast", "source.*track", "溯源", "source.*contribution"],
     
     # Report
@@ -543,7 +552,88 @@ MODULE_KEYWORDS = {
     "paired_differential_test": ["paired", "配对", "成对", "paired.*test"],
     "outlier_detection": ["outlier", "异常值", "离群", "outlier.*detect"],
     "normalization": ["normalize", "normalization", "standardize", "标准化", "归一化"],
+
+    # Registered modules that previously had no keywords and so could not be
+    # reached from natural language at all.
+    "ancom_bc": ["ancom", "ancom-bc", "ancombc", "bias.?correct"],
+    "spiec_easi": ["spiec", "spiec-easi", "spieceasi", "glasso", "graphical.*lasso", "inverse.*covariance"],
+    "permanova_strata": ["stratified.*permanova", "permanova.*strata", "strata", "分层.*permanova", "区组"],
+    "imputation": ["imput", "missing.*value", "缺失值"],
+    "rgcca": ["rgcca", "generali[sz]ed.*canonical", "multi.?block"],
+    "mefisto": ["mefisto"],
+    "mmvec": ["mmvec", "microbe.?metabolite.*(embedding|co.?occurrence)"],
+    "spatial_gradient": ["spatial.*gradient", "distance.?decay", "correlogram", "空间.*梯度"],
+    "dmi": [r"\bdmi\b", "individuality", "个体.*特异"],
+    "icc_stability": [r"\bicc\b", "intraclass", "temporal.*stability", "稳定性"],
 }
+
+# Methods users ask for by name that Meta2bAnalyst's agent cannot run. Naming one
+# must never be answered with a different method without saying so ("Estimate a
+# FlashWeave network" used to return a SparCC network, "Run DESeq2" a generic
+# pipeline). Each entry lists registered alternatives and, where relevant, where
+# the method *is* available outside the agent.
+UNAVAILABLE_METHODS: Dict[str, Dict[str, Any]] = {
+    "DESeq2": {"patterns": [r"\bdeseq2?\b"], "alternatives": ["ancom_bc", "aldex2", "maaslin3"],
+               "elsewhere": "Differential analysis page (test_method='deseq2'; needs R)"},
+    "edgeR": {"patterns": [r"\bedger\b"], "alternatives": ["ancom_bc", "aldex2", "maaslin3"],
+              "elsewhere": "Differential analysis page (test_method='edger'; needs R)"},
+    "LEfSe": {"patterns": [r"\blefse\b"], "alternatives": ["microbiome_marker", "random_forest"],
+              "elsewhere": "Differential analysis page (test_method='lefse'; needs R lefser)"},
+    "FlashWeave": {"patterns": [r"flash\s*weave"], "alternatives": ["spiec_easi", "network_sparcc"]},
+    "FastSpar": {"patterns": [r"fastspar"], "alternatives": ["network_sparcc"]},
+    "gCoda": {"patterns": [r"\bgcoda\b"], "alternatives": ["spiec_easi", "network_sparcc"]},
+    "SourceTracker": {"patterns": [r"source\s*tracker"], "alternatives": ["source_tracking"]},
+    "corncob": {"patterns": [r"\bcorncob\b"], "alternatives": ["ancom_bc", "maaslin3"]},
+    "LinDA": {"patterns": [r"\blinda\b"], "alternatives": ["ancom_bc", "maaslin3"]},
+    "ZicoSeq": {"patterns": [r"zicoseq"], "alternatives": ["ancom_bc", "maaslin3"]},
+    "metagenomeSeq": {"patterns": [r"metagenomeseq", r"\bfitzig\b"], "alternatives": ["ancom_bc", "maaslin3"]},
+}
+
+# Phrases that select one module explicitly (as opposed to generic words such as
+# "network" that several modules share). A named-but-unavailable method's
+# alternatives are only kept in the plan when the user named them this way.
+_EXPLICIT_MODULE_TERMS: Dict[str, str] = {
+    "network_sparcc": r"sparcc", "spiec_easi": r"spiec", "ancom_bc": r"ancom",
+    "aldex2": r"aldex", "maaslin3": r"maaslin", "source_tracking": r"\bfeast\b",
+    "random_forest": r"random.?forest|随机森林", "microbiome_marker": r"marker|标志物|标记物",
+}
+
+# Ready-made requests that route to each alternative (used as clickable suggestions).
+_ALTERNATIVE_QUERIES: Dict[str, Tuple[str, str]] = {
+    "ancom_bc": ("ANCOM-BC (bias-corrected differential abundance)", "Run ANCOM-BC differential abundance"),
+    "aldex2": ("ALDEx2 (compositional differential abundance)", "Run ALDEx2 differential abundance"),
+    "maaslin3": ("MaAsLin3 (multivariable association, mixed effects)", "Run MaAsLin3 association analysis"),
+    "microbiome_marker": ("CLR + Wilcoxon marker discovery", "find differential markers"),
+    "random_forest": ("Random forest feature importance", "Run random forest feature importance"),
+    "spiec_easi": ("SPIEC-EASI network (compositional, conditional dependence)", "Build a SPIEC-EASI network"),
+    "network_sparcc": ("SparCC correlation network", "Build a SparCC co-occurrence network"),
+    "source_tracking": ("FEAST-style source tracking", "Run FEAST source tracking"),
+}
+
+
+def _named_unavailable_methods(query: str) -> List[str]:
+    q = query.lower()
+    return [name for name, spec in UNAVAILABLE_METHODS.items()
+            if any(re.search(p, q, re.IGNORECASE) for p in spec["patterns"])]
+
+
+_ENRICH_WORDS = re.compile(r"富集|enrich", re.IGNORECASE)
+_TAXON_WORDS = re.compile(r"菌|物种|taxa|taxon|bacteri|genus|genera|species|microb", re.IGNORECASE)
+_PATHWAY_WORDS = re.compile(r"通路|功能|pathway|kegg|\bgo\b|function", re.IGNORECASE)
+
+
+def _is_taxon_enrichment_question(query: str) -> bool:
+    """'Which taxa are enriched ...' asks for differential abundance, not for
+    pathway enrichment, unless a pathway/function word is present."""
+    return bool(_ENRICH_WORDS.search(query) and _TAXON_WORDS.search(query)
+                and not _PATHWAY_WORDS.search(query))
+
+
+_OPEN_INTENT = re.compile(
+    r"analy[sz]|分析|pipeline|流程|workflow|recommend|推荐|suggest|建议|explore|探索|看看|"
+    r"overview|概览|what can|怎么|start|开始|process|处理|\brun\b|跑",
+    re.IGNORECASE,
+)
 
 
 def _match_template(query: str) -> Optional[Dict[str, Any]]:
@@ -736,10 +826,30 @@ def _default_size_column(metadata_df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+def _default_grouping(metadata_df: Optional[pd.DataFrame]) -> Tuple[Optional[str], Optional[str]]:
+    """Default grouping column and baseline level.
+
+    Without metadata the historical defaults of the demo dataset ('Visit', 'T4')
+    are kept. With metadata they are only used if they exist; otherwise the
+    detected visit/time column is used and no baseline is assumed.
+    """
+    if not isinstance(metadata_df, pd.DataFrame) or metadata_df.empty:
+        return "Visit", "T4"
+    from app.services.study_design import detect_subject_column, detect_time_column
+    if "Visit" in metadata_df.columns:
+        gc = "Visit"
+    else:
+        gc = detect_time_column(metadata_df, detect_subject_column(metadata_df))
+    ref = "T4" if gc and "T4" in set(metadata_df[gc].astype(str)) else None
+    return gc, ref
+
+
+def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str,
+                          metadata_df: Optional[pd.DataFrame] = None) -> List[Dict[str, Any]]:
     """Apply domain best practices to the plan."""
     q = query.lower()
     steps = [dict(s) for s in plan_steps]
+    default_group, default_ref = _default_grouping(metadata_df)
 
     # Auto-inject data_validator if not present
     if not any(s["module"] == "data_validator" for s in steps):
@@ -766,18 +876,18 @@ def _apply_best_practices(plan_steps: List[Dict[str, Any]], query: str) -> List[
     # Auto-add reference_group if comparing to baseline
     if any(k in q for k in ["day 0", "baseline", "reference", "control", "t4", "vs"]):
         for s in steps:
-            if s["module"] in ("microbiome_marker", "metabolome_marker"):
+            if s["module"] in ("microbiome_marker", "metabolome_marker") and default_ref:
                 s.setdefault("params", {})
                 if "reference_group" not in s["params"]:
-                    s["params"]["reference_group"] = "T4"
+                    s["params"]["reference_group"] = default_ref
 
     # Auto-inject group_column
     for s in steps:
         if s["module"] in ("permanova", "microbiome_marker", "metabolome_marker",
                            "microbiome_pcoa", "metabolome_pca", "microbiome_alpha", "metabolome_alpha"):
             s.setdefault("params", {})
-            if "group_column" not in s["params"]:
-                s["params"]["group_column"] = "Visit"
+            if "group_column" not in s["params"] and default_group:
+                s["params"]["group_column"] = default_group
 
     # Add report_generator for complete pipelines
     if len(steps) >= 3 and not any(s["module"] == "report_generator" for s in steps):
@@ -804,41 +914,75 @@ CATEGORY_ORDER = ["preprocessing", "individual_omics", "integration", "marker", 
 def infer_experimental_design(metadata_df: pd.DataFrame) -> dict:
     """
     从 metadata 推断实验设计特征。
-    返回: {"paired": bool, "longitudinal": bool, "multibatch": bool, "multisite": bool}
+    返回: {"paired", "longitudinal", "multibatch", "multisite": bool,
+           "subject_column", "time_column", "group_column": str | None}
+
+    Column names are matched case-insensitively and participant / visit
+    columns are detected from real-world names (Host_ID, Visit, ...) via
+    app.services.study_design; previously only literal 'subject'/'time'
+    columns were recognised, so most repeated-measures uploads were treated as
+    independent samples.
     """
+    from app.services.study_design import detect_subject_column, detect_time_column
+
     design = {
         "paired": False,
         "longitudinal": False,
         "multibatch": False,
         "multisite": False,
+        "subject_column": None,
+        "time_column": None,
+        "group_column": None,
     }
 
     if metadata_df is None or metadata_df.empty:
         return design
 
-    # paired: 存在 subject 列，且每个 subject 恰好出现在 2 个 group 中
-    if "subject" in metadata_df.columns and "group" in metadata_df.columns:
-        subject_groups = metadata_df.groupby("subject")["group"].nunique()
+    lower = {str(c).lower(): c for c in metadata_df.columns}
+    subject = lower.get("subject") or detect_subject_column(metadata_df)
+    time_col = lower.get("time") or detect_time_column(metadata_df, subject)
+    group = lower.get("group")
+    design["subject_column"] = subject
+    design["time_column"] = time_col
+
+    # paired: 每个 subject 恰好出现在 2 个 group 中
+    if subject and group and group != subject:
+        subject_groups = metadata_df.groupby(subject)[group].nunique()
         if len(subject_groups) > 0 and (subject_groups == 2).all():
             design["paired"] = True
+            design["group_column"] = group
 
-    # longitudinal: 存在 subject 列和 time 列，且每个 subject 有 >1 个时间点
-    if "subject" in metadata_df.columns and "time" in metadata_df.columns:
-        subject_times = metadata_df.groupby("subject")["time"].nunique()
-        if len(subject_times) > 0 and (subject_times > 1).all():
+    # longitudinal: 多数 subject 有 >1 个时间点
+    if subject and time_col:
+        subject_times = metadata_df.groupby(subject)[time_col].nunique()
+        if len(subject_times) > 0 and (subject_times > 1).mean() >= 0.5:
             design["longitudinal"] = True
 
-    # multibatch: 存在 batch 列，且唯一值 > 1
-    if "batch" in metadata_df.columns:
-        if metadata_df["batch"].nunique() > 1:
-            design["multibatch"] = True
-
-    # multisite: 存在 site 列，且唯一值 > 1
-    if "site" in metadata_df.columns:
-        if metadata_df["site"].nunique() > 1:
-            design["multisite"] = True
+    # multibatch / multisite: 列存在且唯一值 > 1
+    if "batch" in lower and metadata_df[lower["batch"]].nunique() > 1:
+        design["multibatch"] = True
+    if "site" in lower and metadata_df[lower["site"]].nunique() > 1:
+        design["multisite"] = True
 
     return design
+
+
+def _design_notes(design: dict) -> List[str]:
+    notes = [
+        f"Experimental design detected: paired={design['paired']}, "
+        f"longitudinal={design['longitudinal']}, "
+        f"multibatch={design['multibatch']}, "
+        f"multisite={design['multisite']}"
+    ]
+    subj = design.get("subject_column")
+    if subj:
+        notes.append(
+            f"Repeated measures: '{subj}' identifies participants. PERMANOVA permutations are "
+            "restricted by participant. Marker tests between groups treat samples as "
+            "independent; for a two-timepoint comparison use paired_differential_test "
+            f"(subject_column='{subj}', groups=[reference, comparison])."
+        )
+    return notes
 
 
 def apply_design_best_practices(
@@ -867,11 +1011,28 @@ def apply_design_best_practices(
             })
 
     # 2. paired=True 且步骤中有 microbiome_marker/aldex2 → 替换为 paired_differential_test
+    #    (with the pairing columns filled in; the substitute used to receive none
+    #    and failed at run time).
     if design.get("paired"):
         for i, s in enumerate(steps):
             if s["module"] in ("microbiome_marker", "aldex2"):
                 steps[i] = dict(s)
                 steps[i]["module"] = "paired_differential_test"
+                steps[i]["params"] = {
+                    "group_column": design.get("group_column"),
+                    "subject_column": design.get("subject_column"),
+                }
+
+    # 2b. repeated measures → PERMANOVA permutes within/among participants
+    subj = design.get("subject_column")
+    if subj:
+        for s in steps:
+            if s["module"] == "permanova":
+                s.setdefault("params", {})
+                s["params"].setdefault("subject_column", subj)
+            elif s["module"] == "permanova_strata":
+                s.setdefault("params", {})
+                s["params"].setdefault("strata_column", subj)
 
     # 3. longitudinal=True 且步骤中没有 mixed_effects_diversity → 追加 mixed_effects_diversity（如已实现）
     if design.get("longitudinal") and not any(s["module"] == "mixed_effects_diversity" for s in steps):
@@ -887,9 +1048,13 @@ def apply_design_best_practices(
                 "depends_on": [validator_id],
             })
 
-    # 4. 所有分析模块前自动插入 normalization（如果尚未存在）
+    # 4. batch correction needs normalised input → insert normalization before it.
+    #    (This used to be inserted into every design-aware plan, but the executor
+    #    does not pass its output to later steps, so it only suggested a
+    #    normalisation that never reached the analyses.)
     has_normalization = any(s["module"] == "normalization" for s in steps)
-    if not has_normalization:
+    needs_normalization = any(s["module"] == "batch_correction" for s in steps)
+    if needs_normalization and not has_normalization:
         validator_id = next((s["id"] for s in steps if s["module"] == "data_validator"), None)
         if validator_id:
             first_analysis_idx = next((
@@ -1221,6 +1386,12 @@ def _build_plan(
     # Drop steps whose module has no registered spec (templates still reference
     # modules that were never registered) and repair the dependency edges.
     steps_raw, dropped = _drop_unrunnable_steps(steps_raw)
+
+    # Decide whether the query asked for any analysis BEFORE design rules add
+    # their own steps; otherwise an empty request would pass as a plan.
+    requested = [s for s in steps_raw if s["module"] != "data_validator"]
+    if not requested and not (template and template.get("advisory")):
+        return _clarification_plan(query, unavailable)
     
     # Experimental design-aware adjustment
     if isinstance(metadata_df, pd.DataFrame) and not metadata_df.empty:
@@ -1229,12 +1400,7 @@ def _build_plan(
             steps_raw = apply_design_best_practices(steps_raw, design, metadata_df)
             steps_raw = auto_resolve_dependencies(steps_raw)
             steps_raw, _ = _drop_unrunnable_steps(steps_raw)
-            notes.append(
-                f"Experimental design detected: paired={design['paired']}, "
-                f"longitudinal={design['longitudinal']}, "
-                f"multibatch={design['multibatch']}, "
-                f"multisite={design['multisite']}"
-            )
+            notes.extend(_design_notes(design))
     
     if dropped:
         notes.append(
@@ -1258,7 +1424,7 @@ def _build_plan(
         return _clarification_plan(query, unavailable)
 
     # Apply best practices
-    steps_raw = _apply_best_practices(steps_raw, query)
+    steps_raw = _apply_best_practices(steps_raw, query, metadata_df)
 
     # Paper-style default: grouped ordinations scale marker size by a numeric
     # severity-like metadata column (e.g. Bleeding) when one exists, matching
@@ -1349,7 +1515,7 @@ class AnalysisPlanner:
 
         rule_plan = self._rule_plan(query, context)
 
-        if self.use_llm and rule_plan.clarification_needed:
+        if self.use_llm and rule_plan.clarification_needed and not rule_plan.unavailable_methods:
             llm_plan = await self._llm_plan(query, context)
             if llm_plan is not None:
                 llm_plan.notes.append(
@@ -1382,7 +1548,7 @@ class AnalysisPlanner:
                 steps = auto_resolve_dependencies(steps)
                 steps, _ = _drop_unrunnable_steps(steps)
         
-        steps = _apply_best_practices(steps, query)
+        steps = _apply_best_practices(steps, query, context.get("metadata") if isinstance(context.get("metadata"), pd.DataFrame) else None)
 
         plan_steps = []
         for s in steps:
@@ -1421,10 +1587,37 @@ class AnalysisPlanner:
         template = _match_template(query)
         detected, unavailable = _detect_modules_from_keywords(query)
 
-        # Fall back to file-driven recommendations only when the query says
-        # nothing specific ("analyze my data", or nothing we recognise).
+        # "Which bacteria are enriched ..." is differential abundance, not KEGG.
+        if _is_taxon_enrichment_question(query):
+            detected = [(m, sc) for m, sc in detected if m not in ("pathway_kegg", "functional_prediction")]
+            if not any(m == "microbiome_marker" for m, _ in detected):
+                detected.insert(0, ("microbiome_marker", 1))
+            if template is not None and template["name"] == "pathway_analysis":
+                template = None
+
+        # Methods named explicitly but not runnable: never substitute silently.
+        named_unavailable = _named_unavailable_methods(query)
+        if named_unavailable:
+            alternatives = {a for m in named_unavailable for a in UNAVAILABLE_METHODS[m]["alternatives"]}
+            q_lower = query.lower()
+
+            def _explicit(module: str) -> bool:
+                pat = _EXPLICIT_MODULE_TERMS.get(module)
+                return bool(pat and re.search(pat, q_lower))
+
+            detected = [(m, sc) for m, sc in detected if m not in alternatives or _explicit(m)]
+            if template is not None:
+                t_modules = {st["module"] for st in template["steps"]} - {"data_validator"}
+                if t_modules and t_modules <= alternatives and not any(_explicit(m) for m in t_modules):
+                    template = None
+            if template is None and not detected:
+                return self._unavailable_method_plan(query, named_unavailable)
+
+        # Fall back to file-driven recommendations only when the query expresses
+        # an open request ("analyze my data"). A query with no analytical content
+        # ("make it look nice") gets a clarification instead of a default pipeline.
         query_is_open_ended = (
-            (template is None and not detected)
+            (template is None and not detected and not named_unavailable and _OPEN_INTENT.search(query))
             or (template is not None and template["name"] == "auto_analyze")
         )
         if query_is_open_ended and context and context.get("session_files"):
@@ -1443,6 +1636,9 @@ class AnalysisPlanner:
 
         metadata_df = context.get("metadata") if context else None
         plan = _build_plan(query, template, detected, unavailable, metadata_df)
+        if named_unavailable:
+            plan.unavailable_methods = list(named_unavailable)
+            plan.notes.append(self._unavailable_note(named_unavailable) + " It was not substituted.")
 
         # Drop steps whose data the session does not actually hold.
         available = _available_omics_from_context(context)
@@ -1474,6 +1670,31 @@ class AnalysisPlanner:
             plan.estimated_time = _estimate_time(len(plan.steps))
 
         logger.info(f"Rule-based plan generated: {len(plan.steps)} steps")
+        return plan
+
+    @staticmethod
+    def _unavailable_note(methods: List[str]) -> str:
+        parts = []
+        for m in methods:
+            spec = UNAVAILABLE_METHODS[m]
+            alts = ", ".join(spec["alternatives"])
+            where = f"; available on the {spec['elsewhere']}" if spec.get("elsewhere") else ""
+            parts.append(f"{m} is not available to the agent (registered alternatives: {alts}{where}).")
+        return " ".join(parts)
+
+    def _unavailable_method_plan(self, query: str, methods: List[str]) -> ExecutionPlan:
+        """Clarification for a request whose only analysis is an unavailable method."""
+        plan = _clarification_plan(query, reason=self._unavailable_note(methods)
+                                   + " Choose an alternative; nothing was planned in its place.")
+        suggestions = []
+        for m in methods:
+            for alt in UNAVAILABLE_METHODS[m]["alternatives"]:
+                if alt in _ALTERNATIVE_QUERIES and alt in MODULE_REGISTRY:
+                    label, q = _ALTERNATIVE_QUERIES[alt]
+                    if all(sg["query"] != q for sg in suggestions):
+                        suggestions.append({"label": f"Use {label} instead of {m}", "query": q})
+        plan.suggestions = suggestions or plan.suggestions
+        plan.unavailable_methods = list(methods)
         return plan
 
     async def _llm_plan(self, query: str, context: Optional[Dict[str, Any]] = None) -> Optional[ExecutionPlan]:
@@ -1553,12 +1774,7 @@ Rules:
                         for s in step_dicts
                     ]
                     _prune_dangling_dependencies(steps)
-                    notes.append(
-                        f"Experimental design detected: paired={design['paired']}, "
-                        f"longitudinal={design['longitudinal']}, "
-                        f"multibatch={design['multibatch']}, "
-                        f"multisite={design['multisite']}"
-                    )
+                    notes.extend(_design_notes(design))
             
             return ExecutionPlan(
                 query=query,

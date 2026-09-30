@@ -646,6 +646,7 @@ def permanova_task(
     distance: str = "braycurtis",
     group_var: str = "",
     n_permutations: int = 999,
+    subject_column: Optional[str] = None,
 ) -> Dict[str, Any]:
     """PERMANOVA asynchronous task."""
     _update_task_state(self, "STARTED", {"progress": 10, "message": "Loading data..."})
@@ -658,7 +659,8 @@ def permanova_task(
     
     _update_task_state(self, "STARTED", {"progress": 40, "message": "Running PERMANOVA..."})
     
-    params = {"metric": distance, "group_column": group_var, "n_permutations": n_permutations}
+    params = {"metric": distance, "group_column": group_var, "n_permutations": n_permutations,
+              "subject_column": subject_column}
     result_data = run_permanova(df, metadata_df, params)
     
     _update_task_state(self, "STARTED", {"progress": 80, "message": "Saving results..."})
