@@ -25,9 +25,11 @@ FROM nginx:alpine
 RUN apk add --no-cache apache2-utils
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-# Both config variants are baked in; the entrypoint picks one at start.
-COPY docker/nginx.conf /etc/nginx/conf.d/open.conf
-COPY docker/nginx-auth.conf /etc/nginx/conf.d/auth.conf
+# Both config variants are baked as templates OUTSIDE conf.d (nginx loads
+# every *.conf there); the entrypoint regenerates conf.d/default.conf from
+# them on each start, which keeps container restarts idempotent.
+COPY docker/nginx.conf /etc/nginx/templates/open.conf
+COPY docker/nginx-auth.conf /etc/nginx/templates/auth.conf
 COPY docker/frontend-entrypoint.sh /docker-entrypoint-m2b.sh
 RUN chmod +x /docker-entrypoint-m2b.sh
 
