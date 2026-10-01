@@ -6,7 +6,7 @@ import {
   Layers,
   Bot,
   Dna,
-  Globe, Workflow, Database,
+  Globe, Workflow, Database, GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalysisStep } from "@/types";
@@ -17,6 +17,7 @@ const steps: { id: AnalysisStep; label: string; icon: React.ReactNode; path: str
   { id: "microbiome", label: "Microbiome", icon: <Dna className="h-4 w-4" />, path: "/microbiome" },
   { id: "multi-omics", label: "Multi-omics", icon: <Layers className="h-4 w-4" />, path: "/multi-omics" },
   { id: "multi-site", label: "Multi-site", icon: <Globe className="h-4 w-4" />, path: "/multi-site" },
+  { id: "strain", label: "Strain", icon: <GitBranch className="h-4 w-4" />, path: "/strain" },
   { id: "agent", label: "Agent", icon: <Bot className="h-4 w-4" />, path: "/agent" },
   { id: "workflow-builder", label: "Workflow Builder", icon: <Workflow className="h-4 w-4" />, path: "/workflow-builder" },
   { id: "account", label: "My Data", icon: <Database className="h-4 w-4" />, path: "/account" },

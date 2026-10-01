@@ -196,6 +196,25 @@ def _create_job(db: DBSession, session_id: str, job_type: str, params: Dict[str,
     return job
 
 
+def _validate_meta_columns(metadata_df, **cols: Optional[str]) -> None:
+    """Reject explicitly-requested metadata columns that do not exist.
+
+    Without this, a wrong column name (e.g. the UI default 'Site' on a dataset
+    whose site column is 'Position') surfaces as a bare KeyError from deep in
+    the service layer — a 400 reading "'Site'" with no hint of the fix.
+    """
+    available = list(metadata_df.columns)
+    for kind, col in cols.items():
+        if col and col not in metadata_df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{kind} '{col}' not found in metadata. "
+                    f"Available columns: {', '.join(map(str, available))}"
+                ),
+            )
+
+
 # ─────────────────────────────── 1. Multi-site PCoA
 
 @router.post(
@@ -221,6 +240,13 @@ async def analyze_multisite_pcoa(
     df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required for multi-site analysis')
+    _validate_meta_columns(
+        metadata_df,
+        site_column=getattr(request, 'site_column', None),
+        subject_column=getattr(request, 'subject_column', None),
+        time_column=getattr(request, 'time_column', None),
+        group_column=getattr(request, 'group_column', None),
+    )
 
     job = _create_job(db, session_id, 'multisite_pcoa', request.model_dump())
 
@@ -282,6 +308,13 @@ async def analyze_multisite_permanova(
     df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
+    _validate_meta_columns(
+        metadata_df,
+        site_column=getattr(request, 'site_column', None),
+        subject_column=getattr(request, 'subject_column', None),
+        time_column=getattr(request, 'time_column', None),
+        group_column=getattr(request, 'group_column', None),
+    )
 
     job = _create_job(db, session_id, 'multisite_permanova', request.model_dump())
 
@@ -341,6 +374,13 @@ async def analyze_multisite_markers(
     df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
+    _validate_meta_columns(
+        metadata_df,
+        site_column=getattr(request, 'site_column', None),
+        subject_column=getattr(request, 'subject_column', None),
+        time_column=getattr(request, 'time_column', None),
+        group_column=getattr(request, 'group_column', None),
+    )
 
     job = _create_job(db, session_id, 'multisite_markers', request.model_dump())
 
@@ -401,6 +441,13 @@ async def analyze_multisite_temporal(
     df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
+    _validate_meta_columns(
+        metadata_df,
+        site_column=getattr(request, 'site_column', None),
+        subject_column=getattr(request, 'subject_column', None),
+        time_column=getattr(request, 'time_column', None),
+        group_column=getattr(request, 'group_column', None),
+    )
 
     job = _create_job(db, session_id, 'multisite_temporal', request.model_dump())
 
@@ -461,6 +508,13 @@ async def analyze_multisite_network_compare(
     df = df.T
     if metadata_df is None:
         raise HTTPException(status_code=400, detail='Metadata required')
+    _validate_meta_columns(
+        metadata_df,
+        site_column=getattr(request, 'site_column', None),
+        subject_column=getattr(request, 'subject_column', None),
+        time_column=getattr(request, 'time_column', None),
+        group_column=getattr(request, 'group_column', None),
+    )
 
     job = _create_job(db, session_id, 'multisite_network_compare', request.model_dump())
 

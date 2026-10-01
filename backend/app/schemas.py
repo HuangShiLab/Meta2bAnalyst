@@ -201,11 +201,20 @@ class AnalysisResultResponse(BaseModel):
 # ─────────────────────────────── Strain Analysis Schemas
 class StrainAnalysisRequest(BaseModel):
     """Request for strain-level analysis."""
-    species: str = Field(..., description="Target species for strain analysis")
+    species: Optional[str] = Field(default=None, description="Target species for strain analysis; omit/empty/'All Species' = all species")
     analysis_type: str = Field(default="strain_profile", description="Strain analysis type")
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
     min_ani: Optional[float] = Field(default=95.0, ge=0.0, le=100.0, description="Minimum ANI threshold")
     min_coverage: Optional[float] = Field(default=0.8, ge=0.0, le=1.0, description="Minimum coverage threshold")
+
+    @field_validator("species")
+    def species_sentinel_to_none(cls, v):
+        # The UI's default selection is the label "All Species"; the analyzer
+        # layer treats None as "no species filter", so normalize here instead
+        # of 422-ing on the frontend's default state.
+        if v is None or v.strip() == "" or v.strip().lower() == "all species":
+            return None
+        return v
 
     @field_validator("analysis_type")
     def strain_type_must_be_valid(cls, v):
@@ -219,7 +228,7 @@ class StrainAnalysisResponse(BaseModel):
     """Strain analysis response."""
     job_id: int
     session_id: str
-    species: str
+    species: Optional[str] = None
     analysis_type: str
     status: str
     result_data: Optional[Dict[str, Any]] = None

@@ -224,6 +224,26 @@ export function MultiSite() {
   const { groupingColumns } = useMetadataColumns(sessionId);
   const metadataColumns = groupingColumns.map((c) => c.name);
 
+  // Snap the column defaults to columns that actually exist in the uploaded
+  // metadata. The hard-coded defaults ("Site"/"Subject"/"Visit") 400 with a
+  // bare KeyError on datasets that name these differently (e.g. the saliva/
+  // urine demo, where site lives in "Position").
+  useEffect(() => {
+    if (metadataColumns.length === 0) return;
+    const pick = (current: string, preferred: RegExp): string => {
+      if (metadataColumns.includes(current)) return current;
+      const hit = metadataColumns.find((c) => preferred.test(c));
+      return hit ?? metadataColumns[0];
+    };
+    setSiteColumn((v) => pick(v, /site|position|location|cohort|body/i));
+    setSubjectColumn((v) => pick(v, /subject|participant|patient|individual/i));
+    setTimeColumn((v) => pick(v, /visit|time|day|week|month|date/i));
+    // Shape-by defaults to the site column; it is sent as group_column and
+    // 400s the same way when it names a nonexistent column.
+    setComparisonShapeBy((v) => pick(v, /site|position|location|cohort|body/i));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metadataColumns.join(",")]);
+
   const handleRunComparison = useCallback(async () => {
     clearResult();
     let response: AnalysisJobResponse;

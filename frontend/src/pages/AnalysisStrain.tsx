@@ -200,7 +200,7 @@ export function AnalysisStrain() {
   const { runAnalysis, isLoading, result, clearResult, error: analysisError } = useAnalysis();
 
   useEffect(() => {
-    setCurrentStep("microbiome");
+    setCurrentStep("strain");
   }, [setCurrentStep]);
 
   const [selectedSpecies, setSelectedSpecies] = useState("All Species");
@@ -223,6 +223,9 @@ export function AnalysisStrain() {
   const [diffGroup, setDiffGroup] = useState("Treatment");
 
   // Network tab state
+  const [networkGroup, setNetworkGroup] = useState("");
+  const [networkGroup1, setNetworkGroup1] = useState("");
+  const [networkGroup2, setNetworkGroup2] = useState("");
   const [networkSpeciesScope, setNetworkSpeciesScope] = useState("current");
   const [networkCorrMethod, setNetworkCorrMethod] = useState("Spearman");
   const [networkCorrThreshold, setNetworkCorrThreshold] = useState(0.3);
@@ -230,8 +233,28 @@ export function AnalysisStrain() {
 
   const { sessionId, hasSession } = useRequiredSession();
   // Grouping variables come from the uploaded metadata, not a fixed list.
-  const { groupingColumns } = useMetadataColumns(sessionId);
+  const { groupingColumns, levelsOf } = useMetadataColumns(sessionId);
+  const metadataColumnsList = groupingColumns.map((c) => c.name);
+
+  // Snap the hard-coded defaults ("Treatment") to columns that actually exist
+  // in the uploaded metadata; otherwise every group-wise strain analysis 400s.
+  useEffect(() => {
+    if (metadataColumnsList.length === 0) return;
+    const snap = (v: string) => (metadataColumnsList.includes(v) ? v : metadataColumnsList[0]);
+    setCompGroup(snap); setStrainDivGroup(snap); setDiffGroup(snap); setNetworkGroup(snap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metadataColumnsList.join(",")]);
   const metadataColumns = groupingColumns.map((c) => c.name);
+
+  // Strain replacement requires an explicit two-level contrast (group1/group2);
+  // default to the first two levels of the chosen column.
+  const networkLevels = levelsOf(networkGroup);
+  useEffect(() => {
+    if (networkLevels.length < 2) return;
+    setNetworkGroup1((v) => (networkLevels.includes(v) ? v : networkLevels[0]));
+    setNetworkGroup2((v) => (networkLevels.includes(v) ? v : networkLevels[1]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networkGroup, networkLevels.join(",")]);
 
   const filteredSpecies = mockSpecies.filter((s) =>
     s.toLowerCase().includes(speciesSearch.toLowerCase())
@@ -240,6 +263,7 @@ export function AnalysisStrain() {
   const handleRunComposition = useCallback(async () => {
     clearResult();
     const response = await runAnalysis("strain-composition", sessionId, {
+      species: selectedSpecies,
       visualizationType: compType,
       groupColumn: compGroup,
     });
@@ -262,12 +286,14 @@ export function AnalysisStrain() {
     let response: AnalysisJobResponse;
     if (strainDivType === "alpha") {
       response = await runAnalysis("strain-alpha", sessionId, {
+        species: selectedSpecies,
         analysisType: "alpha",
         indices: strainIndices,
         groupColumn: strainDivGroup,
       });
     } else {
       response = await runAnalysis("strain-beta", sessionId, {
+        species: selectedSpecies,
         analysisType: "beta",
         distanceMethod: strainDistance,
         ordinationMethod: strainOrdination,
@@ -293,9 +319,8 @@ export function AnalysisStrain() {
   const handleRunDifferential = useCallback(async () => {
     clearResult();
     const response = await runAnalysis("strain-differential", sessionId, {
-      scope: diffScope,
-      method: diffMethod,
-      groupColumn: diffGroup,
+      species: selectedSpecies,
+      parameters: { group_var: diffGroup, within_species: diffScope === "within-species" },
     });
 
     sessionStore.addAnalysisHistoryItem({
@@ -314,10 +339,8 @@ export function AnalysisStrain() {
   const handleRunNetwork = useCallback(async () => {
     clearResult();
     const response = await runAnalysis("strain-replacement", sessionId, {
-      speciesScope: networkSpeciesScope,
-      correlationMethod: networkCorrMethod,
-      correlationThreshold: networkCorrThreshold,
-      pValueThreshold: networkPvalueThreshold,
+      species: networkSpeciesScope === "current" ? selectedSpecies : "All Species",
+      parameters: { group_var: networkGroup, group1: networkGroup1, group2: networkGroup2 },
     });
 
     sessionStore.addAnalysisHistoryItem({
@@ -336,7 +359,7 @@ export function AnalysisStrain() {
         pValueThreshold: networkPvalueThreshold,
       },
     });
-  }, [networkSpeciesScope, networkCorrMethod, networkCorrThreshold, networkPvalueThreshold, runAnalysis, sessionId, clearResult, sessionStore, selectedSpecies]);
+  }, [networkSpeciesScope, networkGroup, networkGroup1, networkGroup2, networkCorrMethod, networkCorrThreshold, networkPvalueThreshold, runAnalysis, sessionId, clearResult, sessionStore, selectedSpecies]);
 
   return (
     <div className={cn("space-y-6")}>
@@ -650,6 +673,42 @@ export function AnalysisStrain() {
                       <SelectContent>
                         <SelectItem value="current">Current Species</SelectItem>
                         <SelectItem value="all">All Species</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ParameterItem>
+                  <ParameterItem label="Group Column" tooltip="Strain replacement compares groups from this metadata column">
+                    <Select value={networkGroup} onValueChange={setNetworkGroup}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {metadataColumnsList.map((col) => (
+                          <SelectItem key={col} value={col}>{col}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </ParameterItem>
+                  <ParameterItem label="Group 1" tooltip="First level of the comparison">
+                    <Select value={networkGroup1} onValueChange={setNetworkGroup1}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {networkLevels.map((lvl) => (
+                          <SelectItem key={lvl} value={lvl}>{lvl}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </ParameterItem>
+                  <ParameterItem label="Group 2" tooltip="Second level of the comparison">
+                    <Select value={networkGroup2} onValueChange={setNetworkGroup2}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {networkLevels.map((lvl) => (
+                          <SelectItem key={lvl} value={lvl}>{lvl}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </ParameterItem>

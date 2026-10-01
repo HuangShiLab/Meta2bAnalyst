@@ -9,6 +9,7 @@ import { Normalize } from "@/pages/Normalize";
 import { Microbiome } from "@/pages/Microbiome";
 import { MultiOmics } from "@/pages/MultiOmics";
 import { MultiSite } from "@/pages/MultiSite";
+import { AnalysisStrain } from "@/pages/AnalysisStrain";
 import { Agent } from "@/pages/Agent";
 import { Results } from "@/pages/Results";
 import { Login } from "@/pages/Login";
@@ -50,6 +51,7 @@ function App() {
           <Route path="/microbiome" element={<Microbiome />} />
           <Route path="/multi-omics" element={<MultiOmics />} />
           <Route path="/multi-site" element={<MultiSite />} />
+          <Route path="/strain" element={<AnalysisStrain />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/results" element={<Results />} />
           <Route element={<RequireAuth />}>

@@ -141,13 +141,24 @@ def run_rda_analysis(microbiome_df: pd.DataFrame,
     p_value = None
     if test_permutation:
         obs_constrained = rda_result['proportion_constrained']
-        perm_stats = []
+
+        # Fast path: only proportion_constrained is needed per permutation, and
+        #   prop = trace(Ys' H Ys) / trace(Ys' Ys),  H = Q Q' from qr(Xs_perm).
+        # Y is constant across permutations, so standardize once and precompute
+        # M = Ys Ys'; each permutation then costs a QR of the small X block
+        # (n x p1) plus an O(n^2) trace instead of two O(p2^3) eigendecomposes.
+        # On the 261x1125 demo this takes the test from minutes to seconds.
+        Xs = StandardScaler().fit_transform(X)
+        Ys = StandardScaler().fit_transform(Y)
+        M = Ys @ Ys.T                      # (n, n), invariant under X permutation
+        denom = float(np.trace(Ys.T @ Ys))  # = trace(M); (n-1) factors cancel
+        perm_stats = np.empty(n_perm)
         for i in range(n_perm):
             idx = np.random.permutation(X.shape[0])
-            perm_rda = redundancy_analysis(X[idx], Y, n_components=n_components)
-            perm_stats.append(perm_rda['proportion_constrained'])
-        perm_stats = np.array(perm_stats)
-        p_value = (perm_stats >= obs_constrained).mean()
+            Q, _ = np.linalg.qr(Xs[idx])
+            H = Q @ Q.T
+            perm_stats[i] = float(np.sum(H * M)) / denom if denom > 0 else 0.0
+        p_value = float((perm_stats >= obs_constrained).mean())
         f_stat = obs_constrained / (1 - obs_constrained + 1e-10)  # pseudo-F
 
     # Build DataFrames for output

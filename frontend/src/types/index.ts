@@ -15,6 +15,7 @@ export type AnalysisStep =
   | 'microbiome'
   | 'multi-omics'
   | 'multi-site'
+  | 'strain'
   | 'agent'
   | 'workflow-builder'
   | 'account'
