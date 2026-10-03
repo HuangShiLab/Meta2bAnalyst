@@ -25,14 +25,35 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           df -h /
 
-      - name: Build the stack
-        run: docker compose -f docker/docker-compose.yml build
-        # No registry push/pull: images are built from source on every run.
-        # STUDENT_ACCOUNT_PASSWORD defaults to Meta2b-2026 (compose file),
-        # which is what the spec logs in with.
+      - uses: docker/setup-buildx-action@v3
+
+      # Build with the GitHub Actions layer cache: the backend image bundles
+      # R + rpy2 and takes 15-25 min cold, ~2-5 min with warm cache. Tags
+      # match docker-compose.yml image names so `compose up` reuses them.
+      - name: Build backend image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          load: true
+          tags: meta2banalyst-backend:local
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend.Dockerfile
+          load: true
+          tags: meta2banalyst-frontend:local
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
       - name: Start the stack
         run: docker compose -f docker/docker-compose.yml up -d --wait
+        # STUDENT_ACCOUNT_PASSWORD defaults to Meta2b-2026 (compose file),
+        # which is what the spec logs in with.
 
       - name: Wait for frontend
         run: |
