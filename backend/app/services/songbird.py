@@ -249,9 +249,14 @@ def _fit_statsmodels_multinomial(
     
     # Fit model
     model = sm.MNLogit(y_encoded, X_const)
-    
+
     try:
-        result = model.fit(disp=0, maxiter=max_iter)
+        # Newton iterations converge in tens of steps; with quasi-separated
+        # data statsmodels would otherwise burn all `max_iter` (the UI slider
+        # allows 5000) at ~0.3-1s each, stalling an interactive session for
+        # many minutes. Cap the iterations; non-convergence is reported
+        # honestly via the 'converged' flag.
+        result = model.fit(disp=0, maxiter=min(max_iter, 100))
         
         # Extract parameters
         params = result.params  # (n_features+1, n_classes-1)

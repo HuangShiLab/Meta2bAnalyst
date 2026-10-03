@@ -23,7 +23,10 @@ export const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 60000,
+  // Synchronous analysis endpoints (songbird, RDA, ...) legitimately run for
+  // minutes; 60s reported them as failed while the backend kept computing.
+  // Matches JOB_POLL_TIMEOUT_MS in hooks/useAnalysis.ts.
+  timeout: 5 * 60 * 1000,
 });
 
 api.interceptors.request.use(

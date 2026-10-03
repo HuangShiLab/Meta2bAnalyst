@@ -64,6 +64,7 @@ from app.services.taxonomy_bar import run_taxonomy_bar, run_core_microbiome
 from app.services.mofa import run_mofa_plus
 from app.services.aldex2 import run_aldex2
 from app.services.songbird import run_songbird
+from starlette.concurrency import run_in_threadpool
 from app.services.enterotype import run_enterotype
 from app.services.wgcna import run_wgcna
 from app.services.diablo import run_diablo
@@ -179,17 +180,31 @@ _LAST_ORIENTATION: Dict[str, Dict[str, Any]] = {}
 
 
 def get_dataframe(session_id: str, db: DBSession) -> pd.DataFrame:
-    """Get the feature table as a DataFrame for a session (features x samples)."""
-    data_file = (
+    """Get the feature table as a DataFrame for a session (features x samples).
+
+    Microbiome-family tables take priority; metabolome is only a fallback for
+    metabolome-only sessions. Previously the newest of ANY of these types won,
+    so uploading a metabolome after the feature table silently switched every
+    microbiome analysis to the metabolite table (1125 features) — wrong
+    results, and hours-long model fits (songbird MNLogit).
+    """
+    microbiome_file = (
         db.query(DataFile)
         .filter(DataFile.session_id == session_id)
         .filter(
             DataFile.file_type.in_([
                 'feature_table', 'biom', 'shared', 'filtered_feature_table',
-                'microbiome', 'metabolome'
+                'microbiome',
             ])
             | DataFile.file_type.like('normalized\\_%', escape='\\')
         )
+        .order_by(DataFile.id.desc())
+        .first()
+    )
+    data_file = microbiome_file or (
+        db.query(DataFile)
+        .filter(DataFile.session_id == session_id)
+        .filter(DataFile.file_type == 'metabolome')
         .order_by(DataFile.id.desc())
         .first()
     )
@@ -2891,7 +2906,9 @@ async def analyze_aldex2(session_id: str, request: ALDEx2Request, db: DBSession 
         provenance = _guard_approximation('aldex2', request)
         # run_aldex2 documents samples x features; get_dataframe returns the
         # canonical features x samples.
-        result = run_aldex2(df.T, metadata_df, group_column=request.group_column, test_method=request.test_method)
+        result = await run_in_threadpool(
+            run_aldex2, df.T, metadata_df, group_column=request.group_column, test_method=request.test_method
+        )
         result.update(provenance)
         _save_result(session_id, job, result)
         job.status = 'completed'
@@ -2935,7 +2952,12 @@ async def analyze_songbird(session_id: str, request: SongbirdRequest, db: DBSess
     try:
         # get_*_df returns the canonical features x samples orientation;
         # this service works sample-wise (its `df` is samples x features).
-        result = run_songbird(df.T, metadata_df, group_column=request.group_column, epochs=request.epochs)
+        # Threadpool: 1000-epoch training blocks for minutes and would freeze
+        # the single-process uvicorn loop (healthchecks time out, the whole
+        # API stalls) if run directly in this async endpoint.
+        result = await run_in_threadpool(
+            run_songbird, df.T, metadata_df, group_column=request.group_column, epochs=request.epochs
+        )
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
@@ -2988,7 +3010,9 @@ async def analyze_enterotype(session_id: str, request: EnterotypeRequest, db: DB
         # value in `parameters` so both request styles behave the same.
         n_clusters = request.parameters.get('n_clusters', request.n_clusters)
         distance_metric = request.parameters.get('distance_metric', request.distance_metric)
-        result = run_enterotype(df.T, metadata_df, n_clusters=n_clusters, distance_metric=distance_metric)
+        result = await run_in_threadpool(
+            run_enterotype, df.T, metadata_df, n_clusters=n_clusters, distance_metric=distance_metric
+        )
         _save_result(session_id, job, result)
         job.status = 'completed'
         job.completed_at = datetime.utcnow()
@@ -3034,7 +3058,9 @@ async def analyze_wgcna(session_id: str, request: WGCNARequest, db: DBSession = 
     db.refresh(job)
     try:
         provenance = _guard_approximation('wgcna', request)
-        result = run_wgcna(df, metadata_df, power=request.power, min_module_size=request.min_module_size, merge_cut_height=request.merge_cut_height)
+        result = await run_in_threadpool(
+            run_wgcna, df, metadata_df, power=request.power, min_module_size=request.min_module_size, merge_cut_height=request.merge_cut_height
+        )
         result.update(provenance)
         _save_result(session_id, job, result)
         job.status = 'completed'
