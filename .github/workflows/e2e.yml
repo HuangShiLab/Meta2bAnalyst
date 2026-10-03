@@ -1,0 +1,78 @@
+name: E2E (live stack)
+
+# Full module regression: builds the real Docker stack and drives all 41
+# analysis modules through the UI (e2e/modules.spec.ts). Heavy (backend
+# image bundles R); kept out of ci.yml so the fast gates stay fast.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  modules:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space (backend image is large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          df -h /
+
+      - name: Build the stack
+        run: docker compose -f docker/docker-compose.yml build
+        # No registry push/pull: images are built from source on every run.
+        # STUDENT_ACCOUNT_PASSWORD defaults to Meta2b-2026 (compose file),
+        # which is what the spec logs in with.
+
+      - name: Start the stack
+        run: docker compose -f docker/docker-compose.yml up -d --wait
+
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/ >/dev/null && exit 0
+            sleep 2
+          done
+          echo "frontend did not come up" >&2
+          docker compose -f docker/docker-compose.yml logs --tail=100
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run 41-module regression
+        working-directory: frontend
+        run: E2E_BASE_URL=http://localhost:8080 npx playwright test e2e/modules.spec.ts --workers=1
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.yml logs --tail=200
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: frontend/test-results/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
