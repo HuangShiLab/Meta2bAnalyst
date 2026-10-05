@@ -210,12 +210,20 @@ def alpha_diversity_task(
     params = {"indices": metrics, "group_column": grouping}
     result_data = run_alpha_diversity(df, metadata_df, params)
     
-    # Generate Plotly chart if metadata available
+    # Generate Plotly chart if metadata available: one panel per index
+    # (single-panel plots made multi-index runs look like "Shannon only").
     if metadata_df is not None and grouping and grouping in metadata_df.columns:
         engine = AnalysisEngine()
         alpha_df = engine.alpha_diversity(df, metrics=metrics)
-        plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, grouping, metrics[0] if metrics else "shannon")
-        result_data["plot_data"] = plot_data
+        computed = list(alpha_df.columns)
+        if len(computed) > 1:
+            plot_data = engine.plotly_alpha_boxplot_multi(alpha_df, metadata_df, grouping, computed)
+        elif computed:
+            plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, grouping, computed[0])
+        else:
+            plot_data = None
+        if plot_data is not None:
+            result_data["plot_data"] = plot_data
     
     _update_task_state(self, "STARTED", {"progress": 80, "message": "Saving results..."})
     result_path = _save_result(session_id, self.request.id, "alpha_diversity", result_data)

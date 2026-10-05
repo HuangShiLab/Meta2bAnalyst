@@ -739,17 +739,25 @@ async def analyze_alpha_diversity(
 
         result_data = run_alpha_diversity(df, metadata_df, job.parameters)
 
-        # Generate Plotly chart if metadata available. Box the FIRST selected
-        # index (not always shannon), falling back to whatever was computed.
+        # Generate Plotly chart if metadata available: one box-plot panel per
+        # selected index (the panel renders a single figure, and plotting only
+        # the first index read as "only Shannon was computed").
         if metadata_df is not None and request.group_column and request.group_column in metadata_df.columns:
             engine = AnalysisEngine()
             alpha_df = engine.alpha_diversity(df, metrics=job.parameters['indices'])
-            plot_metric = next(
-                (m for m in job.parameters['indices'] if m in alpha_df.columns),
-                alpha_df.columns[0] if len(alpha_df.columns) else 'shannon',
-            )
-            plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, request.group_column, plot_metric)
-            result_data['plot_data'] = plot_data
+            computed = list(alpha_df.columns)
+            if len(computed) > 1:
+                plot_data = engine.plotly_alpha_boxplot_multi(
+                    alpha_df, metadata_df, request.group_column, computed
+                )
+            elif computed:
+                plot_data = engine.plotly_alpha_boxplot(
+                    alpha_df, metadata_df, request.group_column, computed[0]
+                )
+            else:
+                plot_data = None
+            if plot_data is not None:
+                result_data['plot_data'] = plot_data
 
         _save_result(session_id, job, result_data)
         job.status = 'completed'

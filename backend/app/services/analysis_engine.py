@@ -1228,6 +1228,97 @@ class AnalysisEngine:
         fig.update_yaxes(**axis_style)
         return fig.to_dict()
 
+    def plotly_alpha_boxplot_multi(
+        self,
+        alpha_df: pd.DataFrame,
+        metadata: pd.DataFrame,
+        group_var: str,
+        metrics: list[str],
+        max_panels: int = 6,
+    ) -> dict:
+        """Generate one box-plot subplot per diversity index.
+
+        The result panel renders a single figure, and Shannon is the first
+        checkbox -- plotting only the first selected index read as "only
+        Shannon was computed" even when the table carried every index.
+
+        Args:
+            alpha_df: DataFrame with samples as rows and metrics as columns.
+            metadata: Metadata DataFrame with grouping variable.
+            group_var: Column name for grouping.
+            metrics: Metrics to plot, in selection order (filtered to the
+                columns actually present in alpha_df).
+            max_panels: Safety cap on subplot count.
+
+        Returns:
+            Plotly figure JSON dict with a grid of box-plot subplots.
+        """
+        from plotly.subplots import make_subplots
+
+        available = [m for m in metrics if m in alpha_df.columns][:max_panels]
+        if not available:
+            available = list(alpha_df.columns)[:max_panels]
+        n = len(available)
+        cols = min(3, n)
+        rows = -(-n // cols)  # ceil division
+        fig = make_subplots(
+            rows=rows,
+            cols=cols,
+            subplot_titles=[m.capitalize() for m in available],
+            horizontal_spacing=0.08,
+            vertical_spacing=0.14 if rows > 1 else 0.08,
+        )
+
+        samples = alpha_df.index.intersection(metadata.index)
+        groups = metadata.loc[samples, group_var].unique()
+        for i, metric in enumerate(available):
+            row, col = divmod(i, cols)
+            row += 1
+            col += 1
+            for gi, group in enumerate(groups):
+                color = _PLOTLY_GROUP_COLORS[gi % len(_PLOTLY_GROUP_COLORS)]
+                group_samples = metadata[metadata[group_var] == group].index.intersection(samples)
+                values = alpha_df.loc[group_samples, metric].dropna().values
+                fig.add_trace(
+                    go.Box(
+                        y=values,
+                        name=str(group),
+                        legendgroup=str(group),
+                        showlegend=(i == 0),
+                        boxpoints='all',
+                        jitter=0.4,
+                        pointpos=0,
+                        boxmean=True,
+                        marker={'color': color, 'size': 6, 'opacity': 0.75,
+                                'line': {'color': 'rgba(0,0,0,0.3)', 'width': 0.5}},
+                        line={'color': color},
+                        fillcolor=_hex_to_rgba(color, 0.25),
+                    ),
+                    row=row,
+                    col=col,
+                )
+
+        axis_style = dict(
+            showline=True, linecolor='black', linewidth=1.2, mirror=True,
+            ticks='outside', tickwidth=1, tickcolor='black',
+            zeroline=False, showgrid=False,
+        )
+        fig.update_xaxes(axis_style)
+        fig.update_yaxes(axis_style)
+        fig.update_layout(
+            title={'text': f'Alpha Diversity by {group_var}', 'font': {'size': 17}},
+            boxmode='group',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font={'family': 'Arial, "Helvetica Neue", sans-serif', 'size': 13, 'color': 'black'},
+            legend={'title': {'text': f'<b>{group_var}</b>'},
+                    'bordercolor': 'rgba(0,0,0,0.25)', 'borderwidth': 1,
+                    'bgcolor': 'rgba(255,255,255,0.9)'},
+            margin={'l': 70, 'r': 30, 't': 60, 'b': 60},
+            height=380 * rows + 90,
+        )
+        return fig.to_dict()
+
     def plotly_pcoa_scatter(
         self,
         pcoa_result: dict,
