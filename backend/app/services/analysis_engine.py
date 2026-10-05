@@ -1869,7 +1869,16 @@ def run_alpha_diversity(
         selected_key = _ALPHA_TEST_ALIASES.get(selected)
         effective_key = selected_key or rec_method
 
+        _ALPHA_METHOD_NAMES = {
+            'wilcoxon_ranksum': 'Wilcoxon rank-sum test (Mann-Whitney U)',
+            't': "Welch's t-test", 't_equalvar': "Student's t-test",
+            'kruskal': 'Kruskal-Wallis test', 'anova': 'One-way ANOVA',
+        }
+
         results['statistics'] = {}
+        # The same test is applied to every index -- show its name once, first.
+        if effective_key:
+            results['statistics']['test_method'] = _ALPHA_METHOD_NAMES.get(effective_key, effective_key)
         results['recommended_test_results'] = {}
         for metric in computed:
             gv = group_values_by_metric.get(metric) or {}
@@ -1899,7 +1908,9 @@ def run_alpha_diversity(
 
             if 'statistical_test' in group_stats:
                 results['statistics'][f'{metric}_pvalue'] = group_stats['statistical_test']['pvalue']
-                results['statistics'][f'{metric}_test'] = group_stats['statistical_test']['test']
+                # One test per run -- report the name actually executed (it may
+                # carry a suffix like "(2 groups)") over the generic label.
+                results['statistics']['test_method'] = group_stats['statistical_test']['test']
 
             # The recommended method's own statistics, even when not selected.
             if rec_method and rec_method != effective_key:
