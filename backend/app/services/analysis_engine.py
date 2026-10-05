@@ -165,10 +165,14 @@ class AnalysisEngine:
         Metrics:
             - shannon: Shannon diversity index (entropy-based).
             - simpson: Simpson diversity index (1 - sum(p^2)).
+            - inversesimpson: Inverse Simpson index (1 / sum(p^2)).
             - chao1: Chao1 richness estimator.
             - ace: ACE richness estimator (simplified).
             - observed: Observed species richness.
-            - pielou: Pielou's evenness (Shannon / log(richness)).
+            - pielou: Pielou's evenness (Shannon / log(richness)); alias
+              'evenness' (the UI used to send display-case names like
+              "Shannon"/"Pielou" -- names are normalized here so both
+              casings and the legacy alias work).
 
         Args:
             df: Feature table (features x samples).
@@ -177,11 +181,27 @@ class AnalysisEngine:
         Returns:
             DataFrame with samples as rows and diversity metrics as columns.
         """
+        # Normalize: lowercase, strip, collapse separators; alias legacy names.
+        alias = {
+            'evenness': 'pielou',
+            'observed_species': 'observed',
+            'observed_otus': 'observed',
+            'inverse_simpson': 'inversesimpson',
+        }
+        requested = []
+        for m in metrics:
+            norm = str(m).strip().lower().replace('-', '').replace(' ', '')
+            norm = alias.get(norm, norm)
+            if norm not in requested:
+                requested.append(norm)
+
         results = {}
 
-        for metric in metrics:
+        for metric in requested:
             if metric == 'shannon':
                 results[metric] = self._calculate_shannon(df)
+            elif metric == 'inversesimpson':
+                results[metric] = self._calculate_inverse_simpson(df)
             elif metric == 'simpson':
                 results[metric] = self._calculate_simpson(df)
             elif metric == 'chao1':
@@ -209,6 +229,11 @@ class AnalysisEngine:
         proportions = df.div(df.sum(axis=0), axis=1).fillna(0)
         simpson = 1 - (proportions ** 2).sum(axis=0)
         return simpson
+
+    def _calculate_inverse_simpson(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate the inverse Simpson (Hill number, order 2) index."""
+        proportions = df.div(df.sum(axis=0), axis=1).fillna(0)
+        return 1.0 / (proportions ** 2).sum(axis=0)
 
     def _calculate_chao1(self, df: pd.DataFrame) -> pd.Series:
         """Calculate the bias-corrected Chao1 richness estimator.
@@ -1556,7 +1581,7 @@ def run_alpha_diversity(
 ) -> Dict[str, Any]:
     """Run alpha diversity analysis and return structured results."""
     params = parameters or {}
-    indices = params.get('indices', ['shannon', 'simpson', 'observed', 'chao1', 'evenness'])
+    indices = params.get('indices', ['shannon', 'simpson', 'observed', 'chao1', 'pielou'])
 
     # `df` is expected in canonical features x samples orientation, resolved once
     # at the data-access layer (app/services/orientation.py). This function used

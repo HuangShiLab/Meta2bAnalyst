@@ -344,10 +344,26 @@ export function Microbiome() {
     let response: AnalysisJobResponse;
 
     if (communitySubTab === "alpha") {
+      // The UI checkbox labels are display names; the backend engine keys
+      // metrics by lowercase id ("Shannon" -> "shannon"). Send them inside
+      // `parameters` -- AnalysisRequest drops unknown top-level fields, so a
+      // bare `indices` never reached the engine and every run plotted Shannon.
+      const ALPHA_METRIC_IDS: Record<string, string> = {
+        Shannon: "shannon",
+        Simpson: "simpson",
+        InverseSimpson: "inversesimpson",
+        Pielou: "pielou",
+        Observed: "observed",
+        Chao1: "chao1",
+      };
+      const metricIds = alphaIndices.map((name) => ALPHA_METRIC_IDS[name] ?? name.toLowerCase());
       response = await runAnalysis("alpha-diversity", sessionId, {
-        indices: alphaIndices,
+        parameters: {
+          indices: metricIds,
+          group_column: alphaGroup,
+          test_method: alphaTest,
+        },
         group_column: alphaGroup,
-        test_method: alphaTest,
       });
       sessionStore.addAnalysisHistoryItem({
         id: response.job_id,

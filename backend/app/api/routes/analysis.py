@@ -697,12 +697,20 @@ async def analyze_alpha_diversity(
     metadata_df = get_metadata_df(session_id, db)
 
     try:
+        # The UI sends display-case names ("Shannon", "Pielou"); the engine
+        # normalizes them, but the plotted metric is picked here, so lowercase
+        # once up front. AnalysisRequest silently drops unknown top-level
+        # fields, which is why indices must arrive inside `parameters`.
+        default_indices = ['shannon', 'simpson', 'chao1', 'observed', 'pielou']
+        indices = [
+            str(i).strip().lower() for i in request.parameters.get('indices', default_indices)
+        ] or default_indices
         # Create job record
         job = AnalysisJob(
             session_id=session_id,
             job_type='alpha',
             parameters={
-                'indices': request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
+                'indices': indices,
                 'group_column': request.group_column,
             },
             status='pending',
@@ -721,7 +729,7 @@ async def analyze_alpha_diversity(
                 alpha_diversity_task,
                 session_id, job, db,
                 session_id=session_id,
-                metrics=request.parameters.get('indices', ['shannon', 'simpson', 'chao1', 'observed', 'evenness']),
+                metrics=indices,
                 grouping=request.group_column,
             )
 
@@ -731,11 +739,16 @@ async def analyze_alpha_diversity(
 
         result_data = run_alpha_diversity(df, metadata_df, job.parameters)
 
-        # Generate Plotly chart if metadata available
+        # Generate Plotly chart if metadata available. Box the FIRST selected
+        # index (not always shannon), falling back to whatever was computed.
         if metadata_df is not None and request.group_column and request.group_column in metadata_df.columns:
             engine = AnalysisEngine()
             alpha_df = engine.alpha_diversity(df, metrics=job.parameters['indices'])
-            plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, request.group_column, 'shannon')
+            plot_metric = next(
+                (m for m in job.parameters['indices'] if m in alpha_df.columns),
+                alpha_df.columns[0] if len(alpha_df.columns) else 'shannon',
+            )
+            plot_data = engine.plotly_alpha_boxplot(alpha_df, metadata_df, request.group_column, plot_metric)
             result_data['plot_data'] = plot_data
 
         _save_result(session_id, job, result_data)
