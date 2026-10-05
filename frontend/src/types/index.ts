@@ -183,12 +183,30 @@ export interface StrainNetworkParams {
   pValueThreshold: number;
 }
 
+export interface MethodRecommendation {
+  recommended_method: string;
+  reason: string;
+  selected_method?: string;
+  effective_method?: string;
+  matches_selection?: boolean;
+  diagnostics?: Record<string, unknown>;
+}
+
+export interface RecommendedTestResult {
+  test: string;
+  statistic: number;
+  pvalue: number;
+  significant: boolean;
+}
+
 export interface AnalysisJobResponse {
   success: boolean;
   job_id: string;
   plot_data?: PlotlyFigure;
   statistics?: Record<string, unknown>;
   data?: Record<string, string | number>[];
+  recommendation?: MethodRecommendation;
+  recommended_test_results?: Record<string, RecommendedTestResult>;
 }
 
 export interface AnalysisHistoryItem {

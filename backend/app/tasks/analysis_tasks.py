@@ -197,17 +197,18 @@ def alpha_diversity_task(
     session_id: str,
     metrics: list,
     grouping: Optional[str] = None,
+    test_method: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Alpha diversity asynchronous task."""
     _update_task_state(self, "STARTED", {"progress": 10, "message": "Loading data..."})
-    
+
     df, metadata_df = _load_session_data(session_id)
     if df is None:
         raise ValueError(f"No feature table found for session {session_id}")
-    
+
     _update_task_state(self, "STARTED", {"progress": 30, "message": "Computing alpha diversity..."})
-    
-    params = {"indices": metrics, "group_column": grouping}
+
+    params = {"indices": metrics, "group_column": grouping, "test_method": test_method}
     result_data = run_alpha_diversity(df, metadata_df, params)
     
     # Generate Plotly chart if metadata available: one panel per index

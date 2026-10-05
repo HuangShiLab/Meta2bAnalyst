@@ -1121,6 +1121,60 @@ export function Microbiome() {
                 isLoading={isLoading}
                 onRun={handleRunCommunity}
               />
+
+              {communitySubTab === "alpha" && !isLoading && result?.recommendation && (
+                <Card className="border-teal-200 bg-teal-50/40">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">Recommended Statistical Method</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <p className="font-semibold">{result.recommendation.recommended_method}</p>
+                      <p className="text-sm text-muted-foreground mt-1">{result.recommendation.reason}</p>
+                    </div>
+                    {result.recommendation.effective_method && (
+                      <p className="text-sm">
+                        <span className="text-muted-foreground">Your selection: </span>
+                        <span className="font-medium">
+                          {result.recommendation.selected_method || "auto"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {" "}(statistics above{result.recommendation.matches_selection
+                            ? " — same as recommended"
+                            : ` computed with ${result.recommendation.effective_method}`})
+                        </span>
+                      </p>
+                    )}
+                    {result.recommended_test_results &&
+                      Object.keys(result.recommended_test_results).length > 0 && (
+                        <div className="overflow-auto rounded-lg border bg-white">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b bg-muted/50">
+                                <th className="p-2 text-left font-medium">Index</th>
+                                <th className="p-2 text-left font-medium">Test</th>
+                                <th className="p-2 text-right font-medium">Statistic</th>
+                                <th className="p-2 text-right font-medium">p-value</th>
+                                <th className="p-2 text-center font-medium">Significant</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(result.recommended_test_results).map(([metric, r]) => (
+                                <tr key={metric} className="border-b last:border-0">
+                                  <td className="p-2 capitalize">{metric}</td>
+                                  <td className="p-2">{r.test}</td>
+                                  <td className="p-2 text-right">{r.statistic.toFixed(4)}</td>
+                                  <td className="p-2 text-right">{r.pvalue < 0.001 ? "< 0.001" : r.pvalue.toFixed(4)}</td>
+                                  <td className="p-2 text-center">{r.significant ? "✓" : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </TabsContent>

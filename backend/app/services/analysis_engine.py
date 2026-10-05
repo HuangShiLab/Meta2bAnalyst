@@ -13,7 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy import sparse
 from scipy.spatial.distance import braycurtis, cityblock, euclidean, jaccard, pdist, squareform
-from scipy.stats import f_oneway, mannwhitneyu, pearsonr, spearmanr, ttest_ind, wilcoxon
+from scipy.stats import f_oneway, kruskal, levene, mannwhitneyu, pearsonr, shapiro, spearmanr, ttest_ind, wilcoxon
 from sklearn.decomposition import PCA
 from sklearn.isotonic import IsotonicRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -1665,12 +1665,159 @@ class AnalysisEngine:
 # ─────────────────────────────── Module-level convenience functions
 
 
+def _alpha_group_values(alpha_df, metadata_df, group_column, groups, metric):
+    """Per-group value arrays for one diversity metric (order follows groups)."""
+    out = {}
+    for g in groups:
+        samples = metadata_df[metadata_df[group_column] == g].index.intersection(alpha_df.index)
+        vals = alpha_df.loc[samples, metric].dropna().values
+        if len(vals) > 0:
+            out[str(g)] = vals
+    return out
+
+
+def _alpha_two_group_test(values1, values2, method):
+    """Run one two-group test; returns (test_name, statistic, pvalue) or None."""
+    try:
+        if method == 'wilcoxon_ranksum':
+            stat, p = mannwhitneyu(values1, values2, alternative='two-sided')
+            return ('Wilcoxon rank-sum test (Mann-Whitney U)', float(stat), float(p))
+        if method == 'kruskal':
+            # Kruskal-Wallis on two groups is the rank-sum test; report the
+            # name the user picked so the output matches their selection.
+            stat, p = mannwhitneyu(values1, values2, alternative='two-sided')
+            return ('Kruskal-Wallis test (2 groups)', float(stat), float(p))
+        if method == 'anova':
+            stat, p = f_oneway(values1, values2)
+            return ('One-way ANOVA (F-test)', float(stat), float(p))
+        equal_var = (method == 't_equalvar')
+        stat, p = ttest_ind(values1, values2, equal_var=equal_var)
+        return ("Student's t-test" if equal_var else "Welch's t-test", float(stat), float(p))
+    except Exception as e:
+        logger.warning(f"Two-group test failed: {e}")
+        return None
+
+
+def _alpha_multi_group_test(group_values, method):
+    """Run one multi-group test; returns (test_name, statistic, pvalue) or None."""
+    arrays = list(group_values.values())
+    try:
+        if method in ('kruskal', 'wilcoxon_ranksum'):
+            # Rank-sum is undefined for >2 groups; Kruskal-Wallis is its
+            # multi-group generalization.
+            stat, p = kruskal(*arrays)
+            return ('Kruskal-Wallis test' if method == 'kruskal'
+                    else 'Kruskal-Wallis test (rank-sum generalized to >2 groups)',
+                    float(stat), float(p))
+        stat, p = f_oneway(*arrays)
+        return ('One-way ANOVA (F-test)', float(stat), float(p))
+    except Exception as e:
+        logger.warning(f"Multi-group test failed: {e}")
+        return None
+
+
+_ALPHA_TEST_ALIASES = {
+    't-test': 't', 'ttest': 't', 'welch t-test': 't',
+    'wilcoxon': 'wilcoxon_ranksum', 'wilcoxon rank-sum': 'wilcoxon_ranksum',
+    'mann-whitney': 'wilcoxon_ranksum', 'mann-whitney u': 'wilcoxon_ranksum',
+    'kruskal-wallis': 'kruskal', 'anova': 'anova', 'one-way anova': 'anova',
+}
+
+
+def _alpha_recommend_test(computed_metrics, group_values_by_metric, subject_column=None):
+    """Recommend a two/multi-group test from the data structure.
+
+    Shapiro-Wilk per group (across every computed index) decides normality;
+    Levene's test decides variance homogeneity when normality holds. Small
+    groups (n < 4) cannot be assessed for normality, which itself argues for
+    the non-parametric test.
+    """
+    n_groups = len(next(iter(group_values_by_metric.values()), {}))
+    normality = {}
+    any_nonnormal = False
+    any_small = False
+    min_p = 1.0
+    for metric, gv in group_values_by_metric.items():
+        for gname, vals in gv.items():
+            if len(vals) < 4:
+                any_small = True
+                normality[f'{metric} / {gname}'] = {'n': int(len(vals)), 'assessment': 'too few observations (n<4) for Shapiro-Wilk'}
+                continue
+            stat, p = shapiro(vals)
+            normality[f'{metric} / {gname}'] = {
+                'n': int(len(vals)), 'statistic': float(stat), 'pvalue': float(p),
+                'normal': bool(p > 0.05),
+            }
+            if p <= 0.05:
+                any_nonnormal = True
+                min_p = min(min_p, p)
+
+    # Levene across groups on the first metric (variance check for the t/ANOVA family)
+    levene_out = None
+    equal_var = False
+    if n_groups >= 2 and not any_nonnormal and group_values_by_metric:
+        first = next(iter(group_values_by_metric.values()))
+        try:
+            stat, p = levene(*first.values())
+            levene_out = {'statistic': float(stat), 'pvalue': float(p)}
+            equal_var = p > 0.05
+        except Exception as e:
+            logger.warning(f"Levene test failed: {e}")
+
+    if n_groups == 2:
+        if any_nonnormal:
+            method = 'wilcoxon_ranksum'
+            reason = (f'Two groups with non-normal distributions (Shapiro-Wilk p <= {min_p:.3g} '
+                      f'in at least one group/metric); the data are unpaired, so the '
+                      f'Wilcoxon rank-sum test (Mann-Whitney U) is recommended.')
+        elif any_small:
+            method = 'wilcoxon_ranksum'
+            reason = ('Two groups with too few observations for a normality check (n < 4 per '
+                      'group); the distribution-free Wilcoxon rank-sum test (Mann-Whitney U) '
+                      'is recommended.')
+        elif equal_var:
+            method = 't_equalvar'
+            reason = ('Two groups with approximately normal distributions (Shapiro-Wilk p > 0.05) '
+                      'and homogeneous variances (Levene p > 0.05); Student\'s t-test is recommended.')
+        else:
+            method = 't'
+            reason = ('Two groups with approximately normal distributions (Shapiro-Wilk p > 0.05) '
+                      'but unequal variances (Levene p <= 0.05); Welch\'s t-test is recommended.')
+    elif n_groups > 2:
+        if any_nonnormal or any_small:
+            method = 'kruskal'
+            reason = (f'{n_groups} groups with non-normal distributions '
+                      f'(Shapiro-Wilk p <= {min_p:.3g} where assessable); the non-parametric '
+                      f'Kruskal-Wallis test is recommended.')
+        else:
+            method = 'anova'
+            var_word = 'homogeneous variances (Levene p > 0.05)' if equal_var else 'unequal variances (Levene p <= 0.05)'
+            reason = (f'{n_groups} groups with approximately normal distributions (Shapiro-Wilk '
+                      f'p > 0.05) and {var_word}; one-way ANOVA is recommended.')
+    else:
+        return None, '', {'normality': normality}
+
+    diagnostics = {'n_groups': n_groups, 'normality': normality}
+    if levene_out is not None:
+        diagnostics['levene_variance_test'] = levene_out
+    if subject_column:
+        diagnostics['note'] = (f'subject_column={subject_column} supplied but paired variants '
+                               'are not auto-applied here; consider the paired differential module')
+    return method, reason, diagnostics
+
+
 def run_alpha_diversity(
     df: pd.DataFrame,
     metadata_df: Optional[pd.DataFrame] = None,
     parameters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Run alpha diversity analysis and return structured results."""
+    """Run alpha diversity analysis and return structured results.
+
+    Beyond per-index values and group statistics, the result carries a
+    ``method_recommendation`` (data-driven test choice with an English
+    rationale and its own per-index statistics) next to the statistics for
+    the test the user explicitly selected via ``test_method``.
+    """
     params = parameters or {}
     indices = params.get('indices', ['shannon', 'simpson', 'observed', 'chao1', 'pielou'])
 
@@ -1682,73 +1829,103 @@ def run_alpha_diversity(
     engine = AnalysisEngine()
     alpha_df = engine.alpha_diversity(df, metrics=indices)
 
-    results = {'sample_diversity': alpha_df.to_dict(orient='index')}
+    computed = [m for m in indices if m in alpha_df.columns]
+    results = {
+        'sample_diversity': alpha_df.to_dict(orient='index'),
+        # Row-oriented copy for the result-panel table (it renders arrays).
+        'data': [
+            {'sample': str(s), **{m: float(v) for m, v in row.items()}}
+            for s, row in alpha_df.to_dict(orient='index').items()
+        ],
+    }
 
-    # Group statistics
     group_column = params.get('group_column')
     if metadata_df is not None and group_column and group_column in metadata_df.columns:
         results['group_statistics'] = {}
         groups = metadata_df[group_column].dropna().unique()
 
-        for metric in indices:
-            if metric not in alpha_df.columns:
-                continue
+        group_values_by_metric = {
+            metric: _alpha_group_values(alpha_df, metadata_df, group_column, groups, metric)
+            for metric in computed
+        }
+
+        # Data-driven recommendation (structure: #groups, normality, variance).
+        rec_method, rec_reason, diagnostics = _alpha_recommend_test(
+            computed, group_values_by_metric, subject_column=params.get('subject_column')
+        )
+        if rec_method:
+            results['method_recommendation'] = {
+                'recommended_method': (
+                    {'wilcoxon_ranksum': 'Wilcoxon rank-sum test (Mann-Whitney U)',
+                     't': "Welch's t-test", 't_equalvar': "Student's t-test",
+                     'kruskal': 'Kruskal-Wallis test', 'anova': 'One-way ANOVA'}[rec_method]
+                ),
+                'reason': rec_reason,
+                'diagnostics': diagnostics,
+            }
+
+        # The user-selected test method (defaults to the recommended one).
+        selected = str(params.get('test_method') or '').strip().lower()
+        selected_key = _ALPHA_TEST_ALIASES.get(selected)
+        effective_key = selected_key or rec_method
+
+        results['statistics'] = {}
+        results['recommended_test_results'] = {}
+        for metric in computed:
+            gv = group_values_by_metric.get(metric) or {}
             group_stats = {}
-            for group in groups:
-                group_samples = metadata_df[metadata_df[group_column] == group].index.intersection(alpha_df.index)
-                if len(group_samples) > 0:
-                    vals = alpha_df.loc[group_samples, metric]
-                    group_stats[str(group)] = {
-                        'mean': float(vals.mean()),
-                        'median': float(vals.median()),
-                        'std': float(vals.std()),
-                        'min': float(vals.min()),
-                        'max': float(vals.max()),
-                        'n': int(len(vals)),
+            for gname, vals in gv.items():
+                group_stats[gname] = {
+                    'mean': float(vals.mean()), 'median': float(np.median(vals)),
+                    'std': float(vals.std(ddof=1)) if len(vals) > 1 else 0.0,
+                    'min': float(vals.min()), 'max': float(vals.max()),
+                    'n': int(len(vals)),
+                }
+
+            def _record(test_out):
+                if not test_out:
+                    return
+                name, stat, p = test_out
+                group_stats['statistical_test'] = {
+                    'test': name, 'statistic': stat, 'pvalue': p,
+                    'significant': bool(p < 0.05),
+                }
+
+            names = list(gv.keys())
+            if len(names) == 2:
+                _record(_alpha_two_group_test(gv[names[0]], gv[names[1]], effective_key))
+            elif len(names) > 2:
+                _record(_alpha_multi_group_test(gv, effective_key))
+
+            if 'statistical_test' in group_stats:
+                results['statistics'][f'{metric}_pvalue'] = group_stats['statistical_test']['pvalue']
+                results['statistics'][f'{metric}_test'] = group_stats['statistical_test']['test']
+
+            # The recommended method's own statistics, even when not selected.
+            if rec_method and rec_method != effective_key:
+                rec_out = None
+                if len(names) == 2:
+                    rec_out = _alpha_two_group_test(gv[names[0]], gv[names[1]], rec_method)
+                elif len(names) > 2:
+                    rec_out = _alpha_multi_group_test(gv, rec_method)
+                if rec_out:
+                    results['recommended_test_results'][metric] = {
+                        'test': rec_out[0], 'statistic': rec_out[1], 'pvalue': rec_out[2],
+                        'significant': bool(rec_out[2] < 0.05),
                     }
 
-            # Statistical test
-            if len(groups) == 2:
-                g1, g2 = groups
-                s1 = metadata_df[metadata_df[group_column] == g1].index.intersection(alpha_df.index)
-                s2 = metadata_df[metadata_df[group_column] == g2].index.intersection(alpha_df.index)
-                if len(s1) > 0 and len(s2) > 0:
-                    try:
-                        stat, pvalue = mannwhitneyu(
-                            alpha_df.loc[s1, metric].values,
-                            alpha_df.loc[s2, metric].values,
-                            alternative='two-sided',
-                        )
-                        group_stats['statistical_test'] = {
-                            'test': 'Mann-Whitney U',
-                            'statistic': float(stat),
-                            'pvalue': float(pvalue),
-                            'significant': bool(pvalue < 0.05),
-                        }
-                    except Exception as e:
-                        logger.warning(f"Statistical test failed: {e}")
-            elif len(groups) > 2:
-                group_values = [
-                    alpha_df.loc[
-                        metadata_df[metadata_df[group_column] == g].index.intersection(alpha_df.index),
-                        metric,
-                    ].values
-                    for g in groups
-                ]
-                group_values = [g for g in group_values if len(g) > 0]
-                if len(group_values) > 1:
-                    try:
-                        stat, pvalue = f_oneway(*group_values)
-                        group_stats['statistical_test'] = {
-                            'test': 'ANOVA (F-test)',
-                            'statistic': float(stat),
-                            'pvalue': float(pvalue),
-                            'significant': bool(pvalue < 0.05),
-                        }
-                    except Exception as e:
-                        logger.warning(f"ANOVA failed: {e}")
-
             results['group_statistics'][metric] = group_stats
+
+        if 'method_recommendation' in results:
+            results['method_recommendation']['selected_method'] = params.get('test_method') or 'auto (data-driven)'
+            results['method_recommendation']['matches_selection'] = (
+                selected_key is not None and selected_key == rec_method
+            ) or (selected_key is None and rec_method is not None)
+            results['method_recommendation']['effective_method'] = (
+                {'wilcoxon_ranksum': 'Wilcoxon rank-sum test (Mann-Whitney U)',
+                 't': "Welch's t-test", 't_equalvar': "Student's t-test",
+                 'kruskal': 'Kruskal-Wallis test', 'anova': 'One-way ANOVA'}.get(effective_key, effective_key)
+            )
 
     return results
 

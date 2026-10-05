@@ -411,12 +411,27 @@ const normalizeJobPayload = (payload: RawJobPayload): AnalysisJobResponse => {
     ? (rd.data as Record<string, string | number>[])
     : undefined;
 
+  // Alpha-diversity results carry a data-driven test recommendation (with
+  // its own statistics) alongside the user-selected method's results.
+  const recommendation = (
+    rd.method_recommendation && typeof rd.method_recommendation === "object"
+      ? rd.method_recommendation
+      : undefined
+  ) as AnalysisJobResponse["recommendation"];
+  const recommendedTestResults = (
+    rd.recommended_test_results && typeof rd.recommended_test_results === "object"
+      ? rd.recommended_test_results
+      : undefined
+  ) as AnalysisJobResponse["recommended_test_results"];
+
   return {
     success: true,
     job_id: String(payload.job_id ?? ""),
     plot_data: plot,
     statistics,
     data,
+    recommendation,
+    recommended_test_results: recommendedTestResults,
   };
 };
 

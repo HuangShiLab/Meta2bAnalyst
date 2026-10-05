@@ -712,6 +712,10 @@ async def analyze_alpha_diversity(
             parameters={
                 'indices': indices,
                 'group_column': request.group_column,
+                # Honour the user's test choice; run_alpha_diversity also
+                # computes a data-driven recommendation next to it.
+                'test_method': request.parameters.get('test_method'),
+                'subject_column': request.parameters.get('subject_column'),
             },
             status='pending',
             started_at=datetime.utcnow(),
@@ -731,6 +735,7 @@ async def analyze_alpha_diversity(
                 session_id=session_id,
                 metrics=indices,
                 grouping=request.group_column,
+                test_method=request.parameters.get('test_method'),
             )
 
         # Small dataset: synchronous execution
