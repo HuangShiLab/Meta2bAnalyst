@@ -104,6 +104,33 @@ const MICROBIOME_PIPELINES = [
   { id: "humann3", label: "HUMAnN3" },
 ];
 
+/** Per-pipeline example files (served from /examples/) — keeps the old
+ *  standalone Upload page's "Use Example Data" capability inside the shell. */
+const PIPELINE_EXAMPLES: Record<string, { name: string; type: DataType }[]> = {
+  "2brad-m": [
+    { name: "2brad_m_species.csv", type: "microbiome" },
+    { name: "metadata_gut.csv", type: "metadata" },
+    { name: "2brad_m_function.csv", type: "function" },
+  ],
+  qiime: [
+    { name: "qiime_feature_table.biom", type: "microbiome" },
+    { name: "qiime_metadata.csv", type: "metadata" },
+  ],
+  mothur: [
+    { name: "mothur_otu_table.shared", type: "microbiome" },
+    { name: "mothur_otu_taxonomy.taxonomy", type: "taxonomy" },
+    { name: "mothur_metadata.csv", type: "metadata" },
+  ],
+  metaphlan: [
+    { name: "metaphlan_abundance.tsv", type: "microbiome" },
+    { name: "metaphlan_metadata.tsv", type: "metadata" },
+  ],
+  humann3: [
+    { name: "humann3_pathabundance.tsv", type: "function" },
+    { name: "humann3_metadata.tsv", type: "metadata" },
+  ],
+};
+
 function requirementsMet(types: string[], requires: FileRequirement[]): boolean {
   return requires.filter((r) => r.required).every((r) => types.includes(r.type));
 }
@@ -165,6 +192,37 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: acceptExtensions });
+
+  /** Fetch the selected pipeline's example files from /examples/ and stage
+   *  them with their intended types (explicit, not filename-guessed). */
+  const [loadingExamples, setLoadingExamples] = useState(false);
+  const stagePipelineExamples = async () => {
+    const examples = PIPELINE_EXAMPLES[pipeline];
+    if (!examples) return;
+    setLoadingExamples(true);
+    setUploadError(null);
+    try {
+      const staged_new: StagedFile[] = [];
+      for (const ex of examples) {
+        const resp = await fetch(`/examples/${encodeURIComponent(ex.name)}`);
+        if (!resp.ok) throw new Error(`示例文件 ${ex.name} 加载失败 (HTTP ${resp.status})`);
+        const blob = await resp.blob();
+        staged_new.push({
+          id: `${ex.name}-${Math.random().toString(36).slice(2, 8)}`,
+          file: new File([blob], ex.name, { type: blob.type || "application/octet-stream" }),
+          type: ex.type,
+        });
+      }
+      // Make sure the example's types are selectable/visible in step ①.
+      setSelectedTypes((prev) => Array.from(new Set([...prev, ...examples.map((e) => e.type)])));
+      setStaged((prev) => [...prev, ...staged_new]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setUploadError(`示例文件载入失败：${message}`);
+    } finally {
+      setLoadingExamples(false);
+    }
+  };
 
   const stagedTypes = staged.map((s) => s.type as string);
   const stagedReady = staged.length > 0 && requirementsMet(stagedTypes, requires);
@@ -300,7 +358,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
         </div>
 
         {selectedTypes.includes("microbiome") && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">② 微生物组表来自哪个流程？</p>
             <Select value={pipeline} onValueChange={setPipeline}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -310,6 +368,18 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                 ))}
               </SelectContent>
             </Select>
+            {PIPELINE_EXAMPLES[pipeline] && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loadingExamples}
+                onClick={stagePipelineExamples}
+              >
+                {loadingExamples && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                载入该流程的示例文件
+              </Button>
+            )}
           </div>
         )}
 
