@@ -154,7 +154,22 @@ class TestStrainAPI:
         assert response.status_code == 404
 
     def test_strain_invalid_request(self, client, session_with_strain_data):
-        """Test strain endpoint with invalid request (missing species)."""
+        """Test strain endpoint with an invalid request.
+
+        `species` is optional since c74d781 (empty/"All Species" = no filter,
+        so that payload is now a valid 201); the schema still rejects unknown
+        analysis_type values, which is the genuinely invalid request here.
+        """
+        response = client.post(
+            f"/api/v1/sessions/{session_with_strain_data}/analyze/strain/composition",
+            json={
+                "analysis_type": "not_a_real_analysis",
+                "parameters": {},
+            },
+        )
+        assert response.status_code == 422
+
+        # And the formerly-invalid empty-species request is accepted now.
         response = client.post(
             f"/api/v1/sessions/{session_with_strain_data}/analyze/strain/composition",
             json={
@@ -162,5 +177,4 @@ class TestStrainAPI:
                 "parameters": {},
             },
         )
-        # Missing species is a 422 validation error from the StrainAnalysisRequest schema
-        assert response.status_code in (422, 500)
+        assert response.status_code in (200, 201)
