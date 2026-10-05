@@ -384,10 +384,13 @@ class DataParser:
             with open(file_path, 'r', encoding='utf-8') as f:
                 first_line = f.readline().strip()
 
+            # Uploads accept both TSV and CSV metadata; sep=None sniffs the
+            # delimiter (the old hard-coded '\t' silently turned comma files
+            # into whole-line indexes: 30 samples, 0 variables).
             if first_line.startswith('#NAME'):
                 df = pd.read_csv(
                     file_path,
-                    sep='\t',
+                    sep=None,
                     index_col=0,
                     header=0,
                     skiprows=1,
@@ -397,7 +400,7 @@ class DataParser:
             else:
                 df = pd.read_csv(
                     file_path,
-                    sep='\t',
+                    sep=None,
                     index_col=0,
                     header=0,
                     comment='#',
@@ -820,9 +823,12 @@ def parse_data_file(
         Tuple of (DataFrame, detected_format).
     """
     detected_format = file_type or detect_file_format(file_path)
-    # 'microbiome' / 'metabolome' are semantic upload labels, not parser formats.
-    # Auto-detect the actual file format so HUMAnN3 / MetaPhlAn headers are handled.
-    if detected_format in ('microbiome', 'metabolome'):
+    # 'microbiome' / 'metabolome' / 'function' / 'feature_table' / 'taxonomy'
+    # are semantic upload labels, not parser formats. Auto-detect the actual
+    # file format so HUMAnN3 / MetaPhlAn headers -- and, critically, the CSV
+    # vs TSV delimiter -- are handled (these labels used to fall into the
+    # tab-only fallback and parse comma files into nothing).
+    if detected_format in ('microbiome', 'metabolome', 'function', 'feature_table', 'taxonomy'):
         detected_format = detect_file_format(file_path)
     logger.info(f"Parsing file {file_path} as format: {detected_format}")
 
@@ -861,12 +867,16 @@ def parse_data_file(
         else:
             df = parser.parse_csv_tsv(str(file_path), sep='\t')
     else:
-        # Fallback: try as TSV
-        logger.warning(f"Unknown format '{detected_format}', attempting TSV parse")
+        # Fallback: sniff the delimiter instead of assuming TSV -- comma files
+        # parsed "successfully" into a single junk column under sep='\t'.
+        logger.warning(f"Unknown format '{detected_format}', attempting delimited parse")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            head = f.readline()
+        sniffed = ',' if head.count(',') > head.count('\t') else '\t'
         if use_chunks:
-            df = parser.parse_csv_tsv_chunked(str(file_path), sep='\t')
+            df = parser.parse_csv_tsv_chunked(str(file_path), sep=sniffed)
         else:
-            df = parser.parse_csv_tsv(str(file_path), sep='\t')
+            df = parser.parse_csv_tsv(str(file_path), sep=sniffed)
 
     logger.info(
         f"Parsed {file_path}: shape={df.shape}, features={len(df.index)}, "

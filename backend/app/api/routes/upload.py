@@ -30,6 +30,9 @@ _chunk_uploads: dict[str, dict] = {}
 
 FEATURE_TABLE_TYPES = (
     "feature_table", "biom", "shared", "microbiome", "metabolome", "metaphlan", "humann3",
+    # Function-gene tables are features x samples too; without orientation
+    # detection they can be stored transposed.
+    "function",
 )
 
 
