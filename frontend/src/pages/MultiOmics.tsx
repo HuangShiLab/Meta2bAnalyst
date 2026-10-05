@@ -377,9 +377,9 @@ export function MultiOmics() {
           upload UI (three UploadZones + example loader + session creation). */}
       <DataSourceSelector
         requires={[
-          { type: "microbiome", label: "微生物组丰度表", required: true, formats: [".csv", ".tsv", ".txt"] },
-          { type: "metabolome", label: "代谢组丰度表", required: true, formats: [".csv", ".tsv", ".txt"] },
-          { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv", ".txt"] },
+          { type: "microbiome", label: "Microbiome abundance table", required: true, formats: [".csv", ".tsv", ".txt"] },
+          { type: "metabolome", label: "Metabolome abundance table", required: true, formats: [".csv", ".tsv", ".txt"] },
+          { type: "metadata", label: "Grouping metadata", required: true, formats: [".csv", ".tsv", ".txt"] },
         ]}
         sessionId={sessionId}
         onSessionReady={() => setUploaded(true)}

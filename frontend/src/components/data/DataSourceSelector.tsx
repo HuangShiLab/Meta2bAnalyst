@@ -65,15 +65,15 @@ interface SessionFile {
 
 const DATA_TYPES: Record<DataType, { label: string; hint: string; formats: string[] }> = {
   microbiome: {
-    label: "微生物组丰度表",
-    hint: "属/种水平丰度表（各流程输出或通用表）",
+    label: "Microbiome abundance table",
+    hint: "genus/species-level table (any pipeline or generic)",
     formats: [".csv", ".tsv", ".txt", ".biom", ".shared"],
   },
-  metabolome: { label: "代谢组丰度表", hint: "代谢物 × 样本丰度矩阵", formats: [".csv", ".tsv", ".txt"] },
-  strain: { label: "菌株丰度表", hint: "Strain2bScan 输出 / Tag2bMap 映射", formats: [".csv", ".tsv"] },
-  function: { label: "功能基因表", hint: "功能基因丰度表", formats: [".csv", ".tsv"] },
-  metadata: { label: "分组元数据", hint: "样本 ID + 分组/表型变量", formats: [".csv", ".tsv", ".txt"] },
-  taxonomy: { label: "物种注释表", hint: "特征 → 分类层级注释", formats: [".csv", ".tsv"] },
+  metabolome: { label: "Metabolome abundance table", hint: "metabolites × samples matrix", formats: [".csv", ".tsv", ".txt"] },
+  strain: { label: "Strain abundance table", hint: "Strain2bScan output / Tag2bMap mapping", formats: [".csv", ".tsv"] },
+  function: { label: "Functional gene table", hint: "functional gene abundance table", formats: [".csv", ".tsv"] },
+  metadata: { label: "Grouping metadata", hint: "sample IDs + grouping/phenotype variables", formats: [".csv", ".tsv", ".txt"] },
+  taxonomy: { label: "Taxonomy table", hint: "feature → taxonomic annotation", formats: [".csv", ".tsv"] },
 };
 
 const TYPE_BADGE: Record<DataType, string> = {
@@ -98,7 +98,7 @@ function guessType(name: string): DataType | null {
 }
 
 const MICROBIOME_PIPELINES = [
-  { id: "generic", label: "通用 TSV/CSV" },
+  { id: "generic", label: "Generic TSV/CSV" },
   { id: "2brad-m", label: "2bRAD-M" },
   { id: "qiime", label: "QIIME 2 / BIOM" },
   { id: "mothur", label: "Mothur" },
@@ -164,7 +164,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
         const list = r.data?.sessions ?? r.data ?? [];
         setMySessions(Array.isArray(list) ? list : []);
       })
-      .catch(() => setMineError("会话列表加载失败"))
+      .catch(() => setMineError("Failed to load the dataset list"))
       .finally(() => setMineLoading(false));
   }, [token]);
 
@@ -183,7 +183,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       setSessionFiles(null);
       setSource("current");
     } catch {
-      setMineError("该数据集的文件信息读取失败");
+      setMineError("Failed to read this dataset's file details");
     }
   };
 
@@ -194,20 +194,20 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       await api.put(`/sessions/${sid}`, { name });
       setMySessions((prev) => (prev ?? []).map((s) => (s.id === sid ? { ...s, name } : s)));
     } catch {
-      setMineError("重命名失败");
+      setMineError("Rename failed");
     } finally {
       setRenamingId(null);
     }
   };
 
   const handleDelete = async (sid: string) => {
-    if (!window.confirm("删除该数据集？其中已上传的文件与分析结果会一并删除。")) return;
+    if (!window.confirm("Delete this dataset? Its uploaded files and analysis results will be removed as well.")) return;
     try {
       await api.delete(`/sessions/${sid}`);
       setMySessions((prev) => (prev ?? []).filter((s) => s.id !== sid));
       if (sessionId === sid) setStoreSessionId(null);
     } catch {
-      setMineError("删除失败（该会话可能正在被分析使用）");
+      setMineError("Delete failed (the session may be in use by a running analysis)");
     }
   };
 
@@ -278,7 +278,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       const staged_new: StagedFile[] = [];
       for (const ex of examples) {
         const resp = await fetch(`/examples/${encodeURIComponent(ex.name)}`);
-        if (!resp.ok) throw new Error(`示例文件 ${ex.name} 加载失败 (HTTP ${resp.status})`);
+        if (!resp.ok) throw new Error(`Example file ${ex.name} failed to load (HTTP ${resp.status})`);
         const blob = await resp.blob();
         staged_new.push({
           id: `${ex.name}-${Math.random().toString(36).slice(2, 8)}`,
@@ -291,7 +291,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       setStaged((prev) => [...prev, ...staged_new]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setUploadError(`示例文件载入失败：${message}`);
+      setUploadError(`Example files failed to load: ${message}`);
     } finally {
       setLoadingExamples(false);
     }
@@ -307,7 +307,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
     setUploadProgress({ done: 0, total: staged.length });
     try {
       const session = await createSession({
-        name: datasetName.trim() || `数据集 ${new Date().toLocaleString()}`,
+        name: datasetName.trim() || `Dataset ${new Date().toLocaleString()}`,
         data_format: pipeline === "generic" ? "tsv" : pipeline,
       });
       const uploaded: { name: string; type: string }[] = [];
@@ -323,13 +323,13 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       }
       setUploadProgress({ done: staged.length, total: staged.length });
       setStaged([]);
-      setMySessions(null);  // the new dataset must appear under 我的数据
+      setMySessions(null);  // the new dataset must appear under My Data
       setStoreSessionId(session.id);
       setSource("current");
       onSessionReady(session.id, uploaded);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setUploadError(`上传失败：${message}`);
+      setUploadError(`Upload failed: ${message}`);
     } finally {
       setUploading(false);
       setUploadProgress(null);
@@ -353,7 +353,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       onSessionReady(sid, dataset.files.map((f) => ({ name: f.name, type: f.fileType })));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setUploadError(`示例数据载入失败：${message}`);
+      setUploadError(`Example data failed to load: ${message}`);
     } finally {
       setDemoLoading(null);
       setDemoProgress(null);
@@ -366,20 +366,20 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
   const body = (
     <Tabs value={source} onValueChange={(v) => setSource(v as typeof source)}>
       <TabsList className="grid w-full grid-cols-4">
-        <TabsTrigger value="current" disabled={!sessionId}><FolderOpen className="mr-1 h-3.5 w-3.5" />当前会话</TabsTrigger>
-        <TabsTrigger value="upload"><UploadCloud className="mr-1 h-3.5 w-3.5" />现在上传</TabsTrigger>
-        <TabsTrigger value="demo"><FlaskConical className="mr-1 h-3.5 w-3.5" />示例数据</TabsTrigger>
-        <TabsTrigger value="mine" disabled={!token}><Database className="mr-1 h-3.5 w-3.5" />我的数据</TabsTrigger>
+        <TabsTrigger value="current" disabled={!sessionId}><FolderOpen className="mr-1 h-3.5 w-3.5" />Current Session</TabsTrigger>
+        <TabsTrigger value="upload"><UploadCloud className="mr-1 h-3.5 w-3.5" />Upload Now</TabsTrigger>
+        <TabsTrigger value="demo"><FlaskConical className="mr-1 h-3.5 w-3.5" />Example Data</TabsTrigger>
+        <TabsTrigger value="mine" disabled={!token}><Database className="mr-1 h-3.5 w-3.5" />My Data</TabsTrigger>
       </TabsList>
 
       {/* ── my data: previously uploaded datasets (sessions) ── */}
       <TabsContent value="mine" className="mt-3 space-y-3">
         {!token ? (
-          <p className="text-sm text-muted-foreground">请先登录后使用已上传的数据。</p>
+          <p className="text-sm text-muted-foreground">Sign in to reuse your uploaded data.</p>
         ) : mineLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />加载数据集列表…</div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading datasets…</div>
         ) : (mySessions ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">还没有已上传的数据集。切换到"现在上传"或"示例数据"创建一个。</p>
+          <p className="text-sm text-muted-foreground">No uploaded datasets yet — create one from Upload Now or Example Data.</p>
         ) : (
           <>
             {mineError && <p className="text-sm text-destructive">{mineError}</p>}
@@ -402,23 +402,23 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                     <>
                       <button
                         className="flex-1 truncate text-left hover:text-primary"
-                        title="使用该数据集"
+                        title="Use this dataset"
                         onClick={() => handleSelectMine(s.id)}
                       >
                         {s.name}
                         <span className="ml-2 text-xs text-muted-foreground">
-                          {s.file_count} 个文件 · {new Date(s.created_at).toLocaleString()}
+                          {s.file_count} files · {new Date(s.created_at).toLocaleString()}
                         </span>
                       </button>
-                      {sessionId === s.id && <Badge className="border-0 bg-teal-100 text-teal-800">当前</Badge>}
+                      {sessionId === s.id && <Badge className="border-0 bg-teal-100 text-teal-800">Current</Badge>}
                       <button
-                        title="重命名"
+                        title="Rename"
                         className="text-muted-foreground hover:text-primary"
                         onClick={() => { setRenamingId(s.id); setRenameValue(s.name); }}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
-                      <button title="删除" className="text-muted-foreground hover:text-destructive" onClick={() => handleDelete(s.id)}>
+                      <button title="Delete" className="text-muted-foreground hover:text-destructive" onClick={() => handleDelete(s.id)}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </>
@@ -426,7 +426,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground">点击数据集名称即可在当前模块中复用它，不会重复占用存储配额。</p>
+            <p className="text-xs text-muted-foreground">Click a dataset's name to reuse it in this module — no re-upload, no extra quota.</p>
           </>
         )}
       </TabsContent>
@@ -434,9 +434,9 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       {/* ── current session ── */}
       <TabsContent value="current" className="mt-3 space-y-3">
         {filesLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />读取会话文件…</div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading session files…</div>
         ) : (sessionFiles ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">当前会话还没有文件，请切换到"现在上传"或"示例数据"。</p>
+          <p className="text-sm text-muted-foreground">This session has no files yet — switch to Upload Now or Example Data.</p>
         ) : (
           <>
             <ul className="space-y-1.5">
@@ -446,7 +446,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                   <li key={f.file_id} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
                     <Badge className={cn("border-0", TYPE_BADGE[t] ?? "bg-slate-200")}>{DATA_TYPES[t]?.label ?? f.file_type}</Badge>
                     <span className="flex-1 truncate">{f.original_name}</span>
-                    {f.row_count != null && <span className="text-xs text-muted-foreground">{f.row_count} 行</span>}
+                    {f.row_count != null && <span className="text-xs text-muted-foreground">{f.row_count} rows</span>}
                   </li>
                 );
               })}
@@ -457,11 +457,11 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                 disabled={!currentReady}
                 onClick={() => sessionId && onSessionReady(sessionId, (sessionFiles ?? []).map((f) => ({ name: f.original_name, type: f.file_type })))}
               >
-                使用当前数据
+                Use Current Data
               </Button>
               {!currentReady && (
                 <p className="text-xs text-amber-700">
-                  缺少：{requires.filter((r) => r.required && !currentTypes.includes(r.type)).map((r) => DATA_TYPES[r.type].label).join("、")}
+                  Missing: {requires.filter((r) => r.required && !currentTypes.includes(r.type)).map((r) => DATA_TYPES[r.type].label).join(", ")}
                 </p>
               )}
             </div>
@@ -472,7 +472,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       {/* ── upload now: two-level selection ── */}
       <TabsContent value="upload" className="mt-3 space-y-4">
         <div>
-          <p className="mb-2 text-sm font-medium">① 这是什么数据？（决定文件标注，不再靠文件名猜）</p>
+          <p className="mb-2 text-sm font-medium">① What kind of data is this? (sets the type label — no filename guessing)</p>
           <div className="flex flex-wrap gap-3">
             {(Object.keys(DATA_TYPES) as DataType[]).map((t) => (
               <label key={t} className="flex items-start gap-1.5 rounded-md border px-2.5 py-1.5 text-sm">
@@ -493,7 +493,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
 
         {selectedTypes.includes("microbiome") && (
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium">② 微生物组表来自哪个流程？</p>
+            <p className="text-sm font-medium">② Which pipeline is the microbiome table from?</p>
             <Select value={pipeline} onValueChange={setPipeline}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -511,7 +511,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
                 onClick={stagePipelineExamples}
               >
                 {loadingExamples && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
-                载入该流程的示例文件
+                Load example files for this pipeline
               </Button>
             )}
           </div>
@@ -526,18 +526,18 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
         >
           <input {...getInputProps()} />
           <UploadCloud className="h-6 w-6 text-muted-foreground" />
-          <p className="text-sm">拖入文件，或点击选择</p>
+          <p className="text-sm">Drop files here, or click to select</p>
           <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <span className="text-xs text-muted-foreground">数据集名称</span>
+            <span className="text-xs text-muted-foreground">Dataset name</span>
             <Input
               value={datasetName}
               onChange={(e) => setDatasetName(e.target.value)}
-              placeholder={`数据集 ${new Date().toLocaleString()}`}
+              placeholder={`Dataset ${new Date().toLocaleString()}`}
               className="h-7 w-64"
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            接受：{selectedTypes.map((t) => DATA_TYPES[t].label).join(" + ")}
+            Accepting: {selectedTypes.map((t) => DATA_TYPES[t].label).join(" + ")}
           </p>
         </div>
 
@@ -572,17 +572,17 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
         {uploadProgress && (
           <div className="space-y-1">
             <Progress value={(uploadProgress.done / Math.max(uploadProgress.total, 1)) * 100} />
-            <p className="text-xs text-muted-foreground">上传中 {uploadProgress.done}/{uploadProgress.total}…</p>
+            <p className="text-xs text-muted-foreground">Uploading {uploadProgress.done}/{uploadProgress.total}…</p>
           </div>
         )}
 
         <div className="flex items-center gap-3">
           <Button size="sm" disabled={!stagedReady || uploading} onClick={handleUpload}>
             {uploading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
-            上传并使用
+            Upload & Use
           </Button>
           {staged.length > 0 && !stagedReady && missingTypes.length > 0 && (
-            <p className="text-xs text-amber-700">还需要：{missingTypes.join("、")}</p>
+            <p className="text-xs text-amber-700">Still needed: {missingTypes.join(", ")}</p>
           )}
         </div>
       </TabsContent>
@@ -602,11 +602,11 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
             >
               <p className="text-sm font-medium">{d.label}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">{d.description}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{d.files.length} 个文件 · 一键载入</p>
+              <p className="mt-1 text-xs text-muted-foreground">{d.files.length} files · one click</p>
               {demoLoading === d.id && demoProgress && (
                 <div className="mt-2 space-y-1">
                   <Progress value={(demoProgress.done / Math.max(demoProgress.total, 1)) * 100} />
-                  <p className="text-xs text-muted-foreground">载入 {demoProgress.done}/{demoProgress.total}…</p>
+                  <p className="text-xs text-muted-foreground">Loading {demoProgress.done}/{demoProgress.total}…</p>
                 </div>
               )}
             </button>
@@ -621,7 +621,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">数据来源</CardTitle>
+        <CardTitle className="text-base">Data Source</CardTitle>
       </CardHeader>
       <CardContent>{body}</CardContent>
     </Card>

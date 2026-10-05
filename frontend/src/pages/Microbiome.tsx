@@ -752,8 +752,8 @@ export function Microbiome() {
       <div>
         <DataSourceSelector
           requires={[
-            { type: "microbiome", label: "微生物组丰度表", required: true, formats: [".csv", ".tsv", ".txt", ".biom", ".shared"] },
-            { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv", ".txt"] },
+            { type: "microbiome", label: "Microbiome abundance table", required: true, formats: [".csv", ".tsv", ".txt", ".biom", ".shared"] },
+            { type: "metadata", label: "Grouping metadata", required: true, formats: [".csv", ".tsv", ".txt"] },
           ]}
           sessionId={hasSession ? sessionId : null}
           onSessionReady={(sid) => sessionStore.setSessionId(sid)}

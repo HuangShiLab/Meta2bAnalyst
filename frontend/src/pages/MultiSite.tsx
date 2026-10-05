@@ -410,8 +410,8 @@ export function MultiSite() {
       <div>
         <DataSourceSelector
           requires={[
-            { type: "microbiome", label: "微生物组丰度表（各站点）", required: true, formats: [".csv", ".tsv", ".txt"] },
-            { type: "metadata", label: "分组元数据（各站点）", required: true, formats: [".csv", ".tsv", ".txt"] },
+            { type: "microbiome", label: "Microbiome abundance table (per site)", required: true, formats: [".csv", ".tsv", ".txt"] },
+            { type: "metadata", label: "Grouping metadata (per site)", required: true, formats: [".csv", ".tsv", ".txt"] },
           ]}
           sessionId={hasSession ? sessionId : null}
           onSessionReady={(sid) => sessionStore.setSessionId(sid)}

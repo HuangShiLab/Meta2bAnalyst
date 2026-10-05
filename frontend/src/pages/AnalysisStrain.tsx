@@ -376,8 +376,8 @@ export function AnalysisStrain() {
           depended on files uploaded through the standalone Upload page. */}
       <DataSourceSelector
         requires={[
-          { type: "strain", label: "菌株丰度表（Strain2bScan / Tag2bMap 输出）", required: true, formats: [".csv", ".tsv"] },
-          { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv"] },
+          { type: "strain", label: "Strain abundance table (Strain2bScan / Tag2bMap output)", required: true, formats: [".csv", ".tsv"] },
+          { type: "metadata", label: "Grouping metadata", required: true, formats: [".csv", ".tsv"] },
         ]}
         sessionId={hasSession ? sessionId : null}
         onSessionReady={(sid) => sessionStore.setSessionId(sid)}

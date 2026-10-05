@@ -5,8 +5,8 @@
  * classification, session creation), which drifted from every other page's
  * wiring. The old six-format selection now lives inside the selector as the
  * microbiome pipeline level, and per-pipeline example files are staged from
- * the selector's "载入该流程的示例文件" button. See
- * docs/data-source-selector-design.md step "Upload 页换壳".
+ * the selector's "Load example files for this pipeline" button. See
+ * docs/data-source-selector-design.md step "Upload page shell".
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -20,19 +20,19 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
 
 const TYPE_LABELS: Record<DataType, string> = {
-  microbiome: "微生物组表",
-  metabolome: "代谢组表",
-  strain: "菌株表",
-  function: "功能基因表",
-  metadata: "元数据",
-  taxonomy: "物种注释",
+  microbiome: "Microbiome table",
+  metabolome: "Metabolome table",
+  strain: "Strain table",
+  function: "Functional gene table",
+  metadata: "Metadata",
+  taxonomy: "Taxonomy",
 };
 
 /** Nothing is forced here — the shell accepts any combination. The two most
  *  common types are pre-selected so a bare drop works out of the box. */
 const OPEN_REQUIREMENTS = [
-  { type: "microbiome" as DataType, label: "微生物组丰度表", required: false },
-  { type: "metadata" as DataType, label: "分组元数据", required: false },
+  { type: "microbiome" as DataType, label: "Microbiome abundance table", required: false },
+  { type: "metadata" as DataType, label: "Grouping metadata", required: false },
 ];
 
 export function UploadPage() {
@@ -45,7 +45,7 @@ export function UploadPage() {
       <div>
         <h1 data-testid="upload-title" className="text-2xl font-bold tracking-tight">Data Upload</h1>
         <p data-testid="upload-desc" className="text-muted-foreground">
-          先选择数据类型，再上传文件——每个文件都会明确标注用途
+          Pick the data type first, then upload — every file gets an explicit type label
         </p>
       </div>
 
@@ -75,7 +75,7 @@ export function UploadPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-lg">
               <CheckCircle className="h-5 w-5 text-green-600" />
-              数据已就绪
+              Data Ready
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -89,18 +89,18 @@ export function UploadPage() {
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground">会话 ID：{ready.sid}</p>
+            <p className="text-xs text-muted-foreground">Session ID: {ready.sid}</p>
             <div className="flex flex-wrap gap-2">
               <Button asChild size="sm">
                 <Link to="/microbiome">
-                  微生物组分析 <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                  Microbiome Analysis <ArrowRight className="ml-1 h-3.5 w-3.5" />
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline">
-                <Link to="/strain">菌株分析</Link>
+                <Link to="/strain">Strain Analysis</Link>
               </Button>
               <Button asChild size="sm" variant="outline">
-                <Link to="/inspect">数据检查</Link>
+                <Link to="/inspect">Data Inspection</Link>
               </Button>
             </div>
           </CardContent>
