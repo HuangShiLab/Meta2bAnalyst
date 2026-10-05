@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useRequiredSession } from "@/hooks/useRequiredSession";
 import { useMetadataColumns } from "@/hooks/useMetadataColumns";
 import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { DataSourceSelector } from "@/components/data/DataSourceSelector";
 import { StatusAlert } from "@/components/shared/StatusAlert";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV } from "@/utils/api";
@@ -363,7 +364,6 @@ export function AnalysisStrain() {
 
   return (
     <div className={cn("space-y-6")}>
-      {!hasSession && <NoSessionBanner />}
       {analysisError && <StatusAlert status="error" title="Analysis failed" description={analysisError} />}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Strain Analysis ⭐</h1>
@@ -371,6 +371,18 @@ export function AnalysisStrain() {
           Perform strain-level statistical analysis — core feature of Meta2bAnalyst
         </p>
       </div>
+
+      {/* Shared data entry: this page used to have no upload path at all and
+          depended on files uploaded through the standalone Upload page. */}
+      <DataSourceSelector
+        requires={[
+          { type: "strain", label: "菌株丰度表（Strain2bScan / Tag2bMap 输出）", required: true, formats: [".csv", ".tsv"] },
+          { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv"] },
+        ]}
+        sessionId={hasSession ? sessionId : null}
+        onSessionReady={(sid) => sessionStore.setSessionId(sid)}
+      />
+      {!hasSession && <NoSessionBanner />}
 
       <Card>
         <CardContent className="p-4">
