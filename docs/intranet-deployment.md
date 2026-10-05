@@ -8,15 +8,15 @@
 
 | 客户端连接方式 | 使用地址 | 说明 |
 |---|---|---|
-| 插网线（10.64.168.x/24） | `http://10.64.168.109` | 服务器有线 IP，80 端口免输端口号 |
-| 连 Wi-Fi（10.69.x.x/16） | `http://10.69.179.97` | 服务器 Wi-Fi IP，与上有线地址等价 |
+| 插网线（10.64.168.x/24） | `http://10.64.168.98` | 服务器有线 IP，80 端口免输端口号 |
+| 连 Wi-Fi（10.69.x.x/16） | `http://10.69.131.182` | 服务器 Wi-Fi IP，与上有线地址等价 |
 
 - 两地址都可加 `:8080` 端口，效果相同。
-- ⚠ IP 随连接方式和 DHCP 变化：有线曾为 `10.64.168.107`，Wi-Fi 期间为 `10.69.108.140`/`10.69.59.174`，现为 `10.64.168.109` + `10.69.179.97`——同一路由也不保证拿回原 IP。分发地址前先在服务器上 `ifconfig | grep "inet 10\."` 确认当前 IP。
+- ⚠ IP 随连接方式和 DHCP 变化：有线曾为 `10.64.168.107`，Wi-Fi 期间为 `10.69.108.140`/`10.69.59.174`，现为 `10.64.168.98` + `10.69.131.182`——同一路由也不保证拿回原 IP。分发地址前先在服务器上 `ifconfig | grep "inet 10\."` 确认当前 IP。
 - 客户端无法访问时的快速排查：① 确认客户端自己 IP 与上表同一网段；② `ping <服务器IP>` 通不通；③ 浏览器代理可能拦截 10.x 内网地址——在系统/浏览器代理设置的"例外/绕过列表"加入 `10.*` 或临时关闭代理测试。
 - ⚠ `http://MacStudio.local:8080`（mDNS 域名）**在本内网不可用**：实测客户端报 `DNS_PROBE_FINISHED_NXDOMAIN`，该内网不转发 mDNS 组播（UDP 5353），`.local` 后缀也无法写入普通 DNS，不要分发这个地址。
-- IP 由 DHCP 分配，可能变化：在路由器上为这台 Mac Studio 保留 IP（DHCP reservation）后，`10.64.168.109` 即长期稳定。
-- 若需要正式域名：让网管在内网 DNS 服务器上加一条 A 记录（如 `meta2b.yourlab.cn → 10.64.168.109`），之后所有系统都能用该域名访问，无需改任何服务配置。
+- IP 由 DHCP 分配，可能变化：在路由器上为这台 Mac Studio 保留 IP（DHCP reservation）后，`10.64.168.98` 即长期稳定。
+- 若需要正式域名：让网管在内网 DNS 服务器上加一条 A 记录（如 `meta2b.yourlab.cn → 10.64.168.98`），之后所有系统都能用该域名访问，无需改任何服务配置。
 
 ## 服务器端操作（在这台 Mac Studio 上）
 
@@ -85,7 +85,7 @@ docker tag  docker.m.daocloud.io/bioconductor/bioconductor_docker:RELEASE_3_20 \
 
 | 现象 | 检查 |
 |---|---|
-| 别人打不开网页 | 本机 `curl http://10.64.168.109:8080/` 是否 200；macOS 防火墙（系统设置 → 网络 → 防火墙，当前为关闭）；是否换了网络段 |
+| 别人打不开网页 | 本机 `curl http://10.64.168.98:8080/` 是否 200；macOS 防火墙（系统设置 → 网络 → 防火墙，当前为关闭）；是否换了网络段 |
 | 网页开但登录不了 | `docker compose -f docker/docker-compose.yml logs backend` 看报错；确认 `.env` 里 `AUTH_SECRET` 存在 |
-| Demo 数据载入失败 | `curl http://10.64.168.109:8080/examples/demo/microbiome/Matched_metadata_261.tsv` 应返回 TSV 而非 HTML |
+| Demo 数据载入失败 | `curl http://10.64.168.98:8080/examples/demo/microbiome/Matched_metadata_261.tsv` 应返回 TSV 而非 HTML |
 | 分析一直排队不跑 | worker 容器是否 healthy（`docker compose ... ps`），它负责异步分析任务 |
