@@ -6,11 +6,11 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
-import { UploadZone } from "@/components/shared/UploadZone";
 import { PlotlyChart } from "@/components/shared/PlotlyChart";
 import { useSessionStore } from "@/stores/sessionStore";
+import { DataSourceSelector } from "@/components/data/DataSourceSelector";
 import { useSectionAnalysis } from "@/hooks/useAnalysis";
-import { downloadFigure, downloadCSV, downloadPDF, createSession, uploadFile } from "@/utils/api";
+import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
 import type { PlotlyFigure } from "@/types";
 import {
   Layers,
@@ -181,10 +181,7 @@ export function MultiOmics() {
     setCurrentStep("multi-omics");
   }, [setCurrentStep]);
 
-  // Upload state
-  const [microbiomeFile, setMicrobiomeFile] = useState<File | null>(null);
-  const [metabolomeFile, setMetabolomeFile] = useState<File | null>(null);
-  const [metadataFile, setMetadataFile] = useState<File | null>(null);
+  // Data readiness flips when the shared selector provides a session
   const [uploaded, setUploaded] = useState(false);
 
   // Tab state
@@ -213,57 +210,6 @@ export function MultiOmics() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-
-  const handleUpload = useCallback(async () => {
-    // Metadata is required: grouping, ordination coloring and every
-    // group-wise statistic downstream depend on it.
-    if (!microbiomeFile || !metabolomeFile || !metadataFile) return;
-    setIsUploading(true);
-    setUploadError(null);
-    try {
-      const session = await createSession({
-        name: "Multi-omics analysis",
-        data_format: "tsv",
-        description: "Created from MultiOmics page",
-      });
-      const sid = session.id;
-      await uploadFile(sid, microbiomeFile, "microbiome");
-      await uploadFile(sid, metabolomeFile, "metabolome");
-      await uploadFile(sid, metadataFile, "metadata");
-      sessionStore.setSessionId(sid);
-      setUploaded(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed";
-      setUploadError(message);
-    } finally {
-      setIsUploading(false);
-    }
-  }, [microbiomeFile, metabolomeFile, metadataFile, sessionStore]);
-
-  const [isLoadingExample, setIsLoadingExample] = useState(false);
-
-  const loadExampleData = useCallback(async () => {
-    setIsLoadingExample(true);
-    setUploadError(null);
-    try {
-      const fetchFile = async (name: string, type: string) => {
-        const response = await fetch(`/examples/demo/multi-omics/${name}`);
-        if (!response.ok) throw new Error(`Failed to load ${name}`);
-        const blob = await response.blob();
-        return new File([blob], name, { type });
-      };
-      // Huang mBio 2021 demo set: sample IDs verified consistent across all
-      // three files (261 samples).
-      setMicrobiomeFile(await fetchFile("Matched_microbes_abd_261.tsv", "text/tab-separated-values"));
-      setMetabolomeFile(await fetchFile("Matched_metabolites_abd_261.txt", "text/tab-separated-values"));
-      setMetadataFile(await fetchFile("Matched_metadata_261.tsv", "text/tab-separated-values"));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load example data";
-      setUploadError(message);
-    } finally {
-      setIsLoadingExample(false);
-    }
-  }, []);
 
   const runWithHistory = useCallback(async (
     key: string,
@@ -406,7 +352,6 @@ export function MultiOmics() {
 
   const metadataColumns = ["Visit", "Plaque", "Subject", "Bleeding"];
   const referenceGroups = ["T1", "T4", "T5", "T6", "T7", "T8", "T9"];
-  const acceptTypes = { "text/tab-separated-values": [".tsv"], "text/csv": [".csv"], "text/plain": [".txt"] };
 
   const sectionProps = (key: string) => ({
     plotData: results[key]?.plot_data,
@@ -428,104 +373,27 @@ export function MultiOmics() {
         </p>
       </div>
 
-      {/* Upload Section */}
-      {!uploaded ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload Multi-omics Data</CardTitle>
-            <CardDescription>
-              Upload paired microbiome (species/genus table), metabolome (intensity matrix), and metadata files — all three are required
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Dna className="h-4 w-4 text-primary" />
-                  <Label className="font-medium">Microbiome Data</Label>
-                </div>
-                <UploadZone
-                  accept={acceptTypes}
-                  file={microbiomeFile}
-                  onUpload={(files: File[]) => setMicrobiomeFile(files[0] || null)}
-                />
-                <p className="text-xs text-muted-foreground">Samples × features (TSV/CSV)</p>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <FlaskConical className="h-4 w-4 text-primary" />
-                  <Label className="font-medium">Metabolome Data</Label>
-                </div>
-                <UploadZone
-                  accept={acceptTypes}
-                  file={metabolomeFile}
-                  onUpload={(files: File[]) => setMetabolomeFile(files[0] || null)}
-                />
-                <p className="text-xs text-muted-foreground">Samples × metabolites (TSV/CSV)</p>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-primary" />
-                  <Label className="font-medium">Metadata</Label>
-                  <span className="text-xs text-destructive">*required</span>
-                </div>
-                <UploadZone
-                  accept={acceptTypes}
-                  file={metadataFile}
-                  onUpload={(files: File[]) => setMetadataFile(files[0] || null)}
-                />
-                <p className="text-xs text-muted-foreground">Sample × variables (TSV/CSV)</p>
-              </div>
-            </div>
-            {uploadError && (
-              <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-                Upload error: {uploadError}
-              </div>
-            )}
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={loadExampleData}
-                disabled={isUploading || isLoadingExample}
-                className="flex-1 gap-2"
-              >
-                {isLoadingExample ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                {isLoadingExample ? "Loading..." : "Load Example Data"}
-              </Button>
-              <Button
-                onClick={handleUpload}
-                disabled={!microbiomeFile || !metabolomeFile || !metadataFile || isUploading}
-                className="flex-[2] gap-2"
-              >
-                {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                {isUploading ? "Uploading..." : "Start Multi-omics Analysis"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
+      {/* Data entry: shared DataSourceSelector replaces the page-private
+          upload UI (three UploadZones + example loader + session creation). */}
+      <DataSourceSelector
+        requires={[
+          { type: "microbiome", label: "微生物组丰度表", required: true, formats: [".csv", ".tsv", ".txt"] },
+          { type: "metabolome", label: "代谢组丰度表", required: true, formats: [".csv", ".tsv", ".txt"] },
+          { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv", ".txt"] },
+        ]}
+        sessionId={sessionId}
+        onSessionReady={() => setUploaded(true)}
+      />
+      {uploaded && (
         <>
+
           <div className="flex items-center gap-4 p-3 bg-green-50 rounded-lg">
             <Dna className="h-5 w-5 text-green-600" />
             <span className="text-sm text-green-700">
-              <strong>Microbiome:</strong> {microbiomeFile?.name} ({microbiomeFile ? (microbiomeFile.size / 1024).toFixed(1) : 0} KB)
+              Data ready — microbiome + metabolome + metadata loaded in the current session
             </span>
-            <span className="text-green-400">|</span>
-            <FlaskConical className="h-5 w-5 text-green-600" />
-            <span className="text-sm text-green-700">
-              <strong>Metabolome:</strong> {metabolomeFile?.name} ({metabolomeFile ? (metabolomeFile.size / 1024).toFixed(1) : 0} KB)
-            </span>
-            {metadataFile && (
-              <>
-                <span className="text-green-400">|</span>
-                <FileText className="h-5 w-5 text-green-600" />
-                <span className="text-sm text-green-700">
-                  <strong>Metadata:</strong> {metadataFile.name}
-                </span>
-              </>
-            )}
             <Button variant="ghost" size="sm" onClick={() => setUploaded(false)} className="ml-auto">
-              Re-upload
+              Change Data
             </Button>
           </div>
 

@@ -22,8 +22,10 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, UploadCloud, Database, FlaskConical, FolderOpen, X } from "lucide-react";
+import { Loader2, UploadCloud, Database, FlaskConical, FolderOpen, X, Pencil, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { api, createSession, uploadFile } from "@/utils/api";
+import { useAuthStore } from "@/stores/authStore";
 import { DEMO_DATASETS, loadDemoDataset, type DemoDataset } from "@/lib/demoDatasets";
 import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
@@ -137,7 +139,77 @@ function requirementsMet(types: string[], requires: FileRequirement[]): boolean 
 
 export function DataSourceSelector({ requires, sessionId, onSessionReady, variant = "panel" }: DataSourceSelectorProps) {
   const setStoreSessionId = useSessionStore((s) => s.setSessionId);
-  const [source, setSource] = useState<"current" | "upload" | "demo">(sessionId ? "current" : "upload");
+  const token = useAuthStore((s) => s.token);
+  const [source, setSource] = useState<"current" | "upload" | "demo" | "mine">(sessionId ? "current" : "upload");
+
+  // ── my data (previous sessions) ─────────────────────────────────────────
+  interface SessionSummary {
+    id: string;
+    name: string;
+    created_at: string;
+    file_count: number;
+  }
+  const [mySessions, setMySessions] = useState<SessionSummary[] | null>(null);
+  const [mineLoading, setMineLoading] = useState(false);
+  const [mineError, setMineError] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const refreshMySessions = useCallback(() => {
+    if (!token) return;
+    setMineLoading(true);
+    api
+      .get("/sessions")
+      .then((r) => {
+        const list = r.data?.sessions ?? r.data ?? [];
+        setMySessions(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setMineError("会话列表加载失败"))
+      .finally(() => setMineLoading(false));
+  }, [token]);
+
+  useEffect(() => {
+    if (source === "mine" && mySessions === null && !mineLoading) refreshMySessions();
+  }, [source, mySessions, mineLoading, refreshMySessions]);
+
+  const handleSelectMine = async (sid: string) => {
+    try {
+      const r = await api.get(`/sessions/${sid}/files`);
+      const files: { name: string; type: string }[] = (r.data?.files ?? []).map(
+        (f: { original_name: string; file_type: string }) => ({ name: f.original_name, type: f.file_type })
+      );
+      setStoreSessionId(sid);
+      onSessionReady(sid, files);
+      setSessionFiles(null);
+      setSource("current");
+    } catch {
+      setMineError("该数据集的文件信息读取失败");
+    }
+  };
+
+  const handleRename = async (sid: string) => {
+    const name = renameValue.trim();
+    if (!name) { setRenamingId(null); return; }
+    try {
+      await api.put(`/sessions/${sid}`, { name });
+      setMySessions((prev) => (prev ?? []).map((s) => (s.id === sid ? { ...s, name } : s)));
+    } catch {
+      setMineError("重命名失败");
+    } finally {
+      setRenamingId(null);
+    }
+  };
+
+  const handleDelete = async (sid: string) => {
+    if (!window.confirm("删除该数据集？其中已上传的文件与分析结果会一并删除。")) return;
+    try {
+      await api.delete(`/sessions/${sid}`);
+      setMySessions((prev) => (prev ?? []).filter((s) => s.id !== sid));
+      if (sessionId === sid) setStoreSessionId(null);
+    } catch {
+      setMineError("删除失败（该会话可能正在被分析使用）");
+    }
+  };
 
   // ── current-session listing ─────────────────────────────────────────────
   const [sessionFiles, setSessionFiles] = useState<SessionFile[] | null>(null);
@@ -163,6 +235,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
   const [selectedTypes, setSelectedTypes] = useState<DataType[]>(defaultTypes);
   const [pipeline, setPipeline] = useState("generic");
   const [staged, setStaged] = useState<StagedFile[]>([]);
+  const [datasetName, setDatasetName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
@@ -234,7 +307,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
     setUploadProgress({ done: 0, total: staged.length });
     try {
       const session = await createSession({
-        name: `Data ${new Date().toLocaleString()}`,
+        name: datasetName.trim() || `数据集 ${new Date().toLocaleString()}`,
         data_format: pipeline === "generic" ? "tsv" : pipeline,
       });
       const uploaded: { name: string; type: string }[] = [];
@@ -250,6 +323,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       }
       setUploadProgress({ done: staged.length, total: staged.length });
       setStaged([]);
+      setMySessions(null);  // the new dataset must appear under 我的数据
       setStoreSessionId(session.id);
       setSource("current");
       onSessionReady(session.id, uploaded);
@@ -273,6 +347,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
       const sid = await loadDemoDataset(dataset, (done, total, currentFile) =>
         setDemoProgress({ done, total, current: currentFile })
       );
+      setMySessions(null);
       setStoreSessionId(sid);
       setSource("current");
       onSessionReady(sid, dataset.files.map((f) => ({ name: f.name, type: f.fileType })));
@@ -294,8 +369,67 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
         <TabsTrigger value="current" disabled={!sessionId}><FolderOpen className="mr-1 h-3.5 w-3.5" />当前会话</TabsTrigger>
         <TabsTrigger value="upload"><UploadCloud className="mr-1 h-3.5 w-3.5" />现在上传</TabsTrigger>
         <TabsTrigger value="demo"><FlaskConical className="mr-1 h-3.5 w-3.5" />示例数据</TabsTrigger>
-        <TabsTrigger value="library" disabled title="二期上线"><Database className="mr-1 h-3.5 w-3.5" />我的数据</TabsTrigger>
+        <TabsTrigger value="mine" disabled={!token}><Database className="mr-1 h-3.5 w-3.5" />我的数据</TabsTrigger>
       </TabsList>
+
+      {/* ── my data: previously uploaded datasets (sessions) ── */}
+      <TabsContent value="mine" className="mt-3 space-y-3">
+        {!token ? (
+          <p className="text-sm text-muted-foreground">请先登录后使用已上传的数据。</p>
+        ) : mineLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />加载数据集列表…</div>
+        ) : (mySessions ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">还没有已上传的数据集。切换到"现在上传"或"示例数据"创建一个。</p>
+        ) : (
+          <>
+            {mineError && <p className="text-sm text-destructive">{mineError}</p>}
+            <ul className="space-y-1.5">
+              {(mySessions ?? []).map((s) => (
+                <li key={s.id} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
+                  {renamingId === s.id ? (
+                    <Input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRename(s.id);
+                        if (e.key === "Escape") setRenamingId(null);
+                      }}
+                      onBlur={() => handleRename(s.id)}
+                      className="h-7 flex-1"
+                    />
+                  ) : (
+                    <>
+                      <button
+                        className="flex-1 truncate text-left hover:text-primary"
+                        title="使用该数据集"
+                        onClick={() => handleSelectMine(s.id)}
+                      >
+                        {s.name}
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {s.file_count} 个文件 · {new Date(s.created_at).toLocaleString()}
+                        </span>
+                      </button>
+                      {sessionId === s.id && <Badge className="border-0 bg-teal-100 text-teal-800">当前</Badge>}
+                      <button
+                        title="重命名"
+                        className="text-muted-foreground hover:text-primary"
+                        onClick={() => { setRenamingId(s.id); setRenameValue(s.name); }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button title="删除" className="text-muted-foreground hover:text-destructive" onClick={() => handleDelete(s.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">点击数据集名称即可在当前模块中复用它，不会重复占用存储配额。</p>
+          </>
+        )}
+      </TabsContent>
 
       {/* ── current session ── */}
       <TabsContent value="current" className="mt-3 space-y-3">
@@ -393,6 +527,15 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
           <input {...getInputProps()} />
           <UploadCloud className="h-6 w-6 text-muted-foreground" />
           <p className="text-sm">拖入文件，或点击选择</p>
+          <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <span className="text-xs text-muted-foreground">数据集名称</span>
+            <Input
+              value={datasetName}
+              onChange={(e) => setDatasetName(e.target.value)}
+              placeholder={`数据集 ${new Date().toLocaleString()}`}
+              className="h-7 w-64"
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
             接受：{selectedTypes.map((t) => DATA_TYPES[t].label).join(" + ")}
           </p>

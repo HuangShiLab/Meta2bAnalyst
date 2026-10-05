@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useRequiredSession } from "@/hooks/useRequiredSession";
 import { useMetadataColumns } from "@/hooks/useMetadataColumns";
 import { NoSessionBanner } from "@/components/shared/NoSessionBanner";
+import { DataSourceSelector } from "@/components/data/DataSourceSelector";
 import { StatusAlert } from "@/components/shared/StatusAlert";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { downloadFigure, downloadCSV, downloadPDF } from "@/utils/api";
@@ -749,6 +750,15 @@ export function Microbiome() {
         <StatusAlert status="error" title="Analysis failed" description={analysisError} />
       )}
       <div>
+        <DataSourceSelector
+          requires={[
+            { type: "microbiome", label: "微生物组丰度表", required: true, formats: [".csv", ".tsv", ".txt", ".biom", ".shared"] },
+            { type: "metadata", label: "分组元数据", required: true, formats: [".csv", ".tsv", ".txt"] },
+          ]}
+          sessionId={hasSession ? sessionId : null}
+          onSessionReady={(sid) => sessionStore.setSessionId(sid)}
+        />
+
         <h1 data-testid="analysis-title" className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Dna className="h-6 w-6" /> Microbiome Analysis
         </h1>
