@@ -2002,6 +2002,34 @@ def run_beta_diversity(
                 }
         results['group_statistics'] = group_stats
 
+    # A bare distance matrix renders as nothing in the result panel -- pair it
+    # with a PCoA scatter (group-colored when a grouping exists). Lives here so
+    # the sync route and the celery task both get it.
+    try:
+        pcoa_result = engine.pcoa(dist_matrix)
+        samples_df = pcoa_result['samples']
+        if {'PC1', 'PC2'} <= set(samples_df.columns):
+            g = params.get('group_column')
+            if metadata_df is not None and g and g in metadata_df.columns:
+                results['plot_data'] = engine.plotly_pcoa_scatter(pcoa_result, metadata_df, g)
+            else:
+                ve = pcoa_result.get('variance_explained', [])
+                fig = go.Figure(go.Scatter(
+                    x=samples_df['PC1'], y=samples_df['PC2'], mode='markers',
+                    text=[str(i) for i in samples_df.index],
+                    marker={'size': 10, 'color': 'rgb(15,118,110)', 'opacity': 0.8},
+                ))
+                fig.update_layout(
+                    title=f'PCoA ({metric})',
+                    xaxis_title=f'PC1 ({ve[0]*100:.1f}%)' if ve else 'PC1',
+                    yaxis_title=f'PC2 ({ve[1]*100:.1f}%)' if len(ve) > 1 else 'PC2',
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    margin={'l': 60, 'r': 30, 't': 50, 'b': 50},
+                )
+                results['plot_data'] = fig.to_dict()
+    except Exception as plot_error:
+        logger.warning(f'Beta-diversity PCoA plot failed: {plot_error}')
+
     return results
 
 

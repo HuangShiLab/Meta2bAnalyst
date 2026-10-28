@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
+import plotly.graph_objects as go
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session as DBSession
 
@@ -353,10 +354,37 @@ async def analyze_strain_alpha(
         metric = job.parameters.get('metric', 'shannon')
         alpha_df = analyzer.strain_alpha_diversity(df, metric=metric, species=request.species)
 
+        records = alpha_df.to_dict(orient='records')
+        value_col = next((c for c in ('alpha_diversity', metric, 'diversity', 'value')
+                          if c in alpha_df.columns), None)
+        stats = {'metric': metric, 'n_samples': int(len(records))}
+        fig = None
+        if value_col and len(records):
+            vals = alpha_df[value_col].astype(float)
+            stats.update(mean=float(vals.mean()), median=float(vals.median()),
+                         min=float(vals.min()), max=float(vals.max()))
+            show = alpha_df.nlargest(20, value_col)
+            fig = go.Figure(go.Bar(
+                x=show[value_col].astype(float),
+                y=[str(s) for s in show.get('sample_id', show.index)],
+                orientation='h',
+            ))
+            fig.update_layout(
+                title=f'Strain-level {metric} diversity (top {len(show)} samples)',
+                xaxis_title=metric.capitalize(),
+                margin={'l': 120, 'r': 30, 't': 50, 'b': 50},
+                plot_bgcolor='white', paper_bgcolor='white',
+            )
+
+        # `data`/`plot_data`/`statistics` are the keys the result panel renders;
+        # the bare `alpha_diversity` list used to leave the panel empty.
         result_data = {
-            'alpha_diversity': alpha_df.to_dict(orient='records'),
-            'metric': metric,
+            'alpha_diversity': records,
+            'data': records,
+            'statistics': stats,
         }
+        if fig is not None:
+            result_data['plot_data'] = fig.to_dict()
 
         _save_strain_result(session_id, job, result_data)
         job.status = 'completed'
@@ -425,6 +453,43 @@ async def analyze_strain_beta(
             'distance_matrix': dist_matrix.to_dict() if not dist_matrix.empty else {},
             'distance_metric': distance,
         }
+        if not dist_matrix.empty:
+            # A raw distance matrix renders as nothing in the result panel --
+            # pair it with a PCoA scatter, a long-form table and summary stats.
+            from app.services.analysis_engine import AnalysisEngine
+            engine = AnalysisEngine()
+            try:
+                pcoa_result = engine.pcoa(dist_matrix)
+                samples_df = pcoa_result['samples']
+                if {'PC1', 'PC2'} <= set(samples_df.columns):
+                    fig = go.Figure(go.Scatter(
+                        x=samples_df['PC1'], y=samples_df['PC2'],
+                        mode='markers+text', text=[str(i) for i in samples_df.index],
+                        textposition='top center',
+                        marker={'size': 10, 'color': 'rgb(15,118,110)', 'opacity': 0.8},
+                    ))
+                    ve = pcoa_result.get('variance_explained', [])
+                    fig.update_layout(
+                        title='Strain beta diversity (PCoA of {0} distances)'.format(distance),
+                        xaxis_title='PC1 ({0:.1f}%)'.format(ve[0] * 100) if ve else 'PC1',
+                        yaxis_title='PC2 ({0:.1f}%)'.format(ve[1] * 100) if len(ve) > 1 else 'PC2',
+                        margin={'l': 60, 'r': 30, 't': 50, 'b': 50},
+                        plot_bgcolor='white', paper_bgcolor='white',
+                    )
+                    result_data['plot_data'] = fig.to_dict()
+            except Exception as plot_error:
+                logger.warning(f'Strain beta PCoA plot failed: {plot_error}')
+            import numpy as np
+            tri = dist_matrix.values[np.triu_indices_from(dist_matrix.values, k=1)]
+            result_data['data'] = [
+                {'sample_1': str(dist_matrix.index[i]), 'sample_2': str(dist_matrix.columns[j]),
+                 'distance': float(dist_matrix.values[i, j])}
+                for i, j in zip(*np.triu_indices_from(dist_matrix.values, k=1))
+            ]
+            result_data['statistics'] = {
+                'distance_metric': distance, 'n_samples': int(len(dist_matrix)),
+                'mean_distance': float(tri.mean()), 'median_distance': float(np.median(tri)),
+            }
 
         _save_strain_result(session_id, job, result_data)
         job.status = 'completed'
@@ -586,9 +651,37 @@ async def analyze_strain_dominance(
         if request.species and 'species' in dominance_df.columns:
             dominance_df = dominance_df[dominance_df['species'] == request.species].copy()
 
+        records = dominance_df.to_dict(orient='records') if not dominance_df.empty else []
         result_data = {
-            'dominance_index': dominance_df.to_dict(orient='records') if not dominance_df.empty else [],
+            'dominance_index': records,
+            # The result panel only renders data/plot_data/statistics; without
+            # them the run reported success but displayed nothing.
+            'data': records,
         }
+        if records:
+            vals = dominance_df['dominance_index'].astype(float)
+            result_data['statistics'] = {
+                'n_records': int(len(records)),
+                'n_species': int(dominance_df['species'].nunique()) if 'species' in dominance_df else 0,
+                'mean_dominance': float(vals.mean()),
+                'median_dominance': float(vals.median()),
+                'high_dominance_gt_0.9': int((vals > 0.9).sum()),
+            }
+            # Per-species mean dominance, most dominant first
+            per_species = dominance_df.groupby('species')['dominance_index'].mean().sort_values()
+            show = per_species.tail(20)
+            fig = go.Figure(go.Bar(
+                x=show.values, y=[str(s) for s in show.index], orientation='h',
+                marker={'color': 'rgb(217,119,6)'},
+            ))
+            fig.update_layout(
+                title='Mean strain dominance index by species (top 20)',
+                xaxis_title='Mean dominance (max strain / total)',
+                xaxis={'range': [0, 1]},
+                margin={'l': 160, 'r': 30, 't': 50, 'b': 50},
+                plot_bgcolor='white', paper_bgcolor='white',
+            )
+            result_data['plot_data'] = fig.to_dict()
 
         _save_strain_result(session_id, job, result_data)
         job.status = 'completed'
