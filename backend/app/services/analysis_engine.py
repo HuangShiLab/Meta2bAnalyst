@@ -2388,16 +2388,59 @@ def run_differential_analysis(
         diff_df = run_maaslin3(df, metadata_df, fixed_effects, random_effects, group_column, normalization, transform)
         if 'error' in diff_df.columns:
             return {'error': str(diff_df['error'].iloc[0])}
-        return {
+
+        # The result panel renders data/plot_data/statistics; without them a
+        # successful MaAsLin3 run displayed nothing and the "Generate Volcano
+        # Plot" button looked dead.
+        all_records = diff_df.to_dict(orient='records')
+        sig_records = diff_df[diff_df['padj'] < pvalue_threshold].to_dict(orient='records') if 'padj' in diff_df.columns else []
+        result = {
             'test_method': 'MaAsLin3',
             'engine': 'R::MaAsLin3' if _r_has('maaslin3') else 'python::maaslin3-ols-fallback',
             'is_approximation': not _r_has('maaslin3'),
             'normalization': normalization,
             'transform': transform,
             'fixed_effects': fixed_effects,
-            'significant_features': diff_df[diff_df['padj'] < pvalue_threshold].to_dict(orient='records') if 'padj' in diff_df.columns else [],
-            'all_features': diff_df.to_dict(orient='records'),
+            'significant_features': sig_records,
+            'all_features': all_records,
+            'data': all_records,
+            'statistics': {
+                'method': 'MaAsLin3',
+                'engine': 'R::MaAsLin3' if _r_has('maaslin3') else 'python::maaslin3-ols-fallback',
+                'fixed_effects': ', '.join(map(str, fixed_effects)),
+                'n_features_tested': int(len(all_records)),
+                'n_significant': int(len(sig_records)),
+                'pvalue_threshold': pvalue_threshold,
+            },
         }
+        if {'feature', 'coefficient', 'padj'} <= set(diff_df.columns):
+            import plotly.graph_objects as _go
+            sig_mask = diff_df['padj'] < pvalue_threshold
+            colours = np.where(
+                sig_mask,
+                np.where(diff_df['coefficient'] > 0, '#E15759', '#4E79A7'),
+                '#BAB0AC',
+            )
+            fig = _go.Figure(_go.Scatter(
+                x=diff_df['coefficient'],
+                y=-np.log10(np.maximum(diff_df['padj'], 1e-300)),
+                mode='markers',
+                text=[f"{f} ({m})" for f, m in zip(diff_df['feature'], diff_df.get('metadata', ''))],
+                marker={'size': 8, 'color': colours.tolist(), 'opacity': 0.8},
+                hovertemplate='<b>%{text}</b><br>Coefficient: %{x:.3f}<br>-log10(padj): %{y:.3f}<extra></extra>',
+            ))
+            fig.add_hline(y=-np.log10(pvalue_threshold), line_dash='dash', line_color='grey',
+                          annotation_text=f'padj = {pvalue_threshold}')
+            fig.add_vline(x=0, line_color='grey')
+            fig.update_layout(
+                title='MaAsLin3 Association Plot',
+                xaxis_title='Coefficient (association strength)',
+                yaxis_title='-log10(adjusted p-value)',
+                template='plotly_white', showlegend=False,
+                margin={'l': 70, 'r': 30, 't': 60, 'b': 60},
+            )
+            result['plot_data'] = fig.to_dict()
+        return result
 
     elif test_method == 'lefse':
         from app.services.r_analysis import run_lefse
