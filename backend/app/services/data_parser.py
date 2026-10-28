@@ -407,6 +407,12 @@ class DataParser:
                     engine='python',
                 )
 
+            # Sample IDs must be strings: numeric IDs (1007, 1010...) parsed
+            # as int64 never intersect the string column labels of feature
+            # tables downstream. Same rationale as normalize_sample_index.
+            from app.utils.tabular import normalize_sample_index
+            df = normalize_sample_index(df)
+
             # Try to infer data types
             df = df.infer_objects()
 

@@ -832,7 +832,9 @@ class AnalysisEngine:
         if len(samples) == 0:
             raise ValueError(
                 "No overlap between the distance matrix and the metadata index; "
-                "the feature table is probably transposed."
+                "either the feature table is transposed, or sample IDs do not "
+                "match between tables (e.g. numeric IDs parsed as int on one "
+                "side and str on the other)."
             )
         dist = distance_matrix.loc[samples, samples].values
         groups = metadata.loc[samples, group_var].values
@@ -984,7 +986,9 @@ class AnalysisEngine:
         if len(samples) == 0:
             raise ValueError(
                 "No overlap between the distance matrix and the metadata index; "
-                "the feature table is probably transposed."
+                "either the feature table is transposed, or sample IDs do not "
+                "match between tables (e.g. numeric IDs parsed as int on one "
+                "side and str on the other)."
             )
         dist = distance_matrix.loc[samples, samples].values
         groups = metadata.loc[samples, group_var].values
@@ -1077,7 +1081,9 @@ class AnalysisEngine:
         if len(samples) == 0:
             raise ValueError(
                 "No overlap between feature-table columns and metadata index; "
-                "the feature table is probably transposed."
+                "either the feature table is transposed, or sample IDs do not "
+                "match between tables (e.g. numeric IDs parsed as int on one "
+                "side and str on the other)."
             )
         X = df[samples].T.values
         y = metadata.loc[samples, group_var].values
@@ -1180,6 +1186,12 @@ class AnalysisEngine:
             Plotly figure JSON dict.
         """
         samples = alpha_df.index.intersection(metadata.index)
+        if len(samples) == 0:
+            raise ValueError(
+                "No overlap between the diversity table samples and the metadata "
+                "index; check that sample IDs match (including numeric IDs read "
+                "as different types)."
+            )
         plot_data = []
 
         groups = metadata.loc[samples, group_var].unique()
@@ -1270,6 +1282,12 @@ class AnalysisEngine:
         )
 
         samples = alpha_df.index.intersection(metadata.index)
+        if len(samples) == 0:
+            raise ValueError(
+                "No overlap between the diversity table samples and the metadata "
+                "index; check that sample IDs match (including numeric IDs read "
+                "as different types)."
+            )
         groups = metadata.loc[samples, group_var].unique()
         for i, metric in enumerate(available):
             row, col = divmod(i, cols)
