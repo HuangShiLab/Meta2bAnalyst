@@ -115,6 +115,18 @@ def _zscore(df: pd.DataFrame) -> pd.DataFrame:
     return ((df - df.mean(axis=0)) / (df.std(axis=0) + 1e-10)).fillna(0)
 
 
+
+def _tss(samples_x_features) -> "pd.DataFrame":
+    """Per-sample relative abundance (TSS) for abundance-based distances.
+
+    Raw integer counts let library size dominate Bray-Curtis; scaling each
+    sample to sum to 1 removes that artefact and is a no-op for tables that
+    are already compositional.
+    """
+    df = samples_x_features
+    lib = df.sum(axis=1)
+    return df.div(lib.where(lib > 0), axis=0).fillna(0)
+
 def _ordinate(samples_x_features: pd.DataFrame, metric: str, n_components: int) -> Tuple[np.ndarray, str]:
     """Ordinate one table. Euclidean -> PCA of z-scored features (identical to a
     PCoA of Euclidean distances on them); any other metric -> PCoA of that
@@ -140,6 +152,9 @@ def _ordinate(samples_x_features: pd.DataFrame, metric: str, n_components: int) 
     from skbio import DistanceMatrix
     from skbio.stats.ordination import pcoa as _pcoa
 
+    if metric == "braycurtis":
+        values = _tss(pd.DataFrame(values, index=samples_x_features.index,
+                                   columns=samples_x_features.columns)).values
     dm = DistanceMatrix(squareform(pdist(values, metric=metric)))
     coords = _pcoa(dm, number_of_dimensions=k).samples.values[:, :k]
     return coords, f"PCoA of {metric} distances"
@@ -289,8 +304,10 @@ def run_mantel(
         return {"error": f"Need >=3 common samples, got {len(common_samples)}"}
 
     metric_2 = metric_2 or metric
-    dist1_matrix = squareform(pdist(df1[common_samples].T, metric=metric))
-    dist2_matrix = squareform(pdist(df2[common_samples].T, metric=metric_2))
+    m1 = _tss(df1[common_samples].T) if metric == "braycurtis" else df1[common_samples].T
+    m2 = _tss(df2[common_samples].T) if metric_2 == "braycurtis" else df2[common_samples].T
+    dist1_matrix = squareform(pdist(m1, metric=metric))
+    dist2_matrix = squareform(pdist(m2, metric=metric_2))
     if np.isnan(dist1_matrix).any() or np.isnan(dist2_matrix).any():
         return {"error": f"{metric} distance is undefined for some samples (all-zero profiles?)"}
 
@@ -697,8 +714,11 @@ def run_cross_omics_analysis(
 
     if "mantel" in result:
         common_samples = df1.columns.intersection(df2.columns)
-        dist1_matrix = squareform(pdist(df1[common_samples].T, metric=mantel_metric))
-        dist2_matrix = squareform(pdist(df2[common_samples].T, metric=params.get("mantel_metric_2") or mantel_metric))
+        m1 = _tss(df1[common_samples].T) if mantel_metric == "braycurtis" else df1[common_samples].T
+        m2_metric = params.get("mantel_metric_2") or mantel_metric
+        m2 = _tss(df2[common_samples].T) if m2_metric == "braycurtis" else df2[common_samples].T
+        dist1_matrix = squareform(pdist(m1, metric=mantel_metric))
+        dist2_matrix = squareform(pdist(m2, metric=m2_metric))
         n = len(common_samples)
         idx = np.triu_indices(n, k=1)
         dist1_flat = dist1_matrix[idx]

@@ -465,6 +465,13 @@ class AnalysisEngine:
             values = (df_t.values > 0)
             distances = pdist(values, metric='jaccard')
         else:
+            if scipy_metric == 'braycurtis':
+                # Abundance-based Bray-Curtis is scale-sensitive: raw integer
+                # counts let library size dominate the dissimilarity. Convert to
+                # per-sample relative abundance (TSS) first -- a no-op for
+                # tables that are already compositional.
+                lib = df_t.sum(axis=1)
+                df_t = df_t.div(lib.where(lib > 0), axis=0).fillna(0)
             distances = pdist(df_t.values, metric=scipy_metric)
 
         dist_matrix = squareform(distances)

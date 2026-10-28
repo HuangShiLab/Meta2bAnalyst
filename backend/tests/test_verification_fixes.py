@@ -112,7 +112,11 @@ class TestProcrustes:
         assert res["ordination"]["table_2"] == "PCA of z-scored features"
         from skbio.stats.ordination import pcoa
         from sklearn.decomposition import PCA
-        pc = pcoa(DistanceMatrix(squareform(pdist(mb.T.values, "braycurtis"))), number_of_dimensions=2).samples.values
+        from app.services.cross_omics import _tss
+        # Bray-Curtis runs on per-sample relative abundance (TSS) since the
+        # library-size fix: raw integer counts let sequencing depth dominate.
+        tss = _tss(mb.T)
+        pc = pcoa(DistanceMatrix(squareform(pdist(tss.values, "braycurtis"))), number_of_dimensions=2).samples.values
         zs = (met.T - met.T.mean()) / (met.T.std() + 1e-10)
         _, _, disparity = sp_procrustes(pc[:, :2], PCA(2).fit_transform(zs))
         assert res["m2"] == pytest.approx(disparity, abs=1e-8)
