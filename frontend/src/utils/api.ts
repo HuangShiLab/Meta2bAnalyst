@@ -436,44 +436,19 @@ export const runStrainReplacement = async (
 };
 
 // Mock data generators
-export const downloadFigure = (_figure: { data?: unknown[]; layout?: Record<string, unknown> }, format: 'png' | 'svg' | 'jpeg') => {
-  const link = document.createElement('a');
-  link.download = `figure.${format}`;
-  link.href = '#';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
+// Real client-side implementations live in figureExport (plotly.js render +
+// hand-rolled single-page PDF; see that module for why not server-side).
+export { downloadFigure } from "./figureExport";
 
 export const downloadPDF = async (
   plotData: PlotlyFigure | undefined,
-  tableData: Record<string, string | number>[],
+  _tableData: Record<string, string | number>[],
   filename: string
 ): Promise<void> => {
-  try {
-    const response = await api.post('/export/pdf', {
-      plot_data: plotData,
-      table_data: tableData,
-      filename: filename,
-    }, {
-      responseType: 'blob',
-    });
-    
-    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error('PDF download failed:', error);
-    // Fallback: download as SVG
-    if (plotData) {
-      downloadFigure(plotData, 'svg');
-    }
-  }
+  // The backend has no /export/pdf route (and no Chrome/Kaleido to
+  // rasterize); the old catch silently downloaded an SVG instead.
+  const { downloadFigurePdf } = await import("./figureExport");
+  await downloadFigurePdf(plotData, filename);
 };
 
 export const downloadCSV = (data: Record<string, string | number>[], filename = 'data.csv') => {
