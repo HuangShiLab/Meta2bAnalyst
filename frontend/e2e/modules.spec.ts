@@ -70,6 +70,15 @@ async function openPage(page: Page, sid: string, route: string) {
     throw new Error(`pageerror on ${route}: ${e.message.slice(0, 200)}`);
   });
   await page.goto(route, { waitUntil: 'networkidle' });
+  // Pages with a DataSourceSelector gate their analysis UI behind an explicit
+  // "Use Current Data" confirmation even when the session already has files.
+  const useCurrent = page.getByRole('button', { name: /use current data/i });
+  try {
+    await useCurrent.waitFor({ state: 'visible', timeout: 8_000 });
+    if (await useCurrent.isEnabled()) await useCurrent.click();
+  } catch {
+    // Page has no data-source gate (e.g. upload flow) — nothing to confirm.
+  }
 }
 
 /**
@@ -77,8 +86,9 @@ async function openPage(page: Page, sid: string, route: string) {
  * succeeds: 2xx POST, spinner clears, no error alert.
  */
 async function runModule(page: Page, runLabel: RegExp, urlHint: string) {
-  const panel = page.locator('[role="tabpanel"][data-state="active"]').first();
-  const btn = panel.getByRole('button', { name: runLabel }).first();
+  // Note: pages now render two tablists (data source + analysis); the run
+  // button label only exists inside the analysis panel, so match it globally.
+  const btn = page.getByRole('button', { name: runLabel }).first();
   await expect(btn).toBeVisible({ timeout: 15_000 });
   await expect(btn).toBeEnabled();
   const respPromise = page.waitForResponse(
@@ -149,7 +159,7 @@ test.describe('Module regression (live stack)', () => {
       test(`community: ${label}`, async ({ page }) => {
         await openPage(page, mainSession, '/microbiome');
         await page.getByTestId('tab-community').click();
-        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();
+        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();  // label text is unique to the analysis panel
         await runModule(page, /run analysis/i, '/analyze/');
       });
     }
@@ -162,7 +172,7 @@ test.describe('Module regression (live stack)', () => {
       test(`differential: ${method}`, async ({ page }) => {
         await openPage(page, mainSession, '/microbiome');
         await page.getByTestId('tab-differential').click();
-        const panel = page.locator('[role="tabpanel"][data-state="active"]').first();
+        const panel = page.getByRole('tabpanel', { name: /differential analysis/i });
         await panel.getByRole('combobox').first().click();
         await page.getByRole('option', { name: method }).click();
         // Pairwise methods on a >2-level column need an explicit contrast;
@@ -184,7 +194,7 @@ test.describe('Module regression (live stack)', () => {
       test(`network: ${label}`, async ({ page }) => {
         await openPage(page, mainSession, '/microbiome');
         await page.getByTestId('tab-network').click();
-        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();
+        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();  // label text is unique to the analysis panel
         await runModule(page, /run analysis/i, '/analyze/');
       });
     }
@@ -197,7 +207,7 @@ test.describe('Module regression (live stack)', () => {
       test(`advanced: ${label}`, async ({ page }) => {
         await openPage(page, mainSession, '/microbiome');
         await page.getByTestId('tab-advanced').click();
-        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();
+        await page.locator('[role="tabpanel"][data-state="active"] label', { hasText: label }).first().click();  // label text is unique to the analysis panel
         await runModule(page, /run analysis/i, '/analyze/');
       });
     }
@@ -206,20 +216,15 @@ test.describe('Module regression (live stack)', () => {
   // ------------------------------------------------------------------
   // Multi-omics page — 13 modules (each has a dedicated run button)
   //
-  // The page gates its tabs behind its own paired-upload flow (component
-  // state `uploaded`), so each test loads the built-in Huang mBio example
-  // set through the UI first — this also exercises that upload path.
+  // The page now uses the shared DataSourceSelector; openPage() confirms
+  // "Use Current Data" and the analysis tabs appear directly.
   // ------------------------------------------------------------------
   test.describe('Multi-omics page', () => {
     async function prepareMultiOmics(page: Page) {
       await openPage(page, mainSession, '/multi-omics');
-      await page.getByRole('button', { name: /load example data/i }).click();
-      const start = page.getByRole('button', { name: /start multi-omics analysis/i });
-      await expect(start).toBeEnabled({ timeout: 30_000 });
-      await start.click();
       await expect(
         page.getByRole('tab', { name: /individual omics/i })
-      ).toBeVisible({ timeout: 120_000 });
+      ).toBeVisible({ timeout: 30_000 });
     }
 
     const tabs: Record<string, RegExp[]> = {

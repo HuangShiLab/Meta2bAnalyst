@@ -133,8 +133,27 @@ const PIPELINE_EXAMPLES: Record<string, { name: string; type: DataType }[]> = {
   ],
 };
 
+/** Backend file_type values that satisfy each DataType requirement.
+ *  The upload API stores the canonical types (feature_table, biom, shared,
+ *  metaphlan, humann3, normalized_*), while the selector requirements speak
+ *  in DataType terms — without this alias map a session holding a perfectly
+ *  valid feature_table was reported as "Missing: Microbiome abundance table". */
+const TYPE_ALIASES: Record<DataType, string[]> = {
+  microbiome: ["microbiome", "feature_table", "biom", "shared", "filtered_feature_table", "metaphlan"],
+  metabolome: ["metabolome"],
+  strain: ["strain"],
+  function: ["function", "humann3"],
+  metadata: ["metadata"],
+  taxonomy: ["taxonomy"],
+};
+
+function typeSatisfied(types: string[], want: DataType): boolean {
+  const aliases = TYPE_ALIASES[want] ?? [want];
+  return types.some((t) => aliases.includes(t) || (want === "microbiome" && t.startsWith("normalized_")));
+}
+
 function requirementsMet(types: string[], requires: FileRequirement[]): boolean {
-  return requires.filter((r) => r.required).every((r) => types.includes(r.type));
+  return requires.filter((r) => r.required).every((r) => typeSatisfied(types, r.type as DataType));
 }
 
 export function DataSourceSelector({ requires, sessionId, onSessionReady, variant = "panel" }: DataSourceSelectorProps) {
@@ -461,7 +480,7 @@ export function DataSourceSelector({ requires, sessionId, onSessionReady, varian
               </Button>
               {!currentReady && (
                 <p className="text-xs text-amber-700">
-                  Missing: {requires.filter((r) => r.required && !currentTypes.includes(r.type)).map((r) => DATA_TYPES[r.type].label).join(", ")}
+                  Missing: {requires.filter((r) => r.required && !typeSatisfied(currentTypes, r.type as DataType)).map((r) => DATA_TYPES[r.type].label).join(", ")}
                 </p>
               )}
             </div>
