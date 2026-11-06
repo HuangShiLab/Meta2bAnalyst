@@ -65,10 +65,13 @@ services:
       STUDENT_ACCOUNT_PASSWORD: ${STUDENT_ACCOUNT_PASSWORD:-Meta2b-2026}
       # LLM assist (planner fallback + narrative interpretation). Leave
       # KIMI_API_KEY unset to run KB-only; values come from docker/.env
-      # (gitignored) or the shell environment.
+      # (gitignored, carries the API key) or the shell environment, which
+      # overrides the .env file.
       KIMI_API_KEY: ${KIMI_API_KEY:-}
       KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}
-      KIMI_MODEL: ${KIMI_MODEL:-kimi-for-coding}
+      # moonshot-v1-8k: kimi-for-coding is a reasoning model that exceeds the
+      # llm_client timeout on long paper texts (paper-to-plan 24k chars -> 502).
+      KIMI_MODEL: ${KIMI_MODEL:-moonshot-v1-8k}
     volumes:
       - uploads_data:/app/uploads
       - logs_data:/app/logs
@@ -104,7 +107,7 @@ services:
       ENVIRONMENT: production
       KIMI_API_KEY: ${KIMI_API_KEY:-}
       KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}
-      KIMI_MODEL: ${KIMI_MODEL:-kimi-for-coding}
+      KIMI_MODEL: ${KIMI_MODEL:-moonshot-v1-8k}
     volumes:
       # Must share uploads and the database with the backend: tasks read the
       # session's files from disk by path.
