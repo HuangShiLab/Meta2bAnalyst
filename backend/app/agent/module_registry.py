@@ -390,7 +390,10 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         name="pathway_kegg",
         description="KEGG pathway enrichment analysis for differentially abundant features",
         category="individual_omics",
-        input_requirements={"features": "required"},
+        # Executor data wiring only knows microbiome/metabolome/metadata/data;
+        # "features" meant no dataframe was ever passed and the step died with
+        # "missing required positional argument: 'df'".
+        input_requirements={"microbiome": "required"},
         parameters={
             "pathway_db": {"type": "enum", "options": ["KEGG", "MetaCyc"], "default": "KEGG"},
             "pvalue_threshold": {"type": "float", "default": 0.05},

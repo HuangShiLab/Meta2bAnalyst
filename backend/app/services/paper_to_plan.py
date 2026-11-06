@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from app.agent.module_registry import MODULE_REGISTRY
@@ -26,11 +27,27 @@ from app.agent.planner import AnalysisPlanner, ExecutionPlan, _estimate_time
 logger = logging.getLogger(__name__)
 
 MAX_TEXT_CHARS = 24000  # methods + abstract comfortably fit; keeps LLM fast
+_FULL_TEXT_CAP = 800_000  # bound pypdf work on book-length PDFs
+
+# A standalone Methods heading line. Nature-format papers print Methods at
+# the very end; author manuscripts prefix/suffix line numbers ("Methods 691").
+# The trailing-$ anchor keeps citation journal names ("Nat Methods 15, ...")
+# from matching.
+_METHODS_HEADING = re.compile(
+    r"(?im)^\s*(?:\d+\s*[.:-]?\s*)?(?:materials\s+and\s+|star\s+)?methods\b\s*\d*\s*$"
+)
 
 
 def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
-    """Extract text from a PDF, stopping at the Results/Discussion boundary
-    when detectable (methods live before it) to keep the prompt focused."""
+    """Extract paper text for the planner: opening (title/abstract/intro) plus
+    the Methods section.
+
+    Nature-format papers print Methods after the Discussion, so a naive
+    first-N-chars cut misses the very text the planner needs.  When a
+    standalone Methods heading is found, return the first third of the budget
+    from the top of the paper and the rest starting at the Methods heading
+    (the last such heading - earlier hits are usually in-text references).
+    """
     import io
     from pypdf import PdfReader
 
@@ -44,12 +61,22 @@ def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
             continue
         parts.append(t)
         total += len(t)
-        if total > max_chars * 2:
+        if total > _FULL_TEXT_CAP:
             break
-    text = "\n".join(parts)
-    if len(text) > max_chars:
-        text = text[:max_chars]
-    return text
+    full = "\n".join(parts)
+    if len(full) <= max_chars:
+        return full
+
+    matches = list(_METHODS_HEADING.finditer(full))
+    if not matches:
+        return full[:max_chars]
+
+    head_budget = max_chars // 3
+    methods_budget = max_chars - head_budget
+    head = full[:head_budget]
+    methods_start = matches[-1].start()
+    methods = full[methods_start:methods_start + methods_budget]
+    return head + "\n\n[... METHODS SECTION ...]\n\n" + methods
 
 
 _SYSTEM_PROMPT = """You are a bioinformatics methods analyst. Given the text of a scientific
@@ -132,7 +159,7 @@ def plan_from_text(paper_text: str, max_chars: int = MAX_TEXT_CHARS) -> Dict[str
         text = text[:max_chars]
 
     content = client.chat(_SYSTEM_PROMPT.format(modules=_render_module_list()),
-                          text, max_tokens=16000, timeout=180)
+                          text, max_tokens=8192, timeout=280)
     if not content:
         raise ValueError("LLM returned no content")
 

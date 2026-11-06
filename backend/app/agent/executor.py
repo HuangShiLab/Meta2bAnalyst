@@ -935,16 +935,31 @@ _COLUMN_PARAMS = (
 )
 
 #: synonym sets used when a requested column does not appear in the
-#: metadata even case-insensitively
+#: metadata even case-insensitively.  ORDER MATTERS: strong grouping terms
+#: come first so "diagnosis" snaps to a "Group"/"Condition" column rather
+#: than to "Timepoint" when both exist.
 _COLUMN_SYNONYMS: Dict[str, tuple] = {
     "group_column": ("group", "condition", "disease", "disease_status",
-                     "phenotype", "status", "visit", "timepoint", "treatment"),
+                     "diagnosis", "phenotype", "treatment", "status",
+                     "visit", "timepoint"),
     "subject_column": ("subject", "subject_id", "host_id", "host",
                        "individual", "participant", "patient", "donor"),
     "time_column": ("time", "timepoint", "visit", "day", "week", "month"),
     "site_column": ("site", "body_site", "location"),
     "batch_column": ("batch", "plate", "run", "cohort"),
 }
+
+#: parameters whose value is a LIST of metadata column names, mapped to the
+#: synonym set that fits their modelling role
+_COLUMN_LIST_PARAMS: Dict[str, str] = {
+    "fixed_effects": "group_column",
+    "covariates": "group_column",
+    "biological_covariates": "group_column",
+    "random_effects": "subject_column",
+}
+
+#: modules that compare groups against a reference level
+_REFERENCE_MODULES = ("microbiome_marker", "metabolome_marker", "volcano")
 
 #: modules whose primary metadata use is point coloring; a plan-level
 #: ``color_by`` expresses exactly that intent and wins over group_column
@@ -984,9 +999,15 @@ def _snap_column_name(value: Any, columns: List[str], synonyms: tuple = ()) -> O
         return norm_map[key]
     synset = {_norm_key(s) for s in synonyms}
     if key in synset:
+        # Priority follows the synonym list (strong terms first), not the
+        # metadata column order.
+        colmap = {}
         for c in columns:
-            if _norm_key(c) in synset:
-                return c
+            colmap.setdefault(_norm_key(c), c)
+        for s in synonyms:
+            hit = colmap.get(_norm_key(s))
+            if hit is not None:
+                return hit
     return None
 
 
@@ -998,6 +1019,7 @@ class WorkflowExecutor:
         self.session_data: Dict[str, Any] = {}  # microbiome_df, metabolome_df, metadata_df
         self.completed_steps: set = set()
         self.failed_steps: set = set()
+        self.skipped_steps: set = set()  # never ran because a dependency failed
         self.session_id: Optional[str] = session_id
         # step_id -> module name / params, so a report can name what produced each
         # result and so completed results keep their plan order.
@@ -1082,18 +1104,55 @@ class WorkflowExecutor:
                 kwargs[param] = snapped
                 _record(param, value, snapped, "column_snap")
 
+        # 5b. Same snapping for list-of-columns parameters (fixed_effects, ...),
+        # using the synonym set that matches each parameter's modelling role.
+        if columns:
+            for param, role in _COLUMN_LIST_PARAMS.items():
+                values = kwargs.get(param)
+                if not isinstance(values, list):
+                    continue
+                role_syns = _COLUMN_SYNONYMS.get(role, ())
+                new_values = []
+                for v in values:
+                    snapped = _snap_column_name(v, columns, role_syns)
+                    if snapped and snapped != v:
+                        _record(param, v, snapped, "column_snap")
+                        new_values.append(snapped)
+                    else:
+                        new_values.append(v)
+                kwargs[param] = new_values
+
+        # 5c. Honour an explicit data_type="metabolome" on single-table
+        # modules: multi-omics papers run the same test per layer, and
+        # without this the step would silently re-run on the microbiome.
+        # Modules whose registry input is "data" (normalization, ...) already
+        # route by data_type in _execute_step and are excluded.
+        reqs = get_module_spec(step.module).input_requirements
+        if (kwargs.get("data_type") == "metabolome"
+                and "df" in kwargs and "df2" not in kwargs
+                and reqs.get("data") != "required"
+                and self.session_data.get("metabolome") is not None):
+            kwargs["df"] = self.session_data["metabolome"]
+            _record("df", "microbiome", "metabolome", "data_layer")
+
         # 6. reference_group level snapping against the resolved group column.
         ref = kwargs.get("reference_group")
         group_col = kwargs.get("group_column")
-        if isinstance(ref, str) and isinstance(metadata, pd.DataFrame) \
+        if isinstance(metadata, pd.DataFrame) \
                 and isinstance(group_col, str) and group_col in metadata.columns:
-            levels = [str(v) for v in metadata[group_col].dropna().unique()]
-            if ref not in levels:
+            levels = sorted(str(v) for v in metadata[group_col].dropna().unique())
+            if isinstance(ref, str) and ref not in levels:
                 norm_levels = {_norm_key(v): v for v in levels}
                 match = norm_levels.get(_norm_key(ref))
                 if match:
                     kwargs["reference_group"] = match
                     _record("reference_group", ref, match, "level_snap")
+            elif ref is None and step.module in _REFERENCE_MODULES and levels:
+                # The paper named no reference level; the module wrappers would
+                # otherwise fall back to a hardcoded "T4" that rarely exists.
+                # Baseline = first sorted level, disclosed as a correction.
+                kwargs["reference_group"] = levels[0]
+                _record("reference_group", "(module default)", levels[0], "default_reference")
 
         return corrections
 
@@ -1518,19 +1577,35 @@ class WorkflowExecutor:
         logger.info(f"Executing plan in {len(batches)} parallel batches")
 
         for batch in batches:
+            # Skip steps whose dependencies failed (transitively); everything
+            # else still runs.  A batch that fully fails no longer aborts the
+            # workflow - paper-derived plans chain optional modules, and the
+            # report step should still summarize whatever succeeded.
+            runnable: List[PlanStep] = []
+            for step in batch:
+                bad_deps = [d for d in step.depends_on
+                            if d in self.failed_steps or d in self.skipped_steps]
+                if bad_deps and step.module != "report_generator":
+                    self.skipped_steps.add(step.id)
+                    yield ExecutionEvent(
+                        event_type="step_skipped",
+                        step_id=step.id,
+                        payload={
+                            "module": step.module,
+                            "reason": "dependency failed or was skipped: "
+                                      + ", ".join(bad_deps),
+                        },
+                    )
+                else:
+                    runnable.append(step)
+
+            if not runnable:
+                continue
+
             # Execute batch
-            events = await self._execute_batch(batch)
+            events = await self._execute_batch(runnable)
             for event in events:
                 yield event
-
-            # Check if all steps in batch failed - abort if so
-            if all(e.event_type == "step_error" for e in events if e.event_type in ("step_complete", "step_error")):
-                if len(events) > 0:
-                    yield ExecutionEvent(
-                        event_type="step_error",
-                        payload={"error": "All steps in batch failed, aborting workflow"},
-                    )
-                    break
 
         # Yield completion
         success_count = len(self.completed_steps)
@@ -1542,6 +1617,7 @@ class WorkflowExecutor:
                 "total_steps": len(plan.steps),
                 "completed": success_count,
                 "failed": fail_count,
+                "skipped": len(self.skipped_steps),
                 "results": {sid: "completed" for sid in self.completed_steps},
                 "final_state_keys": list(self.state.keys()),
             },
