@@ -125,21 +125,58 @@ class EnhancedInterpreter:
     # 1. Cross-analysis narrative
     # ═══════════════════════════════════════════════════════════════
 
+    # Canonical analysis groups. Callers key results differently: the
+    # frontend uses analysis-type strings ("alpha", "permanova"), the agent
+    # executor uses step ids ("step4_permanova") with a "module" field.
+    _ALPHA_NAMES = ("alpha-diversity", "alpha_diversity", "alpha",
+                    "microbiome_alpha", "metabolome_alpha")
+    _BETA_NAMES = ("permanova", "anosim", "permanova_strata")
+    _DIFF_NAMES = ("differential", "lefse", "ancom", "deseq2", "aldex2",
+                   "maaslin2", "maaslin3", "ancom_bc", "songbird",
+                   "microbiome_marker", "metabolome_marker", "volcano")
+
+    def _iter_analysis(self, results: Dict[str, Any], names) -> List[Dict[str, Any]]:
+        """Yield result_data dicts for every entry matching any canonical name.
+
+        Match order per entry: exact key -> entry["module"] field -> step-id
+        suffix (step4_permanova matches "permanova"). Exact-key matches keep
+        historical frontend behaviour; module/suffix matching lets agent
+        executor payloads (step ids + module field) reach the same logic.
+        """
+        if isinstance(names, str):
+            names = (names,)
+        found: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for name in names:
+            v = self._get_nested(results, name, "result_data")
+            if isinstance(v, dict) and v:
+                found.append(v)
+                seen_ids.add(name)
+        for key, entry in results.items():
+            if not isinstance(entry, dict) or key in seen_ids:
+                continue
+            rd = entry.get("result_data")
+            if not isinstance(rd, dict) or not rd:
+                continue
+            module = entry.get("module")
+            k = str(key)
+            if (module in names
+                    or any(k.endswith("_" + n) or k.endswith("-" + n) for n in names)):
+                found.append(rd)
+        return found
+
+    def _resolve_analysis(self, results: Dict[str, Any], names) -> Optional[Dict[str, Any]]:
+        """First matching entry's result_data, or None."""
+        matches = self._iter_analysis(results, names)
+        return matches[0] if matches else None
+
     def _build_integrated_narrative(self, results: Dict[str, Any]) -> str:
         """Build a coherent story from all analyses."""
         paragraphs = []
 
-        # Extract key stats safely. Result keys vary by caller: the frontend
-        # sends analysis "type" strings ("alpha", "permanova", ...), other
-        # callers use hyphenated or underscored variants.
-        alpha = self._get_nested(results, "alpha-diversity", "result_data") or \
-                self._get_nested(results, "alpha_diversity", "result_data") or \
-                self._get_nested(results, "alpha", "result_data")
-        beta = self._get_nested(results, "permanova", "result_data") or \
-               self._get_nested(results, "anosim", "result_data")
-        diff = self._get_nested(results, "differential", "result_data") or \
-               self._get_nested(results, "lefse", "result_data") or \
-               self._get_nested(results, "ancom", "result_data")
+        alpha = self._resolve_analysis(results, self._ALPHA_NAMES)
+        beta = self._resolve_analysis(results, self._BETA_NAMES)
+        diff = self._resolve_analysis(results, self._DIFF_NAMES)
 
         # Overall summary. The frontend sends bare {"result_data": ...} entries
         # with no status field, so counting only status=="completed" yields 0.
@@ -174,8 +211,10 @@ class EnhancedInterpreter:
         # Beta diversity story
         if beta:
             p = beta.get("pvalue")
-            r2 = beta.get("r2")
+            r2 = beta.get("r2", beta.get("r_squared"))
             sig = beta.get("significant", False)
+            if not sig and isinstance(p, (int, float)):
+                sig = p < 0.05
             r2_str = f"{r2:.3f}" if r2 is not None else "not reported"
             if sig:
                 paragraphs.append(
@@ -191,18 +230,22 @@ class EnhancedInterpreter:
                 )
         # Differential abundance story
         if diff:
-            n_sig = diff.get("n_significant", 0)
-            top = diff.get("top_feature") or diff.get("top_taxa", [None])[0]
+            n_sig = diff.get("n_significant", diff.get("n_significant_total", 0))
+            top = diff.get("top_feature") or (diff.get("top_taxa") or [None])[0]
             if n_sig > 0 and top:
                 paragraphs.append(
                     f"Differential abundance testing identified {n_sig} significantly altered feature(s). "
                     f"Notably, {self._shorten_name(top)} showed differential abundance, suggesting "
                     f"targeted taxonomic restructuring rather than global community turnover. "
                 )
+            elif n_sig > 0:
+                paragraphs.append(
+                    f"Differential abundance testing identified {n_sig} significantly altered feature(s). "
+                )
 
         # Cross-analysis integration (the key insight)
-        alpha_sig = self._is_significant(results, "alpha-diversity")
-        beta_sig = self._is_significant(results, "permanova")
+        alpha_sig = self._is_significant(results, self._ALPHA_NAMES)
+        beta_sig = self._is_significant(results, self._BETA_NAMES)
         diff_sig = self._has_differential(results)
 
         if not alpha_sig and not beta_sig and diff_sig:
@@ -237,8 +280,8 @@ class EnhancedInterpreter:
         """Detect statistical contradictions across analyses."""
         contradictions = []
 
-        alpha_sig = self._is_significant(results, "alpha-diversity")
-        beta_sig = self._is_significant(results, "permanova")
+        alpha_sig = self._is_significant(results, self._ALPHA_NAMES)
+        beta_sig = self._is_significant(results, self._BETA_NAMES)
         diff_sig = self._has_differential(results)
 
         if alpha_sig and not beta_sig:
@@ -264,12 +307,12 @@ class EnhancedInterpreter:
 
         # Method assumption checks
         for aname in ["differential", "lefse", "ancom", "deseq2", "aldex2"]:
-            r = results.get(aname, {}).get("result_data", {})
-            if r and r.get("sparsity", 0) > 0.9:
-                contradictions.append(
-                    f"{aname} results may be unreliable: data sparsity is {r['sparsity']:.1%}, "
-                    f"exceeding the recommended threshold. Consider genus-level aggregation or imputation."
-                )
+            for r in self._iter_analysis(results, aname):
+                if r.get("sparsity", 0) > 0.9:
+                    contradictions.append(
+                        f"{aname} results may be unreliable: data sparsity is {r['sparsity']:.1%}, "
+                        f"exceeding the recommended threshold. Consider genus-level aggregation or imputation."
+                    )
 
         return contradictions
 
@@ -382,7 +425,7 @@ class EnhancedInterpreter:
         }
 
         for api_name, kb_name in analysis_type_map.items():
-            if api_name not in results:
+            if not self._iter_analysis(results, api_name):
                 continue
             method_info = lookup_method(kb_name)
             if not method_info:
@@ -391,7 +434,7 @@ class EnhancedInterpreter:
                 caveats.append(f"[{api_name}] {caution}")
 
         # Data-specific caveats
-        alpha = self._get_nested(results, "alpha-diversity", "result_data")
+        alpha = self._resolve_analysis(results, self._ALPHA_NAMES)
         if alpha:
             for metric in ["shannon", "simpson"]:
                 gs = self._get_nested(alpha, "group_statistics", metric, "statistical_test")
@@ -403,9 +446,9 @@ class EnhancedInterpreter:
                             f"(p = {p:.3f}); a larger sample may clarify the effect."
                         )
 
-        beta = self._get_nested(results, "permanova", "result_data")
+        beta = self._resolve_analysis(results, self._BETA_NAMES)
         if beta:
-            r2 = beta.get("r2")
+            r2 = beta.get("r2", beta.get("r_squared"))
             if r2 is not None and r2 < 0.05:
                 caveats.append(
                     f"PERMANOVA R\u00b2 is small ({r2:.3f}). Although statistically significant, "
@@ -423,14 +466,14 @@ class EnhancedInterpreter:
         suggestions = []
 
         # If PERMANOVA significant → differential abundance
-        if self._is_significant(results, "permanova"):
+        if self._is_significant(results, self._BETA_NAMES):
             suggestions.append(
                 "PERMANOVA detected compositional differences. Run differential abundance "
                 "analysis (LEfSe, ANCOM, or ALDEx2) to identify specific taxa driving the separation."
             )
 
         # If alpha significant but beta not → check dispersion
-        if self._is_significant(results, "alpha-diversity") and not self._is_significant(results, "permanova"):
+        if self._is_significant(results, self._ALPHA_NAMES) and not self._is_significant(results, self._BETA_NAMES):
             suggestions.append(
                 "Alpha diversity changed but beta diversity did not. Consider checking "
                 "PERMDISP to verify homogeneity of multivariate dispersion."
@@ -438,8 +481,8 @@ class EnhancedInterpreter:
 
         # If no significant results anywhere → power/sample size
         has_any_sig = any([
-            self._is_significant(results, "alpha-diversity"),
-            self._is_significant(results, "permanova"),
+            self._is_significant(results, self._ALPHA_NAMES),
+            self._is_significant(results, self._BETA_NAMES),
             self._has_differential(results),
         ])
         if not has_any_sig:
@@ -489,43 +532,43 @@ class EnhancedInterpreter:
             return "p < 0.001"
         return f"p = {p:.3f}"
 
-    def _is_significant(self, results: Dict, analysis_name: str) -> bool:
-        """Check if an analysis result is statistically significant."""
-        r = results.get(analysis_name, {}).get("result_data", {})
-        if not r:
-            return False
-        # Try various significance indicators
-        if "pvalue" in r:
-            return r.get("pvalue", 1.0) < 0.05
-        if "statistical_test" in r:
-            st = r["statistical_test"]
-            if isinstance(st, dict):
-                return st.get("significant", False)
-        # For alpha diversity nested structure
-        for metric in ["shannon", "simpson", "observed"]:
-            gs = self._get_nested(r, "group_statistics", metric, "statistical_test")
-            if gs and gs.get("significant"):
+    def _is_significant(self, results: Dict, analysis_name) -> bool:
+        """Check if an analysis result is statistically significant.
+
+        ``analysis_name`` may be a single canonical name or a group tuple;
+        any significant match counts.
+        """
+        for r in self._iter_analysis(results, analysis_name):
+            if "pvalue" in r and isinstance(r.get("pvalue"), (int, float)):
+                if r["pvalue"] < 0.05:
+                    return True
+                continue
+            if r.get("significant") is True:
                 return True
+            st = r.get("statistical_test")
+            if isinstance(st, dict) and st.get("significant"):
+                return True
+            # For alpha diversity nested structure
+            for metric in ["shannon", "simpson", "observed"]:
+                gs = self._get_nested(r, "group_statistics", metric, "statistical_test")
+                if gs and gs.get("significant"):
+                    return True
         return False
 
     def _has_differential(self, results: Dict) -> bool:
         """Check if any differential analysis found significant features."""
-        for aname in ["differential", "lefse", "ancom", "deseq2", "aldex2", "maaslin2"]:
-            r = results.get(aname, {}).get("result_data", {})
-            if r and r.get("n_significant", 0) > 0:
+        for r in self._iter_analysis(results, self._DIFF_NAMES):
+            if r.get("n_significant", 0) > 0 or r.get("n_significant_total", 0) > 0:
                 return True
             # Some results use top_features or similar
-            if r and (r.get("top_feature") or r.get("top_taxa")):
+            if r.get("top_feature") or r.get("top_taxa"):
                 return True
         return False
 
     def _extract_significant_taxa(self, results: Dict) -> List[str]:
         """Extract all significant taxa names from differential results."""
         taxa = []
-        for aname in ["differential", "lefse", "ancom", "deseq2", "aldex2", "maaslin2"]:
-            r = results.get(aname, {}).get("result_data", {})
-            if not r:
-                continue
+        for r in self._iter_analysis(results, self._DIFF_NAMES):
             # Check top_feature / top_taxa
             top = r.get("top_feature") or r.get("top_taxa")
             if isinstance(top, str):
@@ -543,9 +586,10 @@ class EnhancedInterpreter:
                     elif isinstance(feat, str):
                         taxa.append(feat)
         # Also check taxonomy-bar top taxa
-        tb = self._get_nested(results, "taxonomy-bar", "result_data", "statistics", "top_taxa")
-        if isinstance(tb, list):
-            taxa.extend(tb)
+        for r in self._iter_analysis(results, ("taxonomy-bar", "taxonomy_bar")):
+            tb = r.get("statistics", {}).get("top_taxa") if isinstance(r.get("statistics"), dict) else None
+            if isinstance(tb, list):
+                taxa.extend(tb)
         # Deduplicate while preserving order
         seen = set()
         return [t for t in taxa if not (t in seen or seen.add(t))]

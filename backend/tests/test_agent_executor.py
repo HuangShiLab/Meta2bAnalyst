@@ -160,11 +160,20 @@ class TestReportGeneratorModule:
     def _generate(self, **kwargs):
         return _get_module_function("report_generator")(**kwargs)
 
-    def test_unsupported_format_reports_unavailable_without_a_path(self):
-        out = self._generate(results=[{"job_type": "microbiome_pcoa"}], format="markdown")
-        assert out["status"] == "unavailable"
-        assert out["report_path"] is None
-        assert "markdown" in out["reason"]
+    def test_unsupported_format_degrades_to_pdf_with_note(self, tmp_path, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "UPLOAD_DIR", tmp_path)
+        out = self._generate(
+            results=[{"job_type": "microbiome_pcoa", "test_method": "microbiome_pcoa"}],
+            format="markdown",
+        )
+        assert out["status"] == "generated"
+        assert out["format"] == "pdf"
+        assert out["requested_format"] == "markdown"
+        assert "markdown" in out["note"]
+        report_path = Path(out["report_path"])
+        assert report_path.exists() and report_path.read_bytes().startswith(b"%PDF")
 
     def test_no_results_reports_unavailable_without_a_path(self):
         out = self._generate(results=[], format="pdf")

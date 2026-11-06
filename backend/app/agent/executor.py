@@ -251,12 +251,21 @@ def _get_module_function(module_name: str) -> Callable:
             """Render the completed steps into a real PDF via export_service.
 
             Honesty contract: this never returns a ``report_path`` for a file that
-            does not exist.  A format the backend cannot render, or an absent
-            reporting dependency, comes back as ``status="unavailable"`` with the
-            reason; a genuine generation failure raises so the step is recorded as
-            failed.
+            does not exist.  An absent reporting dependency comes back as
+            ``status="unavailable"`` with the reason; a genuine generation
+            failure raises so the step is recorded as failed.  Non-PDF format
+            requests (paper plans often ask for "html") degrade to PDF and are
+            reported via ``requested_format`` instead of refusing outright.
             """
-            fmt = str(kw.get("format") or "pdf").lower()
+            requested_format = str(kw.get("format") or "pdf").lower()
+            fmt = requested_format
+            degraded_note = None
+            if fmt != "pdf":
+                fmt = "pdf"
+                degraded_note = (
+                    f"Requested format '{requested_format}' is not implemented; "
+                    "rendered PDF instead."
+                )
             title = kw.get("title", "Multi-omics Analysis Report")
             analyses = list(results or [])
 
@@ -265,15 +274,11 @@ def _get_module_function(module_name: str) -> Callable:
                     "status": "unavailable",
                     "report_path": None,
                     "format": fmt,
+                    "requested_format": requested_format,
                     "reason": reason,
                     "n_analyses": len(analyses),
                 }
 
-            if fmt != "pdf":
-                return _unavailable(
-                    f"Report format '{fmt}' is not implemented; app.services."
-                    "export_service only renders PDF."
-                )
             if not analyses:
                 return _unavailable("No completed analysis steps to report on.")
 
@@ -303,11 +308,14 @@ def _get_module_function(module_name: str) -> Callable:
                 "status": "generated",
                 "report_path": str(export_path),
                 "format": "pdf",
+                "requested_format": requested_format,
                 "title": title,
                 "size_bytes": export_path.stat().st_size,
                 "n_analyses": len(analyses),
                 "modules": [a.get("job_type") for a in analyses],
             }
+            if degraded_note:
+                out["note"] = degraded_note
             if session_id:
                 out["report_url"] = (
                     f"/api/v1/sessions/{session_id}/export/download"
@@ -895,8 +903,92 @@ def _get_module_function(module_name: str) -> Callable:
 
 
 # ───────────────────────────────────────────────────────────────
-# WORKFLOW EXECUTOR
+# PARAMETER NORMALIZATION
 # ───────────────────────────────────────────────────────────────
+# LLM-written plans (e.g. paper-to-plan) speak the paper's vocabulary, not
+# the registry's: they say distance="bray" where the wrappers read
+# distance_metric="braycurtis", reference="Day0" where the wrappers read
+# reference_group="DAY0", and group_column="timepoint" where the metadata
+# column is "Timepoint".  Left alone these die as KeyErrors or - worse -
+# are silently ignored so a module runs on defaults and answers a different
+# question.  Normalize them here against the actual metadata, and return
+# every rewrite as a correction record so the SSE payload can show exactly
+# what was changed.
+
+#: alias -> canonical registry parameter name (applied only when the
+#: canonical name is absent)
+_PARAM_ALIASES: Dict[str, str] = {
+    "distance": "distance_metric",
+    "permutations": "n_permutations",
+    "n_perm": "n_permutations",
+    "reference": "reference_group",
+    "reference_class": "reference_group",
+    "reference_level": "reference_group",
+    "baseline": "reference_group",
+    "target": "group_column",
+}
+
+#: parameters whose value names a metadata column
+_COLUMN_PARAMS = (
+    "group_column", "subject_column", "time_column", "site_column",
+    "batch_column", "strata_column", "size_column", "source_column",
+)
+
+#: synonym sets used when a requested column does not appear in the
+#: metadata even case-insensitively
+_COLUMN_SYNONYMS: Dict[str, tuple] = {
+    "group_column": ("group", "condition", "disease", "disease_status",
+                     "phenotype", "status", "visit", "timepoint", "treatment"),
+    "subject_column": ("subject", "subject_id", "host_id", "host",
+                       "individual", "participant", "patient", "donor"),
+    "time_column": ("time", "timepoint", "visit", "day", "week", "month"),
+    "site_column": ("site", "body_site", "location"),
+    "batch_column": ("batch", "plate", "run", "cohort"),
+}
+
+#: modules whose primary metadata use is point coloring; a plan-level
+#: ``color_by`` expresses exactly that intent and wins over group_column
+_ORDINATION_MODULES = {
+    "microbiome_pcoa", "microbiome_nmds", "metabolome_pca", "tsne", "umap",
+}
+
+#: common distance-metric spellings -> canonical name
+_DISTANCE_ALIASES: Dict[str, str] = {
+    "bray": "braycurtis", "bray_curtis": "braycurtis", "bray-curtis": "braycurtis",
+    "euclidean": "euclidean", "jaccard": "jaccard",
+    "unifrac": "unifrac", "weighted_unifrac": "weighted_unifrac",
+    "unweighted_unifrac": "unweighted_unifrac", "aitchison": "aitchison",
+}
+
+
+def _norm_key(value: Any) -> str:
+    return str(value).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _snap_column_name(value: Any, columns: List[str], synonyms: tuple = ()) -> Optional[str]:
+    """Resolve a requested column name against actual metadata columns.
+
+    Order: exact -> case/separator-insensitive -> synonym-group match.
+    Returns None when nothing matches (caller leaves the value untouched and
+    the module's own error, now surfaced as a step failure, explains why).
+    """
+    if not isinstance(value, str) or not columns:
+        return None
+    if value in columns:
+        return value
+    norm_map = {}
+    for c in columns:
+        norm_map.setdefault(_norm_key(c), c)
+    key = _norm_key(value)
+    if key in norm_map:
+        return norm_map[key]
+    synset = {_norm_key(s) for s in synonyms}
+    if key in synset:
+        for c in columns:
+            if _norm_key(c) in synset:
+                return c
+    return None
+
 
 class WorkflowExecutor:
     """Executes analysis plans with parallelization and streaming."""
@@ -920,6 +1012,90 @@ class WorkflowExecutor:
             "metabolome": metabolome_df,
             "metadata": metadata_df,
         }
+
+    def _normalize_step_params(self, step: PlanStep, kwargs: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Rewrite LLM/paper-flavoured params into registry-canonical ones.
+
+        Mutates ``kwargs`` in place; returns the list of corrections applied
+        (each ``{"parameter", "from", "to", "kind"}``) so the step payload can
+        disclose them.  Only fires when the canonical parameter is absent, so
+        an explicit registry-correct plan is never second-guessed.
+        """
+        corrections: List[Dict[str, str]] = []
+
+        def _record(param: str, old: Any, new: Any, kind: str) -> None:
+            corrections.append({
+                "parameter": param, "from": str(old), "to": str(new), "kind": kind,
+            })
+            logger.info("step %s param correction [%s] %s: %r -> %r",
+                        step.id, kind, param, old, new)
+
+        metadata = self.session_data.get("metadata")
+        columns = list(metadata.columns) if isinstance(metadata, pd.DataFrame) else []
+
+        # 1. Parameter-name aliases (distance -> distance_metric, ...)
+        for alias, canon in _PARAM_ALIASES.items():
+            if alias in kwargs:
+                if canon not in kwargs:
+                    kwargs[canon] = kwargs[alias]
+                    _record(canon, alias, kwargs[alias], "alias")
+                kwargs.pop(alias)
+
+        # 2. Ordination modules: color_by expresses the grouping intent.
+        if step.module in _ORDINATION_MODULES and isinstance(kwargs.get("color_by"), str):
+            if kwargs.get("group_column") != kwargs["color_by"]:
+                _record("group_column", kwargs.get("group_column"), kwargs["color_by"], "color_by")
+                kwargs["group_column"] = kwargs["color_by"]
+            kwargs.pop("color_by")
+
+        # 3. PERMANOVA formula: the service is single-factor, so take the
+        #    first formula term as group_column and say so.
+        if step.module == "permanova" and kwargs.get("formula") and not kwargs.get("group_column"):
+            first_term = str(kwargs["formula"]).split("+")[0].strip()
+            snapped = _snap_column_name(first_term, columns, _COLUMN_SYNONYMS.get("group_column", ()))
+            if snapped:
+                kwargs["group_column"] = snapped
+                _record("group_column", f"formula:{kwargs['formula']}", snapped, "formula_first_term")
+            kwargs.pop("formula")
+        if step.module == "permanova" and kwargs.pop("stratify_by_subject", None):
+            if not kwargs.get("subject_column"):
+                snapped = _snap_column_name("subject", columns, _COLUMN_SYNONYMS.get("subject_column", ()))
+                if snapped:
+                    kwargs["subject_column"] = snapped
+                    _record("subject_column", "stratify_by_subject", snapped, "synonym")
+
+        # 4. Distance-metric spelling (bray -> braycurtis).
+        metric = kwargs.get("distance_metric")
+        if isinstance(metric, str):
+            canon_metric = _DISTANCE_ALIASES.get(_norm_key(metric))
+            if canon_metric and canon_metric != metric:
+                kwargs["distance_metric"] = canon_metric
+                _record("distance_metric", metric, canon_metric, "metric_spelling")
+
+        # 5. Metadata column snapping for every column-naming parameter.
+        for param in _COLUMN_PARAMS:
+            value = kwargs.get(param)
+            if not isinstance(value, str) or not columns:
+                continue
+            snapped = _snap_column_name(value, columns, _COLUMN_SYNONYMS.get(param, ()))
+            if snapped and snapped != value:
+                kwargs[param] = snapped
+                _record(param, value, snapped, "column_snap")
+
+        # 6. reference_group level snapping against the resolved group column.
+        ref = kwargs.get("reference_group")
+        group_col = kwargs.get("group_column")
+        if isinstance(ref, str) and isinstance(metadata, pd.DataFrame) \
+                and isinstance(group_col, str) and group_col in metadata.columns:
+            levels = [str(v) for v in metadata[group_col].dropna().unique()]
+            if ref not in levels:
+                norm_levels = {_norm_key(v): v for v in levels}
+                match = norm_levels.get(_norm_key(ref))
+                if match:
+                    kwargs["reference_group"] = match
+                    _record("reference_group", ref, match, "level_snap")
+
+        return corrections
 
     def _topological_sort(self, steps: List[PlanStep]) -> List[PlanStep]:
         """Sort steps by dependencies using Kahn's algorithm."""
@@ -1032,6 +1208,10 @@ class WorkflowExecutor:
             kwargs["results"] = self._completed_results_for_report()
             kwargs["session_id"] = self.session_id
 
+        # Rewrite paper/LLM-flavoured parameters (aliases, column names,
+        # distance spellings) before the module sees them.
+        param_corrections = self._normalize_step_params(step, kwargs)
+
         # Execute
         logger.info(f"Executing step {step.id}: {step.module}")
         start_time = time.time()
@@ -1048,6 +1228,7 @@ class WorkflowExecutor:
             "elapsed_time": elapsed,
             "module": step.module,
             "step_id": step.id,
+            "param_corrections": param_corrections,
         }
 
     def _completed_results_for_report(self) -> List[Dict[str, Any]]:
@@ -1144,17 +1325,33 @@ class WorkflowExecutor:
             # the caller can see *why* validation failed.
             self.state[step.id] = result["result"]
 
-            blocking = self._blocking_failure(step, result["result"])
+            # A module that catches its own failure and returns {"error": ...}
+            # must still surface as a failed step; recording it as complete
+            # would let downstream steps (and the report) treat an empty
+            # result as a successful analysis.
+            res = result["result"]
+            if isinstance(res, dict):
+                if res.get("error"):
+                    raise RuntimeError(f"{step.module} returned an error: {res['error']}")
+                if step.module == "report_generator" and res.get("status") == "unavailable":
+                    raise RuntimeError(
+                        f"report_generator unavailable: {res.get('reason', 'unknown reason')}"
+                    )
+
+            blocking = self._blocking_failure(step, res)
             if blocking:
                 raise DataValidationFailed(blocking)
 
             self.completed_steps.add(step.id)
 
             # Complete event
+            payload = self._result_payload(step, result)
+            if result.get("param_corrections"):
+                payload["param_corrections"] = result["param_corrections"]
             events.append(ExecutionEvent(
                 event_type="step_complete",
                 step_id=step.id,
-                payload=self._result_payload(step, result),
+                payload=payload,
             ))
 
             # Check if review is needed (e.g., p-value borderline)

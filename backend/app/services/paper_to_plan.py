@@ -55,7 +55,8 @@ def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
 _SYSTEM_PROMPT = """You are a bioinformatics methods analyst. Given the text of a scientific
 paper (microbiome/metabolome study), identify every computational/statistical
 analysis the authors performed, and reproduce that workflow using ONLY these
-platform modules:
+platform modules (parameter names and enum options are part of each module's
+contract - use them verbatim):
 
 {modules}
 
@@ -74,12 +75,44 @@ Rules:
 1. data_validator must be the first step (id "step1_validate").
 2. Only module names from the list above. Put everything else into
    unmatched_analyses - never invent modules.
-3. Choose params that mirror the paper's methods when the module supports
-   them (e.g. test_method, transformation, group_column).
-4. microbiome_marker MUST use transformation="clr" and test_method="mannwhitney".
-5. metabolome_marker MUST use transformation="log1p" and test_method="welch".
-6. Keep the workflow in the order the paper performed the analyses.
+3. Use ONLY the parameter names listed for each module; parameters shown as
+   enum must use one of the listed options. Do not invent parameters - extra
+   keys are ignored and your intent is lost.
+4. For parameters that name a metadata column (group_column, subject_column,
+   time_column, ...), use the paper's own wording (e.g. "timepoint"); the
+   platform resolves it against the uploaded metadata at execution time.
+5. microbiome_marker MUST use transformation="clr" and test_method="mannwhitney".
+6. metabolome_marker MUST use transformation="log1p" and test_method="welch".
+7. report_generator only supports format="pdf".
+8. Keep the workflow in the order the paper performed the analyses.
+9. Omit a parameter entirely when the paper gives no value for it; do not
+   guess defaults.
 """
+
+
+def _render_module_list() -> str:
+    """Module catalogue for the prompt, including each module's parameter
+    schema so the LLM picks real parameter names instead of guessing."""
+    lines = []
+    for name, spec in MODULE_REGISTRY.items():
+        line = f"- {name}: {spec.description} [category: {spec.category}]"
+        if spec.parameters:
+            parts = []
+            for pname, pspec in spec.parameters.items():
+                if not isinstance(pspec, dict):
+                    parts.append(pname)
+                    continue
+                ptype = pspec.get("type", "any")
+                if ptype == "enum" and pspec.get("options"):
+                    opts = "|".join(str(o) for o in pspec["options"][:8])
+                    parts.append(f"{pname}(enum:{opts})")
+                elif pspec.get("default") is not None:
+                    parts.append(f"{pname}({ptype},default={pspec['default']})")
+                else:
+                    parts.append(f"{pname}({ptype})")
+            line += " params: " + ", ".join(parts)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def plan_from_text(paper_text: str, max_chars: int = MAX_TEXT_CHARS) -> Dict[str, Any]:
@@ -98,11 +131,7 @@ def plan_from_text(paper_text: str, max_chars: int = MAX_TEXT_CHARS) -> Dict[str
     if len(text) > max_chars:
         text = text[:max_chars]
 
-    modules = "\n".join(
-        f"- {name}: {spec.description} [category: {spec.category}]"
-        for name, spec in MODULE_REGISTRY.items()
-    )
-    content = client.chat(_SYSTEM_PROMPT.format(modules=modules),
+    content = client.chat(_SYSTEM_PROMPT.format(modules=_render_module_list()),
                           text, max_tokens=16000, timeout=180)
     if not content:
         raise ValueError("LLM returned no content")
