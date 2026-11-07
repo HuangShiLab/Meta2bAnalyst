@@ -1125,12 +1125,11 @@ class WorkflowExecutor:
         # 5c. Honour an explicit data_type="metabolome" on single-table
         # modules: multi-omics papers run the same test per layer, and
         # without this the step would silently re-run on the microbiome.
-        # Modules whose registry input is "data" (normalization, ...) already
-        # route by data_type in _execute_step and are excluded.
-        reqs = get_module_spec(step.module).input_requirements
+        # Modules whose registry input is "data" were already routed by
+        # _execute_step; recording the layer here keeps the correction trail
+        # uniform (the swap is then a no-op).
         if (kwargs.get("data_type") == "metabolome"
                 and "df" in kwargs and "df2" not in kwargs
-                and reqs.get("data") != "required"
                 and self.session_data.get("metabolome") is not None):
             kwargs["df"] = self.session_data["metabolome"]
             _record("df", "microbiome", "metabolome", "data_layer")

@@ -1,0 +1,204 @@
+{
+  "paper": "huang2021_mbio",
+  "note": "Raw LLM plan-from-paper output captured 2026-11-06 (moonshot-v1-8k). Params intentionally use the paper's vocabulary (distance=, reference=, timepoint, diagnosis, insulin_resistance) to exercise the executor normalization layer.",
+  "steps": [
+    {
+      "id": "step1_validate",
+      "module": "data_validator",
+      "params": {
+        "check_missing": true,
+        "check_dimensions": true,
+        "verify_sample_metabolite_alignment": true,
+        "sample_id_column": "sample_id"
+      },
+      "depends_on": [],
+      "description": "Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment"
+    },
+    {
+      "id": "step2_microbiome_pcoa",
+      "module": "microbiome_pcoa",
+      "params": {
+        "distance": "bray",
+        "group_column": "timepoint",
+        "color_by": "bleeding",
+        "ordination_axes": 2
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+    },
+    {
+      "id": "step3_metabolome_pca",
+      "module": "metabolome_pca",
+      "params": {
+        "transformation": "log",
+        "scale": "pareto",
+        "group_column": "timepoint",
+        "color_by": "bleeding"
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Principal Component Analysis of metabolite intensities with z-score, log, or CLR transformation"
+    },
+    {
+      "id": "step4_permanova",
+      "module": "permanova",
+      "params": {
+        "distance": "bray",
+        "formula": "bleeding + disease_status + timepoint + subject",
+        "permutations": 999,
+        "stratify_by_subject": true
+      },
+      "depends_on": [
+        "step2_microbiome_pcoa"
+      ],
+      "description": "Permutational Multivariate Analysis of Variance to test metadata effects on community/metabolic composition"
+    },
+    {
+      "id": "step5_random_forest",
+      "module": "random_forest",
+      "params": {
+        "target": "timepoint",
+        "reference_class": "Day0",
+        "metric": "auroc",
+        "n_estimators": 500,
+        "longitudinal_pairs": true,
+        "omics": [
+          "microbiome",
+          "metabolome",
+          "cytokine"
+        ]
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Random Forest classification with feature importance to identify discriminative taxa/features"
+    },
+    {
+      "id": "step6_microbiome_marker",
+      "module": "microbiome_marker",
+      "params": {
+        "transformation": "clr",
+        "test_method": "mannwhitney",
+        "group_column": "timepoint",
+        "reference": "Day0",
+        "taxonomic_level": "genus",
+        "p_adjust": "bonferroni",
+        "responder_classes": [
+          "persistent",
+          "early"
+        ]
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Differential abundance analysis for microbiome using CLR transformation + Wilcoxon rank-sum test (compositionally appropriate)"
+    },
+    {
+      "id": "step7_metabolome_marker",
+      "module": "metabolome_marker",
+      "params": {
+        "transformation": "log1p",
+        "test_method": "welch",
+        "group_column": "timepoint",
+        "reference": "Day0",
+        "p_adjust": "fdr",
+        "responder_classes": [
+          "persistent",
+          "early"
+        ]
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Differential metabolite analysis using log1p transformation + Welch t-test"
+    },
+    {
+      "id": "step8_procrustes",
+      "module": "procrustes",
+      "params": {
+        "x_ordination": "microbiome_pcoa",
+        "y_ordination": "metabolome_pca",
+        "symmetric": true,
+        "report_r": true,
+        "permutations": 999
+      },
+      "depends_on": [
+        "step2_microbiome_pcoa",
+        "step3_metabolome_pca"
+      ],
+      "description": "Procrustes analysis to align and compare microbiome and metabolome ordinations"
+    },
+    {
+      "id": "step9_cross_correlation",
+      "module": "cross_correlation",
+      "params": {
+        "method": "spearman",
+        "x_features": "bacterial_genera",
+        "y_features": "metabolites",
+        "rho_threshold": 0.6,
+        "p_adjust": "fdr",
+        "p_threshold": 0.05,
+        "build_network": true,
+        "highlight_links": [
+          "Rothia-betaine"
+        ]
+      },
+      "depends_on": [
+        "step6_microbiome_marker",
+        "step7_metabolome_marker"
+      ],
+      "description": "Spearman rank correlation between bacterial genera and metabolites"
+    },
+    {
+      "id": "step10_functional_prediction",
+      "module": "functional_prediction",
+      "params": {
+        "method": "picrust2",
+        "input": "16S_rRNA",
+        "taxonomic_level": "genus",
+        "reference_db": "oral_core",
+        "compare_groups": [
+          "gingivitis",
+          "periodontitis",
+          "caries",
+          "SoH"
+        ]
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "PICRUSt2 functional prediction from 16S rRNA gene sequencing data"
+    },
+    {
+      "id": "step11_report",
+      "module": "report_generator",
+      "params": {
+        "format": "html",
+        "include_figures": true,
+        "include_tables": true,
+        "sections": [
+          "ordination",
+          "permanova",
+          "markers",
+          "integration",
+          "functional"
+        ]
+      },
+      "depends_on": [
+        "step2_microbiome_pcoa",
+        "step3_metabolome_pca",
+        "step4_permanova",
+        "step5_random_forest",
+        "step6_microbiome_marker",
+        "step7_metabolome_marker",
+        "step8_procrustes",
+        "step9_cross_correlation",
+        "step10_functional_prediction"
+      ],
+      "description": "Combine all analysis results into a unified PDF or HTML report with figures and tables"
+    }
+  ]
+}

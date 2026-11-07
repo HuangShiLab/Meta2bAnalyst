@@ -1,0 +1,174 @@
+{
+  "paper": "zhou2019_prediabetes",
+  "note": "Raw LLM plan-from-paper output captured 2026-11-06 (moonshot-v1-8k). Params intentionally use the paper's vocabulary (distance=, reference=, timepoint, diagnosis, insulin_resistance) to exercise the executor normalization layer.",
+  "steps": [
+    {
+      "id": "step1_validate",
+      "module": "data_validator",
+      "params": {},
+      "depends_on": [],
+      "description": "Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment"
+    },
+    {
+      "id": "step2_norm_microbiome",
+      "module": "normalization",
+      "params": {
+        "data_type": "microbiome",
+        "method": "tss"
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+    },
+    {
+      "id": "step3_norm_metabolome",
+      "module": "normalization",
+      "params": {
+        "data_type": "metabolome",
+        "method": "zscore"
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+    },
+    {
+      "id": "step4_mb_pcoa",
+      "module": "microbiome_pcoa",
+      "params": {
+        "distance_metric": "braycurtis",
+        "ordination_method": "pcoa",
+        "group_column": "insulin_resistance"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+    },
+    {
+      "id": "step5_mb_alpha",
+      "module": "microbiome_alpha",
+      "params": {
+        "metrics": [
+          "shannon",
+          "simpson"
+        ],
+        "group_column": "insulin_resistance"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Alpha diversity analysis for microbiome (richness, Shannon, Simpson, Pielou, inverse Simpson)"
+    },
+    {
+      "id": "step6_mb_permanova",
+      "module": "permanova",
+      "params": {
+        "data_type": "microbiome",
+        "distance_metric": "braycurtis",
+        "group_column": "insulin_resistance",
+        "subject_column": "participant"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Permutational Multivariate Analysis of Variance to test metadata effects on community/metabolic composition"
+    },
+    {
+      "id": "step7_met_pca",
+      "module": "metabolome_pca",
+      "params": {
+        "transformation": "zscore",
+        "group_column": "insulin_resistance"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Principal Component Analysis of metabolite intensities with z-score, log, or CLR transformation"
+    },
+    {
+      "id": "step8_mb_marker",
+      "module": "microbiome_marker",
+      "params": {
+        "group_column": "insulin_resistance",
+        "reference_group": "insulin_sensitive",
+        "transformation": "clr",
+        "test_method": "mannwhitney"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Differential abundance analysis for microbiome using CLR transformation + Wilcoxon rank-sum test (compositionally appropriate)"
+    },
+    {
+      "id": "step9_met_marker",
+      "module": "metabolome_marker",
+      "params": {
+        "group_column": "insulin_resistance",
+        "reference_group": "insulin_sensitive",
+        "transformation": "log1p",
+        "test_method": "welch"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Differential metabolite analysis using log1p transformation + Welch t-test"
+    },
+    {
+      "id": "step10_cross_corr",
+      "module": "cross_correlation",
+      "params": {
+        "method": "spearman"
+      },
+      "depends_on": [
+        "step2_norm_microbiome",
+        "step3_norm_metabolome"
+      ],
+      "description": "Spearman rank correlation between bacterial genera and metabolites"
+    },
+    {
+      "id": "step11_wgcna",
+      "module": "wgcna",
+      "params": {},
+      "depends_on": [
+        "step2_norm_microbiome",
+        "step3_norm_metabolome"
+      ],
+      "description": "WGCNA-style co-occurrence module detection with module-trait correlation"
+    },
+    {
+      "id": "step12_icc_stability",
+      "module": "icc_stability",
+      "params": {
+        "subject_column": "participant",
+        "time_column": "timepoint",
+        "transformation": "clr"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Intraclass Correlation Coefficient for microbiome temporal stability: decomposes variance into between-subject and within-subject components"
+    },
+    {
+      "id": "step13_report",
+      "module": "report_generator",
+      "params": {
+        "format": "pdf",
+        "title": "Longitudinal multi-omics of host-microbe dynamics in prediabetes"
+      },
+      "depends_on": [
+        "step4_mb_pcoa",
+        "step5_mb_alpha",
+        "step6_mb_permanova",
+        "step7_met_pca",
+        "step8_mb_marker",
+        "step9_met_marker",
+        "step10_cross_corr",
+        "step11_wgcna",
+        "step12_icc_stability"
+      ],
+      "description": "Combine all analysis results into a unified PDF or HTML report with figures and tables"
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+{
+  "paper": "lloydprice2019_ibd",
+  "note": "Raw LLM plan-from-paper output captured 2026-11-06 (moonshot-v1-8k). Params intentionally use the paper's vocabulary (distance=, reference=, timepoint, diagnosis, insulin_resistance) to exercise the executor normalization layer.",
+  "steps": [
+    {
+      "id": "step1_validate",
+      "module": "data_validator",
+      "params": {},
+      "depends_on": [],
+      "description": "Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment"
+    },
+    {
+      "id": "step2_norm_microbiome",
+      "module": "normalization",
+      "params": {
+        "data_type": "microbiome",
+        "method": "tss"
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+    },
+    {
+      "id": "step3_norm_metabolome",
+      "module": "normalization",
+      "params": {
+        "data_type": "metabolome",
+        "method": "zscore"
+      },
+      "depends_on": [
+        "step1_validate"
+      ],
+      "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+    },
+    {
+      "id": "step4_outlier",
+      "module": "outlier_detection",
+      "params": {
+        "method": "aitchison",
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Aitchison distance / Mahalanobis PCA / Isolation Forest / Cook's distance outlier detection"
+    },
+    {
+      "id": "step5_pcoa",
+      "module": "microbiome_pcoa",
+      "params": {
+        "distance_metric": "braycurtis",
+        "ordination_method": "pcoa",
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+    },
+    {
+      "id": "step6_alpha",
+      "module": "microbiome_alpha",
+      "params": {
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Alpha diversity analysis for microbiome (richness, Shannon, Simpson, Pielou, inverse Simpson)"
+    },
+    {
+      "id": "step7_permanova_mb",
+      "module": "permanova",
+      "params": {
+        "group_column": "diagnosis",
+        "distance_metric": "braycurtis",
+        "data_type": "microbiome",
+        "subject_column": "subject"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Permutational Multivariate Analysis of Variance to test metadata effects on community/metabolic composition"
+    },
+    {
+      "id": "step8_mbx_pca",
+      "module": "metabolome_pca",
+      "params": {
+        "transformation": "zscore",
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Principal Component Analysis of metabolite intensities with z-score, log, or CLR transformation"
+    },
+    {
+      "id": "step9_mbx_alpha",
+      "module": "metabolome_alpha",
+      "params": {
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Alpha diversity analysis for metabolome (metabolite richness, Shannon, Simpson, Pielou)"
+    },
+    {
+      "id": "step10_permanova_mbx",
+      "module": "permanova",
+      "params": {
+        "group_column": "diagnosis",
+        "distance_metric": "euclidean",
+        "data_type": "metabolome",
+        "subject_column": "subject"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Permutational Multivariate Analysis of Variance to test metadata effects on community/metabolic composition"
+    },
+    {
+      "id": "step11_maaslin",
+      "module": "maaslin3",
+      "params": {
+        "fixed_effects": [
+          "diagnosis"
+        ],
+        "normalization": "CLR"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "MaAsLin3 multivariate association analysis with mixed-effects models"
+    },
+    {
+      "id": "step12_mbx_marker",
+      "module": "metabolome_marker",
+      "params": {
+        "group_column": "diagnosis",
+        "transformation": "log1p",
+        "test_method": "welch"
+      },
+      "depends_on": [
+        "step3_norm_metabolome"
+      ],
+      "description": "Differential metabolite analysis using log1p transformation + Welch t-test"
+    },
+    {
+      "id": "step13_rf",
+      "module": "random_forest",
+      "params": {
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "Random Forest classification with feature importance to identify discriminative taxa/features"
+    },
+    {
+      "id": "step14_sparcc",
+      "module": "network_sparcc",
+      "params": {},
+      "depends_on": [
+        "step2_norm_microbiome"
+      ],
+      "description": "SparCC correlation network for microbiome taxa, accounting for compositional effects"
+    },
+    {
+      "id": "step15_kegg",
+      "module": "pathway_kegg",
+      "params": {
+        "pathway_db": "KEGG"
+      },
+      "depends_on": [
+        "step11_maaslin"
+      ],
+      "description": "KEGG pathway enrichment analysis for differentially abundant features"
+    },
+    {
+      "id": "step16_crosscorr",
+      "module": "cross_correlation",
+      "params": {
+        "method": "spearman"
+      },
+      "depends_on": [
+        "step2_norm_microbiome",
+        "step3_norm_metabolome"
+      ],
+      "description": "Spearman rank correlation between bacterial genera and metabolites"
+    },
+    {
+      "id": "step17_volcano",
+      "module": "volcano",
+      "params": {
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step11_maaslin"
+      ],
+      "description": "Volcano plot of differential abundance (effect size vs significance) from marker discovery"
+    },
+    {
+      "id": "step18_mofa",
+      "module": "mofa",
+      "params": {
+        "group_column": "diagnosis"
+      },
+      "depends_on": [
+        "step2_norm_microbiome",
+        "step3_norm_metabolome"
+      ],
+      "description": "MOFA+ style multi-omics factor analysis extracting latent factors shared across microbiome and metabolome"
+    },
+    {
+      "id": "step19_report",
+      "module": "report_generator",
+      "params": {
+        "format": "pdf",
+        "title": "Multi-omics of the Gut Microbial Ecosystem in IBD"
+      },
+      "depends_on": [
+        "step5_pcoa",
+        "step6_alpha",
+        "step7_permanova_mb",
+        "step8_mbx_pca",
+        "step11_maaslin",
+        "step12_mbx_marker",
+        "step13_rf",
+        "step15_kegg",
+        "step16_crosscorr",
+        "step18_mofa"
+      ],
+      "description": "Combine all analysis results into a unified PDF or HTML report with figures and tables"
+    }
+  ]
+}
