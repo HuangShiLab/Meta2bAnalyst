@@ -81,6 +81,8 @@ dist-ssr/
 # Test / temporary generated files
 *.pdf
 !backend/app/services/report_templates/*.pdf
+# Synthetic 2KB methods PDF used by the paper2agent e2e spec (no copyright).
+!frontend/e2e/fixtures/paper2agent_methods.pdf
 *.pid
 backend.pid
 analysis_results*.json

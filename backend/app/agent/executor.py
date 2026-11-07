@@ -998,7 +998,9 @@ def _snap_column_name(value: Any, columns: List[str], synonyms: tuple = ()) -> O
     if key in norm_map:
         return norm_map[key]
     synset = {_norm_key(s) for s in synonyms}
-    if key in synset:
+    # Word-overlap fallback: "disease group" / "clinical condition" contain
+    # synonym tokens even though the whole phrase is not in the set.
+    if key in synset or (synset & set(key.split("_"))):
         # Priority follows the synonym list (strong terms first), not the
         # metadata column order.
         colmap = {}
@@ -1146,6 +1148,12 @@ class WorkflowExecutor:
                 if match:
                     kwargs["reference_group"] = match
                     _record("reference_group", ref, match, "level_snap")
+                elif step.module in _REFERENCE_MODULES and levels:
+                    # The paper's reference label ("baseline", "control") does
+                    # not exist in this dataset; fall back to the first sorted
+                    # level, disclosed, rather than erroring out.
+                    kwargs["reference_group"] = levels[0]
+                    _record("reference_group", ref, levels[0], "reference_fallback")
             elif ref is None and step.module in _REFERENCE_MODULES and levels:
                 # The paper named no reference level; the module wrappers would
                 # otherwise fall back to a hardcoded "T4" that rarely exists.
@@ -1189,10 +1197,24 @@ class WorkflowExecutor:
 
     def _get_parallel_batches(self, steps: List[PlanStep]) -> List[List[PlanStep]]:
         """Group steps into parallel batches based on dependencies."""
+        # report_generator summarizes whatever the other steps produced, so it
+        # must run last even when the (LLM-written) plan forgot to declare the
+        # dependency - otherwise it races the batch and reports on nothing.
+        step_ids = [s.id for s in steps]
+        ordered: List[PlanStep] = []
+        for s in steps:
+            if s.module == "report_generator":
+                s = PlanStep(
+                    id=s.id, module=s.module, params=s.params,
+                    depends_on=[i for i in step_ids if i != s.id],
+                    description=s.description,
+                )
+            ordered.append(s)
+
         batches = []
         completed = set()
-        remaining = set(s.id for s in steps)
-        step_map = {s.id: s for s in steps}
+        remaining = set(s.id for s in ordered)
+        step_map = {s.id: s for s in ordered}
 
         while remaining:
             # Find all steps whose dependencies are satisfied
@@ -1289,6 +1311,29 @@ class WorkflowExecutor:
             "param_corrections": param_corrections,
         }
 
+    @staticmethod
+    def _sanitize_plot_values(entry: Dict[str, Any]) -> None:
+        """Convert plotly Figure objects to plain dicts (or drop them).
+
+        Some services (e.g. network_sparcc) return live Figure objects instead
+        of serialized dicts; export_service treats plot payloads as dicts and
+        dies with "'Figure' object has no attribute 'get'".
+        """
+        def _conv(v: Any) -> Any:
+            if isinstance(v, dict):
+                return {k: _conv(x) for k, x in v.items()}
+            to_json = getattr(v, "to_plotly_json", None)
+            if callable(to_json):
+                try:
+                    return to_json()
+                except Exception:
+                    return None
+            return v
+
+        for key in ("plot_data", "volcano_plot", "heatmap", "plot", "plots"):
+            if key in entry and entry[key] is not None and not isinstance(entry[key], (str, int, float, bool, list)):
+                entry[key] = _conv(entry[key])
+
     def _completed_results_for_report(self) -> List[Dict[str, Any]]:
         """Flatten completed step results into the shape export_service expects.
 
@@ -1306,6 +1351,7 @@ class WorkflowExecutor:
             result = self.state[sid]
             if isinstance(result, dict):
                 entry.update(result)
+                self._sanitize_plot_values(entry)
                 if not entry.get("plot_data"):
                     for alt in ("volcano_plot", "heatmap", "plot"):
                         if isinstance(result.get(alt), dict):

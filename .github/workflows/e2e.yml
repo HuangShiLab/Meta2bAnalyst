@@ -83,6 +83,13 @@ jobs:
         working-directory: frontend
         run: E2E_BASE_URL=http://localhost:8080 npx playwright test e2e/modules.spec.ts --workers=1
 
+      # Paper2Agent UI chain. CI has no LLM key (docker/.env is gitignored),
+      # so the full PDF->plan->confirm->execute case skips itself via a probe;
+      # the graceful-degradation case still runs and pins the error path.
+      - name: Run paper2agent chain
+        working-directory: frontend
+        run: E2E_BASE_URL=http://localhost:8080 npx playwright test e2e/paper2agent.spec.ts --workers=1
+
       - name: Compose logs on failure
         if: failure()
         run: docker compose -f docker/docker-compose.yml logs --tail=200
