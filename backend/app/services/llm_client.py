@@ -63,35 +63,56 @@ class KimiLLMClient:
         timeout: int = 60,
     ) -> Optional[str]:
         """Generic chat completion. Returns the assistant message content,
-        or None on any failure (caller decides the fallback)."""
+        or None on any failure (caller decides the fallback).
+
+        Reasoning-model resilience: when reasoning tokens exhaust
+        max_tokens, the API returns empty content with
+        finish_reason="length". Retry with a doubled completion budget
+        (up to 32768) so the answer itself still gets tokens."""
         if not self.available:
             return None
         import urllib.request
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            # kimi-for-coding is a reasoning model: it rejects any
-            # temperature other than 1 and its reasoning tokens count
-            # against max_tokens, so omit temperature and keep headroom.
-            "max_tokens": max_tokens,
-        }
-        if self.temperature is not None:
-            payload["temperature"] = self.temperature
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            response = json.loads(r.read().decode())
-        return response["choices"][0]["message"]["content"]
+
+        budget = max_tokens
+        for attempt in range(3):
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                # kimi-for-coding is a reasoning model: it rejects any
+                # temperature other than 1 and its reasoning tokens count
+                # against max_tokens, so omit temperature and keep headroom.
+                "max_tokens": budget,
+            }
+            if self.temperature is not None:
+                payload["temperature"] = self.temperature
+            req = urllib.request.Request(
+                f"{self.base_url}/chat/completions",
+                data=json.dumps(payload).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                response = json.loads(r.read().decode())
+            choice = response["choices"][0]
+            content = choice["message"].get("content") or ""
+            if content:
+                return content
+            if choice.get("finish_reason") == "length" and budget < 32768:
+                budget = min(budget * 2, 32768)
+                logger.warning(
+                    f"LLM returned empty content (finish_reason=length, "
+                    f"budget exhausted by reasoning); retrying with "
+                    f"max_tokens={budget}"
+                )
+                continue
+            return content or None
+        return None
 
     def enhance_narrative(
         self,

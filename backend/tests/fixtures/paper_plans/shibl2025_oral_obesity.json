@@ -1,0 +1,234 @@
+{
+ "paper": "Shibl et al. 2025 bioRxiv - Integrative multi-omic analysis reveals oral microbiome-metabolome signatures of obesity (10.1101/2025.06.22.659458)",
+ "steps": [
+  {
+   "id": "step1_validate",
+   "module": "data_validator",
+   "params": {},
+   "depends_on": [],
+   "description": "Validate data format, check dimensions, detect missing values, verify sample-metabolite alignment"
+  },
+  {
+   "id": "step2_rarefaction",
+   "module": "rarefaction",
+   "params": {
+    "metrics": [
+     "observed",
+     "shannon"
+    ],
+    "iterations": 100
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Rarefaction curves to assess sequencing depth sufficiency per sample or group"
+  },
+  {
+   "id": "step3_microbiome_alpha",
+   "module": "microbiome_alpha",
+   "params": {
+    "metrics": [
+     "richness",
+     "shannon"
+    ],
+    "group_column": "obesity"
+   },
+   "depends_on": [
+    "step2_rarefaction"
+   ],
+   "description": "Alpha diversity analysis for microbiome (richness, Shannon, Simpson, Pielou, inverse Simpson)"
+  },
+  {
+   "id": "step4_random_forest",
+   "module": "random_forest",
+   "params": {
+    "group_column": "obesity",
+    "n_estimators": 500
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Random Forest classification with feature importance to identify discriminative taxa/features"
+  },
+  {
+   "id": "step5_microbiome_pcoa_unifrac_uw",
+   "module": "microbiome_pcoa",
+   "params": {
+    "distance_metric": "unweighted_unifrac",
+    "ordination_method": "pcoa",
+    "group_column": "obesity"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+  },
+  {
+   "id": "step6_microbiome_pcoa_unifrac_w",
+   "module": "microbiome_pcoa",
+   "params": {
+    "distance_metric": "weighted_unifrac",
+    "ordination_method": "pcoa",
+    "group_column": "obesity"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+  },
+  {
+   "id": "step7_microbiome_pcoa_bray",
+   "module": "microbiome_pcoa",
+   "params": {
+    "distance_metric": "braycurtis",
+    "ordination_method": "pcoa",
+    "group_column": "obesity"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Principal Coordinate Analysis of microbiome composition using Bray-Curtis or UniFrac distances"
+  },
+  {
+   "id": "step8_unifrac",
+   "module": "unifrac",
+   "params": {
+    "weighted": true,
+    "group_column": "obesity",
+    "n_permutations": 10000
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "UniFrac phylogenetic diversity: weighted/unweighted UniFrac distances, Faith's PD, NMDS and PERMANOVA"
+  },
+  {
+   "id": "step9_permanova",
+   "module": "permanova",
+   "params": {
+    "group_column": "obesity",
+    "distance_metric": "braycurtis",
+    "permutations": 10000,
+    "data_type": "microbiome"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Permutational Multivariate Analysis of Variance to test metadata effects on community/metabolic composition"
+  },
+  {
+   "id": "step10_maaslin3",
+   "module": "maaslin3",
+   "params": {
+    "fixed_effects": [
+     "obesity"
+    ],
+    "normalization": "TSS"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "MaAsLin3 multivariate association analysis with mixed-effects models"
+  },
+  {
+   "id": "step11_batch_correction",
+   "module": "batch_correction",
+   "params": {
+    "biological_covariates": [
+     "obesity"
+    ],
+    "method": "combat",
+    "data_type": "metabolome"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "ComBat-seq/ComBat/MMUPHin batch effect correction with biological covariate preservation"
+  },
+  {
+   "id": "step12_normalization_tss",
+   "module": "normalization",
+   "params": {
+    "data_type": "metabolome",
+    "method": "sum"
+   },
+   "depends_on": [
+    "step11_batch_correction"
+   ],
+   "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+  },
+  {
+   "id": "step13_normalization_log",
+   "module": "normalization",
+   "params": {
+    "data_type": "metabolome",
+    "method": "log1p"
+   },
+   "depends_on": [
+    "step12_normalization_tss"
+   ],
+   "description": "Unified normalization entry: TSS/CSS/CLR/ILR/TMM/Rarefaction for microbiome; z-score/Pareto/Quantile/Sum/log1p for metabolome"
+  },
+  {
+   "id": "step14_metabolome_pca",
+   "module": "metabolome_pca",
+   "params": {
+    "transformation": "zscore",
+    "group_column": "obesity"
+   },
+   "depends_on": [
+    "step13_normalization_log"
+   ],
+   "description": "Principal Component Analysis of metabolite intensities with z-score, log, or CLR transformation"
+  },
+  {
+   "id": "step15_procrustes",
+   "module": "procrustes",
+   "params": {
+    "group_column": "obesity",
+    "procrustes_method": "pcoa",
+    "procrustes_metric_1": "braycurtis",
+    "procrustes_metric_2": "braycurtis",
+    "n_permutations": 1000
+   },
+   "depends_on": [
+    "step7_microbiome_pcoa_bray",
+    "step14_metabolome_pca"
+   ],
+   "description": "Procrustes analysis to align and compare microbiome and metabolome ordinations"
+  },
+  {
+   "id": "step16_cross_correlation",
+   "module": "cross_correlation",
+   "params": {
+    "method": "spearman"
+   },
+   "depends_on": [
+    "step1_validate"
+   ],
+   "description": "Spearman rank correlation between bacterial genera and metabolites"
+  },
+  {
+   "id": "step17_report",
+   "module": "report_generator",
+   "params": {
+    "format": "pdf",
+    "title": "Integrative multi-omic analysis reveals oral microbiome-metabolome signatures of obesity"
+   },
+   "depends_on": [
+    "step3_microbiome_alpha",
+    "step4_random_forest",
+    "step5_microbiome_pcoa_unifrac_uw",
+    "step6_microbiome_pcoa_unifrac_w",
+    "step7_microbiome_pcoa_bray",
+    "step8_unifrac",
+    "step9_permanova",
+    "step10_maaslin3",
+    "step14_metabolome_pca",
+    "step15_procrustes",
+    "step16_cross_correlation"
+   ],
+   "description": "Combine all analysis results into a unified PDF or HTML report with figures and tables"
+  }
+ ]
+}

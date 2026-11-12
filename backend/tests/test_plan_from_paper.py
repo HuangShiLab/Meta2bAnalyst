@@ -129,3 +129,44 @@ class TestPlanFromPaperEndpoint:
     def test_requires_input(self, client):
         resp = client.post("/api/v1/agent/plan-from-paper")
         assert resp.status_code == 422
+
+
+class TestWindowText:
+    """The paper-text windowing policy: opening + Methods, recentred on the
+    statistical-analysis subheading for long methods sections."""
+
+    def _paper(self):
+        head = "Intro. " * 700                                    # ~4.9k chars
+        results = "Some results text. " * 300                     # ~5.7k
+        wetlab = "Cohort and sequencing protocol. " * 700         # ~22.4k
+        stats = ("Statistical analyses 803\n" +
+                 "Alpha diversity with Shannon index; PERMANOVA on Bray-Curtis. " * 200)
+        return (head + "\nResults.\n" + results +
+                "\nMaterials and Methods 626\n" + "Ethics statement.\n" +
+                wetlab + "\n" + stats + "\nReferences\n1. Doe et al.")
+
+    def test_short_text_returned_whole(self):
+        assert p2p._window_text("x" * 1000, 24000) == "x" * 1000
+
+    def test_no_methods_heading_takes_head(self):
+        full = "y" * 50000
+        assert p2p._window_text(full, 24000) == "y" * 24000
+
+    def test_methods_window_recentred_on_stats_section(self):
+        # Methods (~35k chars) exceeds its 18k window and the stats
+        # subheading sits beyond the window tail, so the window must shift
+        # to keep the computational analyses - the part the planner maps
+        # to modules.
+        out = p2p._window_text(self._paper(), 24000)
+        assert "[... METHODS SECTION ...]" in out
+        assert "PERMANOVA on Bray-Curtis" in out
+        assert len(out) <= 24000 + 100  # budget + separator slack
+
+    def test_stats_heading_inside_references_does_not_trigger_shift(self):
+        # A "Statistical analyses" line after the References heading must
+        # not pull the window past the methods section.
+        paper = ("Intro. " * 700 + "\nMethods\n" + "Wet-lab protocol. " * 400 +
+                 "\nReferences\nStatistical analyses in review.\n" + "1. Doe et al. " * 300)
+        out = p2p._window_text(paper, 8000)
+        assert "Wet-lab protocol" in out
+        assert "Doe et al." not in out

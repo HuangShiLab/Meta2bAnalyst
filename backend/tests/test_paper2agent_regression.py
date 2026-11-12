@@ -1,17 +1,20 @@
-"""Paper2Agent regression: raw LLM plans from three landmark multi-omics
+"""Paper2Agent regression: raw LLM plans from four landmark multi-omics
 papers must keep executing on a Huang-style dataset.
 
-Fixtures under fixtures/paper_plans/ are the *unmodified* LLM outputs of
+Fixtures under fixtures/paper_plans/ are the LLM-produced plans of
 /agent/plan-from-paper for:
 
 - huang2021_mbio.json        Huang et al. 2021 mBio (the sample-data paper)
 - lloydprice2019_ibd.json    Lloyd-Price et al. 2019 Nature (IBDMDB)
 - zhou2019_prediabetes.json  Zhou et al. 2019 Nature (prediabetes)
+- shibl2025_oral_obesity.json  Shibl et al. 2025 bioRxiv (oral microbiome-
+                             metabolome obesity study)
 
 Their parameters deliberately speak each paper's vocabulary (``distance``,
-``reference``, ``timepoint``, ``diagnosis``, ``insulin_resistance``), so any
-regression in the executor's parameter normalization layer (alias mapping,
-column snapping, reference-level defaulting, data-layer routing) fails here.
+``reference``, ``timepoint``, ``diagnosis``, ``insulin_resistance``,
+``obesity``), so any regression in the executor's parameter normalization
+layer (alias mapping, column snapping, reference-level defaulting,
+data-layer routing, session-table orientation) fails here.
 
 LLM calls are not made; the plans are replayed verbatim. Execution is real.
 """
@@ -213,6 +216,69 @@ class TestZhou2019Plan:
         assert by_step["step10_cross_corr"]["event_type"] == "step_complete"
         result = executor.get_result("step10_cross_corr")
         assert result.get("n_pairs_tested") or result.get("statistics") or isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_icc_stability_runs_on_session_orientation(self, huang_like_data, tmp_path, monkeypatch):
+        """Session tables are features x samples; run_icc_stability expects
+        samples x features. Regression guard for the wrapper transpose:
+        without it df.index holds taxa and intersects sample IDs to empty
+        ("No matching samples between data and metadata")."""
+        executor, by_step, _ = await _run("zhou2019_prediabetes", huang_like_data, tmp_path, monkeypatch)
+        assert by_step["step12_icc_stability"]["event_type"] == "step_complete"
+        result = executor.get_result("step12_icc_stability")
+        assert isinstance(result, dict) and "icc_values" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_group_column_error_names_available_columns(self, huang_like_data, tmp_path, monkeypatch):
+        """A missing metadata column must produce a readable error naming the
+        column and listing what is available, not a bare KeyError string."""
+        _, by_step, _ = await _run("zhou2019_prediabetes", huang_like_data, tmp_path, monkeypatch)
+        err = str(by_step["step8_mb_marker"]["payload"].get("error"))
+        assert "insulin_resistance" in err
+        assert "not found in metadata" in err
+        assert "Group" in err  # available columns are listed
+
+
+class TestShibl2025Plan:
+    """Oral microbiome-metabolome obesity study (bioRxiv 2025): a 17-step
+    plan whose grouping column ("obesity") and batch column have no
+    counterpart in Huang-like metadata - those steps must fail honestly,
+    the rest must run, and the cascade must skip dependents only."""
+
+    @pytest.mark.asyncio
+    async def test_no_abort_full_accounting(self, huang_like_data, tmp_path, monkeypatch):
+        _, by_step, finals = await _run("shibl2025_oral_obesity", huang_like_data, tmp_path, monkeypatch)
+        assert finals, "honest step failures must not abort the workflow"
+        final = finals[0]["payload"]
+        assert final["total_steps"] == 17
+        assert final["completed"] + final["failed"] + final["skipped"] == 17
+
+    @pytest.mark.asyncio
+    async def test_missing_batch_column_fails_with_clear_message(self, huang_like_data, tmp_path, monkeypatch):
+        _, by_step, _ = await _run("shibl2025_oral_obesity", huang_like_data, tmp_path, monkeypatch)
+        step = by_step["step11_batch_correction"]
+        assert step["event_type"] == "step_error"
+        err = str(step["payload"].get("error"))
+        assert "batch_column" in err and "no batch column" in err
+        # The ComBat cascade: normalization/pca/procrustes depend on it.
+        for sid in ("step12_normalization_tss", "step13_normalization_log",
+                    "step14_metabolome_pca", "step15_procrustes"):
+            assert by_step[sid]["event_type"] == "step_skipped", sid
+
+    @pytest.mark.asyncio
+    async def test_unmatchable_group_column_fails_honestly(self, huang_like_data, tmp_path, monkeypatch):
+        _, by_step, _ = await _run("shibl2025_oral_obesity", huang_like_data, tmp_path, monkeypatch)
+        # "obesity" has no counterpart in Huang-like metadata; grouped
+        # supervised modules must error, not silently run ungrouped.
+        assert by_step["step4_random_forest"]["event_type"] == "step_error"
+        assert by_step["step9_permanova"]["event_type"] == "step_error"
+
+    @pytest.mark.asyncio
+    async def test_report_still_generated(self, huang_like_data, tmp_path, monkeypatch):
+        executor, by_step, _ = await _run("shibl2025_oral_obesity", huang_like_data, tmp_path, monkeypatch)
+        assert by_step["step17_report"]["event_type"] == "step_complete"
+        report = executor.get_result("step17_report")
+        assert isinstance(report, dict) and report.get("status") == "generated"
 
 
 class TestDependencySkipping:

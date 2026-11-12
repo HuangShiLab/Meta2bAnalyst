@@ -51,6 +51,12 @@ class DataValidationFailed(RuntimeError):
     """
 
 
+def _raise(message: str):
+    """Raise a ValueError from inside a lambda (wrappers use it for
+    missing required parameters that only surface at call time)."""
+    raise ValueError(message)
+
+
 # ───────────────────────────────────────────────────────────────
 # EVENT TYPES (for SSE streaming)
 # ───────────────────────────────────────────────────────────────
@@ -809,7 +815,11 @@ def _get_module_function(module_name: str) -> Callable:
             "batch_correction": lambda df, metadata_df=None, **kw: run_batch_correction(
                 df,
                 metadata_df=metadata_df,
-                batch_column=kw.get("batch_column"),
+                batch_column=kw.get("batch_column") or _raise(
+                    "batch_correction requires a batch_column naming the batch "
+                    "variable in the metadata; the paper describes ComBat-style "
+                    "correction but this dataset's metadata has no batch column"
+                ),
                 biological_covariates=kw.get("biological_covariates"),
                 method=kw.get("method", "combat_seq"),
                 data_type=kw.get("data_type", "microbiome"),
@@ -876,22 +886,25 @@ def _get_module_function(module_name: str) -> Callable:
                 latent_dim=kw.get("latent_dim", 50),
                 learning_rate=kw.get("learning_rate", 0.001),
             ),
+            # Services below expect samples x features; session tables are
+            # features x samples, so transpose (same convention as
+            # metabolome_alpha / maaslin3 / _site_tables above).
             "spatial_gradient": lambda df, metadata_df=None, **kw: run_spatial_gradient(
-                df,
+                df.T,
                 metadata_df=metadata_df,
                 site_column=kw.get("site_column"),
                 spatial_distance_matrix=kw.get("spatial_distance_matrix"),
                 method=kw.get("method", "distance_decay"),
             ),
             "dmi": lambda df, metadata_df=None, **kw: run_dmi(
-                df,
+                df.T,
                 metadata_df=metadata_df,
                 subject_column=kw.get("subject_column"),
                 time_column=kw.get("time_column"),
                 n_bootstrap=kw.get("n_bootstrap", 20),
             ),
             "icc_stability": lambda df, metadata_df=None, **kw: run_icc_stability(
-                df,
+                df.T,
                 metadata_df=metadata_df,
                 subject_column=kw.get("subject_column"),
                 time_column=kw.get("time_column"),

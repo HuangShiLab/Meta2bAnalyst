@@ -262,9 +262,22 @@ def run_metabolomics_marker_discovery(df: pd.DataFrame,
     """
     # Standard format: samples as rows, metabolites as columns
     # No auto-transpose to avoid confusion with metadata indexing
-    pass
-    X = df.values.astype(float)
+    if group_column not in metadata_df.columns:
+        raise ValueError(
+            f"Group column '{group_column}' not found in metadata. "
+            f"Available columns: {metadata_df.columns.tolist()}"
+        )
 
+    common = df.index.intersection(metadata_df.index)
+    if len(common) == 0:
+        raise ValueError("No matching samples between data and metadata.")
+
+    # Align rows to the shared samples first: every group mask below is
+    # built on `common`, so X and df must follow the same row order.
+    df = df.loc[common]
+    groups = metadata_df.loc[common, group_column]
+
+    X = df.values.astype(float)
     if transformation == 'log1p':
         X = np.log1p(X)
     elif transformation == 'log':
@@ -274,13 +287,6 @@ def run_metabolomics_marker_discovery(df: pd.DataFrame,
     elif transformation == 'clr':
         X = _center_log_ratio(df).values
         X = np.log1p(X)
-    elif transformation == 'log':
-        X = np.log(X + 1e-6)
-    elif transformation == 'zscore':
-        X = StandardScaler().fit_transform(X)
-
-    common = df.index.intersection(metadata_df.index)
-    groups = metadata_df.loc[common, group_column]
 
     if reference_group not in groups.values:
         raise ValueError(f"Reference group '{reference_group}' not found in {group_column}. "

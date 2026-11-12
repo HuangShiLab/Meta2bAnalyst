@@ -37,17 +37,61 @@ _METHODS_HEADING = re.compile(
     r"(?im)^\s*(?:\d+\s*[.:-]?\s*)?(?:materials\s+and\s+|star\s+)?methods\b\s*\d*\s*$"
 )
 
+# A Statistical/Bioinformatics analysis subheading line inside Methods. Long
+# methods sections lead with cohort and wet-lab protocols; the computational
+# analyses the planner maps to modules are described under these subheadings.
+_STATS_HEADING = re.compile(
+    r"(?im)^\s*(?:\d+\s*[.:-]?\s*)?(?:statistical|bioinformatics?|computational)\s+"
+    r"(?:analysis|analyses|methods)\b[^\n]{0,60}$"
+)
 
-def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
-    """Extract paper text for the planner: opening (title/abstract/intro) plus
-    the Methods section.
+# Bounds the Methods section so a "Statistical analysis" citation line inside
+# the References is never mistaken for the real subheading.
+_REFERENCES_HEADING = re.compile(
+    r"(?im)^\s*(?:\d+\s*[.:-]?\s*)?references\s*$"
+)
+
+
+def _window_text(full: str, max_chars: int) -> str:
+    """Budget the paper text: opening (title/abstract/intro) plus Methods.
 
     Nature-format papers print Methods after the Discussion, so a naive
     first-N-chars cut misses the very text the planner needs.  When a
-    standalone Methods heading is found, return the first third of the budget
-    from the top of the paper and the rest starting at the Methods heading
-    (the last such heading - earlier hits are usually in-text references).
+    standalone Methods heading is found, return the first quarter of the
+    budget from the top of the paper and the rest starting at the Methods
+    heading (the last such heading - earlier hits are usually in-text
+    references or TOC entries).
+
+    Methods sections longer than their window lead with cohort and wet-lab
+    subsections; when a statistical-analysis subheading sits at or beyond the
+    window's tail, recentre the window on it - that is where the analyses the
+    planner must map to modules are described.
     """
+    if len(full) <= max_chars:
+        return full
+    matches = list(_METHODS_HEADING.finditer(full))
+    if not matches:
+        return full[:max_chars]
+
+    head_budget = max_chars // 4
+    methods_budget = max_chars - head_budget
+    head = full[:head_budget]
+    methods_start = matches[-1].start()
+    ref = _REFERENCES_HEADING.search(full, methods_start)
+    methods_end = ref.start() if ref else len(full)
+
+    window_start = methods_start
+    stats = _STATS_HEADING.search(full, methods_start, methods_end)
+    if stats and stats.start() > window_start + methods_budget - 4000:
+        window_start = max(methods_start, stats.start() - 2500)
+
+    methods = full[window_start:min(window_start + methods_budget, methods_end)]
+    return head + "\n\n[... METHODS SECTION ...]\n\n" + methods
+
+
+def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
+    """Extract paper text for the planner: opening plus the Methods section
+    (see _window_text for the windowing policy)."""
     import io
     from pypdf import PdfReader
 
@@ -64,19 +108,7 @@ def extract_pdf_text(pdf_bytes: bytes, max_chars: int = MAX_TEXT_CHARS) -> str:
         if total > _FULL_TEXT_CAP:
             break
     full = "\n".join(parts)
-    if len(full) <= max_chars:
-        return full
-
-    matches = list(_METHODS_HEADING.finditer(full))
-    if not matches:
-        return full[:max_chars]
-
-    head_budget = max_chars // 3
-    methods_budget = max_chars - head_budget
-    head = full[:head_budget]
-    methods_start = matches[-1].start()
-    methods = full[methods_start:methods_start + methods_budget]
-    return head + "\n\n[... METHODS SECTION ...]\n\n" + methods
+    return _window_text(full, max_chars)
 
 
 _SYSTEM_PROMPT = """You are a bioinformatics methods analyst. Given the text of a scientific
