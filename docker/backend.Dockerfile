@@ -65,6 +65,17 @@ COPY backend/examples/ ./examples/
 # inside the container.
 COPY sample_data/microbiome/ sample_data/metabolome/ sample_data/multi-omics/ sample_data/multi-site-multi-omics/ ./sample_data/
 
+# ── Plotly static export (kaleido) ───────────────────────────────────────────
+# kaleido v1 renders through a real Chrome. On linux/arm64 (Apple Silicon) there
+# is no distro Chrome package, so use Playwright's chromium headless shell,
+# which ships a working arm64 binary. Symlink it to a stable path so BROWSER_PATH
+# does not embed Playwright's revisioned cache directory.
+RUN pip install --no-cache-dir "playwright==1.65.2" \
+    && playwright install chromium \
+    && ln -sf "$(find /root/.cache/ms-playwright -name 'chrome-headless-shell' -type f | head -1)" \
+       /usr/local/bin/chrome-headless-shell
+ENV BROWSER_PATH=/usr/local/bin/chrome-headless-shell
+
 # `data` holds the SQLite file. SQLAlchemy will not create a missing parent
 # directory, so a bind/volume mount target must exist before first start.
 RUN mkdir -p uploads logs data
@@ -82,7 +93,11 @@ RUN python -c "import app.main; print('app imports OK')" \
 assert rpy2_available(), 'rpy2 not usable'; \
 missing=[p for p in ('DESeq2','edgeR','ANCOMBC','ALDEx2','mixOmics','WGCNA','sva') if not rpackage_available(p)]; \
 assert not missing, f'R packages unusable from Python: {missing}'; \
-print('R integration OK')"
+print('R integration OK')" \
+    && python -c "import plotly.graph_objects as go; \
+png = go.Figure(data=[go.Bar(x=['a'], y=[1])]).to_image(format='png', width=100, height=80); \
+assert len(png) > 500, 'plotly static export produced a suspiciously small PNG'; \
+print('kaleido static export OK')"
 
 EXPOSE 8000
 

@@ -42,7 +42,9 @@ pyarrow>=14.0.0
 # ── Reporting / figures ──────────────────────────────────────────────────────
 plotly>=5.18.0
 # Static image export for Plotly figures (PNG/SVG/PDF).
-kaleido>=0.2.1
+# v1+ renders through a real Chrome; the backend image provides one via
+# Playwright's headless shell and sets BROWSER_PATH (see docker/backend.Dockerfile).
+kaleido>=1.0.0
 # PDF report generation (app/services/export_service.py).
 reportlab>=4.0.0
 # PDF text extraction for literature mining + plan-from-paper
