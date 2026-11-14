@@ -124,13 +124,43 @@ class TestExportResult:
 class TestExportPlot:
     """Test suite for plot export functions."""
 
+    @staticmethod
+    def _plot_data():
+        return {
+            "data": [{"type": "scatter", "x": [1, 2, 3], "y": [2, 1, 3]}],
+            "layout": {"title": "t"},
+        }
+
     def test_export_plot_html(self):
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
             target = f.name
-        export_plot("sid", target, "html")
+        export_plot("sid", target, "html", {"plot_data": self._plot_data()})
         assert Path(target).exists()
         content = Path(target).read_text()
         assert "<html>" in content
+        assert "scatter" in content  # the real figure is embedded, not a placeholder
+        Path(target).unlink()
+
+    def test_export_plot_html_requires_data(self):
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            target = f.name
+        with pytest.raises(ValueError):
+            export_plot("sid", target, "html")
+        Path(target).unlink()
+
+    @pytest.mark.parametrize("fmt, magic", [("png", b"\x89PNG"), ("svg", b"<"), ("pdf", b"%PDF")])
+    def test_export_plot_image_formats(self, fmt, magic):
+        """PNG/SVG/PDF export via kaleido; skipped where no Chrome is available."""
+        pytest.importorskip("kaleido")
+        with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as f:
+            target = f.name
+        try:
+            export_plot("sid", target, fmt, {"plot_data": self._plot_data()})
+        except Exception as e:  # no Chrome/headless shell on this host
+            pytest.skip(f"kaleido browser unavailable: {e}")
+        content = Path(target).read_bytes()
+        assert content.startswith(magic)
+        assert len(content) > 500
         Path(target).unlink()
 
     def test_export_plot_json_no_results(self):

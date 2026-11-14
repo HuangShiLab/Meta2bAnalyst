@@ -126,6 +126,8 @@ async def inspect_data(
     
     # Preview first few rows (transposed for display: samples as rows)
     preview_df = df.iloc[:5, :5].T.reset_index()
+    # Integer feature IDs become integer dict keys; stringify for the schema.
+    preview_df.columns = [str(c) for c in preview_df.columns]
     preview = preview_df.to_dict(orient="records")
 
     # Per-sample library sizes for the inspection bar chart
@@ -163,8 +165,10 @@ async def inspect_data(
         column_count=len(df.columns),
         sample_count=len(df.columns),
         feature_count=len(df.index),
-        sample_names=list(df.columns),
-        feature_names=list(df.index),
+        # Cast to str: some input formats (e.g. 2bRAD-M numeric feature IDs)
+        # parse to an integer index, which fails response validation.
+        sample_names=[str(s) for s in df.columns],
+        feature_names=[str(f) for f in df.index],
         summary=summary,
         preview=preview,
         library_sizes=library_sizes,

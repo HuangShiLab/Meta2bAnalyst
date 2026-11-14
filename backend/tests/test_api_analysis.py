@@ -48,6 +48,38 @@ class TestAnalysisAPI:
         response = client.get("/api/v1/sessions/nonexistent-id/inspect")
         assert response.status_code == 404
 
+    def test_data_inspection_numeric_feature_ids(self, client, mock_session_id, sample_feature_table, sample_metadata):
+        """2bRAD-M-style numeric feature IDs must not 500 the inspect endpoint.
+
+        Regression: integer feature index produced non-string feature_names /
+        preview keys and failed DataInspectionResponse validation (108 errors).
+        """
+        numeric = sample_feature_table.copy()
+        numeric.index = range(len(numeric))  # integer feature IDs
+        tsv_buffer = io.BytesIO()
+        numeric.to_csv(tsv_buffer, sep="\t", index=True)
+        tsv_buffer.seek(0)
+        files = {"file": ("features.tsv", tsv_buffer, "text/tab-separated-values")}
+        client.post(
+            f"/api/v1/sessions/{mock_session_id}/upload",
+            data={"file_type": "feature_table"},
+            files=files,
+        )
+        response = client.get(f"/api/v1/sessions/{mock_session_id}/inspect")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["feature_count"] == 20
+        assert all(isinstance(f, str) for f in data["feature_names"])
+
+    def test_normalize_css_string_columns(self, client, session_with_data):
+        """CSS must work with string sample labels (was iloc label bug)."""
+        response = client.post(
+            f"/api/v1/sessions/{session_with_data}/normalize",
+            json={"method": "css"},
+        )
+        assert response.status_code == 200
+
+
     def test_filter_data(self, client, session_with_data):
         """Test data filtering endpoint."""
         response = client.post(
@@ -73,7 +105,6 @@ class TestAnalysisAPI:
         assert data["method"] == "relative"
         assert data["status"] == "success"
 
-    @pytest.mark.skip(reason="Source code bug: alpha result_data contains numpy.bool_ which is not JSON serializable by SQLAlchemy SQLite JSON column")
     def test_alpha_diversity_analysis(self, client, session_with_data):
         """Test alpha diversity analysis endpoint."""
         response = client.post(
@@ -107,7 +138,6 @@ class TestAnalysisAPI:
         assert data["status"] == "completed"
         assert "result_data" in data
 
-    @pytest.mark.skip(reason="Source code bug: PCoA result_data contains numpy types not JSON serializable by SQLAlchemy SQLite JSON column")
     def test_pcoa_analysis(self, client, session_with_data):
         """Test PCoA analysis endpoint."""
         response = client.post(

@@ -144,7 +144,6 @@ class TestNormalization:
         col_sums = normalized.sum(axis=0)
         np.testing.assert_array_almost_equal(col_sums.values, np.ones(len(col_sums)), decimal=5)
 
-    @pytest.mark.skip(reason="Source code bug: normalize_css uses iloc with column name instead of integer index")
     def test_normalize_css(self, sample_feature_table):
         processor = DataProcessor()
         normalized = processor.normalize_css(sample_feature_table)
@@ -191,7 +190,6 @@ class TestConvenienceFunctions:
         normalized = normalize_data(sample_feature_table, method="relative")
         assert normalized.shape == sample_feature_table.shape
 
-    @pytest.mark.skip(reason="Source code bug: normalize_css uses iloc with column name instead of integer index")
     def test_normalize_data_css(self, sample_feature_table):
         normalized = normalize_data(sample_feature_table, method="css")
         assert normalized.shape == sample_feature_table.shape

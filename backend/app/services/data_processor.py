@@ -317,10 +317,12 @@ class DataProcessor:
             cumsum = cumsum_df[col].values
             # Find first index where cumsum >= target
             idx = np.searchsorted(cumsum, target, side='left')
+            # .iloc needs positional indices on both axes; `col` is a label.
+            col_pos = sorted_df.columns.get_loc(col)
             if idx < len(sorted_df):
-                quantile_values[col] = sorted_df.iloc[idx, col]
+                quantile_values[col] = sorted_df.iloc[idx, col_pos]
             else:
-                quantile_values[col] = sorted_df.iloc[-1, col] if len(sorted_df) > 0 else 1.0
+                quantile_values[col] = sorted_df.iloc[-1, col_pos] if len(sorted_df) > 0 else 1.0
 
         # Replace zero quantiles with a small value to avoid division by zero
         quantile_values = quantile_values.replace(0, np.nan).fillna(1e-10)

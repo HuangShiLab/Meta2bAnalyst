@@ -195,24 +195,30 @@ def export_plot(
     """
     params = parameters or {}
     
-    if format in ("png", "svg", "jpg", "jpeg"):
+    if format in ("png", "svg", "jpg", "jpeg", "pdf"):
         import plotly.io as pio
         # From result_data 中提取 plot_data JSON
         fig_data = params.get('plot_data')
         if fig_data:
             fig = pio.from_json(json.dumps(fig_data))
+            # plotly>=6: kaleido is the only engine and the `engine` kwarg is gone.
             if format == 'svg':
-                fig.write_image(export_path, format='svg', engine='kaleido')
+                fig.write_image(export_path, format='svg')
             elif format in ('jpg', 'jpeg'):
-                fig.write_image(export_path, format='jpeg', engine='kaleido', width=1200, height=800, scale=2)
+                fig.write_image(export_path, format='jpeg', width=1200, height=800, scale=2)
+            elif format == 'pdf':
+                fig.write_image(export_path, format='pdf', width=1200, height=800)
             else:  # png
-                fig.write_image(export_path, format='png', engine='kaleido', width=1200, height=800, scale=2)
+                fig.write_image(export_path, format='png', width=1200, height=800, scale=2)
             logger.info(f"Exported plot to {export_path} (format: {format})")
         else:
             raise ValueError("No plot data provided for image export")
-    
+
     elif format == "html":
-        # Create a simple HTML with embedded plotly
+        # Embed the actual figure, not an empty placeholder.
+        fig_data = params.get('plot_data')
+        if not fig_data:
+            raise ValueError("No plot data provided for HTML export")
         html = f"""<!DOCTYPE html>
 <html>
 <head><title>Meta2bAnalyst Plot</title>
@@ -221,8 +227,7 @@ def export_plot(
 <body>
 <div id="plot"></div>
 <script>
-// Plot data would be loaded here
-Plotly.newPlot('plot', [], {{}});
+Plotly.newPlot('plot', {json.dumps(fig_data.get('data', []))}, {json.dumps(fig_data.get('layout', {}))});
 </script>
 </body>
 </html>"""
