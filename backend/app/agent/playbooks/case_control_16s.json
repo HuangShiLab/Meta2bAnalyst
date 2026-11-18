@@ -1,0 +1,41 @@
+{
+  "id": "case_control_16s",
+  "title": "病例-对照 16S 微生物组研究",
+  "title_en": "Case-control 16S microbiome study",
+  "study_type": "case_control_16s",
+  "article_archetype": "典型两组或多组 16S 扩增子病例-对照设计",
+  "description": "单时间点、两组（或多组）设计的 16S 微生物组比较。覆盖：测序深度评估、Alpha/Beta 多样性、群落结构检验（PERMANOVA/ANOSIM）、差异菌（CLR + Wilcoxon）、组成与热图展示、随机森林判别，以及组间共享/特有特征（UpSet）。",
+  "required_data": ["microbiome", "metadata"],
+  "required_columns": {
+    "group_column": "分组变量（如 Group / Disease / Treatment；两组或有序多组）"
+  },
+  "optional_columns": {
+    "reference_group": "差异分析的参考水平（缺省时取排序后的第一个水平，通常为对照组）"
+  },
+  "expected_outputs": [
+    "稀释曲线（测序深度充分性）",
+    "Alpha 多样性箱线图与检验",
+    "PCoA 排序图（按分组上色）",
+    "PERMANOVA 与 ANOSIM 统计表",
+    "差异菌火山图与显著特征表",
+    "属水平组成堆叠条形图与聚类热图",
+    "随机森林特征重要性与判别效能",
+    "UpSet 组间共享/特有特征",
+    "综合 PDF 报告"
+  ],
+  "steps": [
+    {"id": "step1_validate", "module": "data_validator", "params": {}, "depends_on": [], "description": "校验数据格式、维度与样本对齐"},
+    {"id": "step2_rarefaction", "module": "rarefaction", "params": {"group_column": "{group_column}", "metrics": ["observed", "shannon"]}, "depends_on": ["step1_validate"], "description": "稀释曲线：评估测序深度是否充分"},
+    {"id": "step3_alpha", "module": "microbiome_alpha", "params": {"metrics": ["richness", "shannon", "simpson"], "group_column": "{group_column}"}, "depends_on": ["step1_validate"], "description": "Alpha 多样性组间比较"},
+    {"id": "step4_pcoa", "module": "microbiome_pcoa", "params": {"distance_metric": "braycurtis", "group_column": "{group_column}"}, "depends_on": ["step1_validate"], "description": "PCoA 排序（按分组上色）"},
+    {"id": "step5_permanova", "module": "permanova", "params": {"data_type": "microbiome", "group_column": "{group_column}", "permutations": 999}, "depends_on": ["step4_pcoa"], "description": "PERMANOVA：群落结构组间差异"},
+    {"id": "step6_anosim", "module": "anosim", "params": {"group_column": "{group_column}"}, "depends_on": ["step4_pcoa"], "description": "ANOSIM：组间/组内相似性比较"},
+    {"id": "step7_marker", "module": "microbiome_marker", "params": {"group_column": "{group_column}", "reference_group": "{reference_group}"}, "depends_on": ["step1_validate"], "description": "差异菌分析（CLR + Wilcoxon，对照为参考）"},
+    {"id": "step8_volcano", "module": "volcano", "params": {"group_column": "{group_column}", "reference_group": "{reference_group}"}, "depends_on": ["step7_marker"], "description": "差异菌火山图"},
+    {"id": "step9_taxonomy_bar", "module": "taxonomy_bar", "params": {"group_column": "{group_column}", "tax_level": "genus", "top_n": 15}, "depends_on": ["step1_validate"], "description": "属水平组成堆叠条形图"},
+    {"id": "step10_heatmap", "module": "heatmap", "params": {"group_column": "{group_column}", "top_n": 50, "normalize": "zscore"}, "depends_on": ["step1_validate"], "description": "Top 变异特征聚类热图"},
+    {"id": "step11_random_forest", "module": "random_forest", "params": {"group_column": "{group_column}", "n_estimators": 500}, "depends_on": ["step1_validate"], "description": "随机森林分类与特征重要性"},
+    {"id": "step12_upset", "module": "upset", "params": {"group_column": "{group_column}", "prevalence_threshold": 0.25}, "depends_on": ["step1_validate"], "description": "UpSet：组间共享与特有特征"},
+    {"id": "step13_report", "module": "report_generator", "params": {"format": "pdf", "title": "病例-对照微生物组分析报告"}, "depends_on": ["step2_rarefaction", "step3_alpha", "step4_pcoa", "step5_permanova", "step6_anosim", "step7_marker", "step8_volcano", "step9_taxonomy_bar", "step10_heatmap", "step11_random_forest", "step12_upset"], "description": "汇总全部结果为 PDF 报告"}
+  ]
+}

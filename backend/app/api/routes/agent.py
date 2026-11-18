@@ -42,6 +42,7 @@ from app.api.routes.analysis import (
 )
 from app.services.agent_engine import AgentEngine
 from app.services.data_parser import parse_data_file
+from app.models import Session as SessionModel
 
 
 logger = logging.getLogger(__name__)
@@ -702,6 +703,97 @@ async def list_templates():
     return {
         "templates": templates,
         "total": len(templates),
+    }
+
+
+# ───────────────────────────────────────────────────────────────
+# PLAYBOOKS (study-type-keyed plan templates)
+# ───────────────────────────────────────────────────────────────
+
+
+class PlaybookInstantiateRequest(BaseModel):
+    session_id: str
+    column_mapping: Optional[Dict[str, str]] = None
+
+
+@router.get("/playbooks", response_model=Dict[str, Any])
+async def list_playbooks_endpoint():
+    """List analysis playbooks (article-archetype plan templates).
+
+    A playbook is the class-level counterpart of plan-from-paper: it encodes
+    the common analysis practice for a *type* of study, so the user picks a
+    card instead of writing a prompt.
+    """
+    from app.agent.playbooks import list_playbooks
+
+    playbooks = list_playbooks()
+    return {"playbooks": playbooks, "total": len(playbooks)}
+
+
+@router.get("/playbooks/{playbook_id}", response_model=Dict[str, Any])
+async def get_playbook_endpoint(playbook_id: str):
+    """Full playbook detail, including the step DAG with {role} placeholders."""
+    from app.agent.playbooks import PlaybookError, get_playbook
+
+    try:
+        return get_playbook(playbook_id)
+    except PlaybookError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/playbooks/{playbook_id}/instantiate", response_model=Dict[str, Any])
+async def instantiate_playbook_endpoint(
+    playbook_id: str,
+    request: PlaybookInstantiateRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Resolve a playbook against a session's metadata into an executable plan.
+
+    Column placeholders snap to the session's actual metadata columns (user
+    ``column_mapping`` wins; otherwise synonym-based snapping), reference
+    levels default to the first sorted level of the resolved group column,
+    and every resolution is disclosed in ``corrections``. A required column
+    that cannot be resolved is a 422 naming the missing role — never a
+    silently wrong analysis.
+
+    Like plan-from-paper, the returned plan is NOT executed; the client must
+    show it and only call /agent/execute after user confirmation.
+    """
+    from app.agent.playbooks import PlaybookError, instantiate_playbook
+    from app.services.workflow_explainer import explain_plan
+    from app.agent.planner import ExecutionPlan, PlanStep
+
+    session = db.query(SessionModel).filter(SessionModel.id == request.session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
+
+    metadata_df = get_metadata_df(request.session_id, db)
+    if metadata_df is None or metadata_df.empty:
+        raise HTTPException(
+            status_code=422,
+            detail="该会话还没有元数据。请先上传 metadata，再实例化分析剧本。")
+
+    try:
+        result = instantiate_playbook(playbook_id, metadata_df, request.column_mapping)
+    except PlaybookError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    plan_dict = result["plan"]
+    explanation = explain_plan(ExecutionPlan(
+        query=plan_dict["query"],
+        steps=[PlanStep(id=s["id"], module=s["module"], params=s["params"],
+                        depends_on=s["depends_on"], description=s["description"])
+               for s in plan_dict["steps"]],
+        estimated_time="",
+    ))
+    return {
+        "plan": plan_dict,
+        "resolved_roles": result["resolved_roles"],
+        "corrections": result["corrections"],
+        "playbook": result["playbook"],
+        "explanation": explanation,
+        "confirmed": False,
+        "next_step": "Review the plan; POST /agent/execute with this plan to run it.",
     }
 
 

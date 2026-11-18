@@ -1,0 +1,41 @@
+{
+  "id": "longitudinal_multiomics",
+  "title": "纵向多组学研究",
+  "title_en": "Longitudinal multi-omics study",
+  "study_type": "longitudinal_multiomics",
+  "article_archetype": "Huang et al. 2021 mBio; Zhou et al. 2019 Nature; Lloyd-Price et al. 2019 Nature",
+  "description": "同一批个体在多个时间点采样、同时测定微生物组与代谢组的纵向设计。覆盖：多样性动态、双组学排序、考虑个体重复测量的 PERMANOVA、以基线为参考的差异特征、跨组学整合，以及个体稳定性（ICC）。",
+  "required_data": ["microbiome", "metabolome", "metadata"],
+  "required_columns": {
+    "time_column": "采样时间点（如 Timepoint / Visit / Day）",
+    "subject_column": "个体 ID（如 Subject_ID / Host_ID / Patient）"
+  },
+  "optional_columns": {
+    "group_column": "额外的分组变量（如疾病状态；缺省时按时间点分组）",
+    "reference_level": "差异分析的参考水平（缺省时取排序后的第一个水平，通常为基线）"
+  },
+  "expected_outputs": [
+    "Alpha 多样性箱线图（按时间点）",
+    "微生物组 PCoA 与代谢组 PCA 排序图",
+    "PERMANOVA 统计表（含个体分层置换）",
+    "差异菌属 / 差异代谢物火山图与表格（基线为参考）",
+    "Procrustes 对齐图与 Mantel 相关性",
+    "ICC 时间稳定性表",
+    "综合 PDF 报告"
+  ],
+  "steps": [
+    {"id": "step1_validate", "module": "data_validator", "params": {}, "depends_on": [], "description": "校验数据格式、维度与样本对齐"},
+    {"id": "step2_alpha", "module": "microbiome_alpha", "params": {"metrics": ["shannon", "simpson"], "group_column": "{time_column}"}, "depends_on": ["step1_validate"], "description": "Alpha 多样性随时间点的变化"},
+    {"id": "step3_mb_pcoa", "module": "microbiome_pcoa", "params": {"distance_metric": "braycurtis", "group_column": "{time_column}"}, "depends_on": ["step1_validate"], "description": "微生物组 PCoA（按时间点上色）"},
+    {"id": "step4_met_pca", "module": "metabolome_pca", "params": {"transformation": "zscore", "group_column": "{time_column}"}, "depends_on": ["step1_validate"], "description": "代谢组 PCA（按时间点上色）"},
+    {"id": "step5_permanova_mb", "module": "permanova", "params": {"data_type": "microbiome", "group_column": "{time_column}", "subject_column": "{subject_column}", "permutations": 999}, "depends_on": ["step3_mb_pcoa"], "description": "微生物组 PERMANOVA（置换按个体分层）"},
+    {"id": "step6_permanova_met", "module": "permanova", "params": {"data_type": "metabolome", "group_column": "{time_column}", "subject_column": "{subject_column}", "permutations": 999}, "depends_on": ["step4_met_pca"], "description": "代谢组 PERMANOVA（置换按个体分层）"},
+    {"id": "step7_mb_marker", "module": "microbiome_marker", "params": {"group_column": "{time_column}", "reference_group": "{reference_level}"}, "depends_on": ["step1_validate"], "description": "差异菌属（CLR + Wilcoxon，基线为参考）"},
+    {"id": "step8_met_marker", "module": "metabolome_marker", "params": {"group_column": "{time_column}", "reference_group": "{reference_level}"}, "depends_on": ["step1_validate"], "description": "差异代谢物（log1p + Welch t，基线为参考）"},
+    {"id": "step9_procrustes", "module": "procrustes", "params": {"group_column": "{time_column}"}, "depends_on": ["step3_mb_pcoa", "step4_met_pca"], "description": "Procrustes 双组学排序对齐"},
+    {"id": "step10_mantel", "module": "mantel_test", "params": {}, "depends_on": ["step1_validate"], "description": "Mantel 检验：微生物组-代谢组距离矩阵相关"},
+    {"id": "step11_crosscorr", "module": "cross_correlation", "params": {"method": "spearman"}, "depends_on": ["step7_mb_marker", "step8_met_marker"], "description": "菌属-代谢物 Spearman 相关热图"},
+    {"id": "step12_icc", "module": "icc_stability", "params": {"subject_column": "{subject_column}", "time_column": "{time_column}"}, "depends_on": ["step1_validate"], "description": "ICC：各分类单元的时间稳定性（个体内/间方差分解）"},
+    {"id": "step13_report", "module": "report_generator", "params": {"format": "pdf", "title": "纵向多组学分析报告"}, "depends_on": ["step2_alpha", "step3_mb_pcoa", "step4_met_pca", "step5_permanova_mb", "step6_permanova_met", "step7_mb_marker", "step8_met_marker", "step9_procrustes", "step10_mantel", "step11_crosscorr", "step12_icc"], "description": "汇总全部结果为 PDF 报告"}
+  ]
+}
