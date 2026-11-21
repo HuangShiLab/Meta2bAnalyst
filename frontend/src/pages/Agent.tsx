@@ -13,6 +13,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useAuthStore } from "@/stores/authStore";
 import { authHeaders } from "@/utils/api";
@@ -38,6 +45,7 @@ import {
   Table,
   Pencil,
   Database,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEMO_DATASETS, loadDemoDataset } from "@/lib/demoDatasets";
@@ -100,6 +108,32 @@ interface ExecutionEvent {
   timestamp: number;
   payload: Record<string, any>;
 }
+
+// ── Analysis playbooks (study-type plan templates) ─────────────
+
+interface Playbook {
+  id: string;
+  title: string;
+  title_en: string;
+  study_type: string;
+  article_archetype: string;
+  description: string;
+  required_data: string[];
+  required_columns: Record<string, string>;
+  optional_columns: Record<string, string>;
+  expected_outputs: string[];
+  n_steps: number;
+}
+
+interface MetadataColumnInfo {
+  name: string;
+  is_categorical: boolean;
+  n_levels?: number;
+  values?: string[];
+}
+
+/** Roles whose value is a metadata *level* of the group column, not a column. */
+const LEVEL_ROLES = new Set(["reference_level", "reference_group"]);
 
 // ───────────────────────────────────────────────────────────────
 // TEMPLATES
@@ -698,6 +732,94 @@ export function Agent() {
     [isRunning, sessionId, proposePlan]
   );
 
+  // ── Playbook picker: card -> column mapping -> confirmed plan ──
+  const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [playbooks, setPlaybooks] = useState<Playbook[] | null>(null);
+  const [selectedPlaybook, setSelectedPlaybook] = useState<Playbook | null>(null);
+  const [roleMapping, setRoleMapping] = useState<Record<string, string>>({});
+  const [metadataColumns, setMetadataColumns] = useState<MetadataColumnInfo[]>([]);
+  const [playbookError, setPlaybookError] = useState<string | null>(null);
+  const [playbookBusy, setPlaybookBusy] = useState(false);
+
+  const openPlaybooks = useCallback(async () => {
+    if (!sessionId) return;
+    setPlaybookOpen(true);
+    setSelectedPlaybook(null);
+    setRoleMapping({});
+    setPlaybookError(null);
+    try {
+      if (!playbooks) {
+        const res = await fetch("/api/v1/agent/playbooks", { headers: authHeaders() });
+        if (!res.ok) throw new Error("Failed to load playbooks");
+        const data = await res.json();
+        setPlaybooks(data.playbooks || []);
+      }
+      const colRes = await fetch(`/api/v1/sessions/${sessionId}/metadata/columns`, { headers: authHeaders() });
+      if (colRes.ok) {
+        const colData = await colRes.json();
+        setMetadataColumns(colData.columns || []);
+      } else {
+        setMetadataColumns([]);
+      }
+    } catch (err) {
+      setPlaybookError(err instanceof Error ? err.message : "Failed to load playbooks");
+    }
+  }, [sessionId, playbooks]);
+
+  /** Instantiate the selected playbook and propose the plan in chat. */
+  const instantiatePlaybook = useCallback(async () => {
+    if (!selectedPlaybook || !sessionId || playbookBusy) return;
+    setPlaybookBusy(true);
+    setPlaybookError(null);
+    try {
+      const mapping: Record<string, string> = {};
+      for (const [role, value] of Object.entries(roleMapping)) {
+        if (value) mapping[role] = value;
+      }
+      const res = await fetch(`/api/v1/agent/playbooks/${selectedPlaybook.id}/instantiate`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ session_id: sessionId, column_mapping: mapping }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Playbook instantiation failed");
+      }
+      const data = await res.json();
+      const planData: ExecutionPlan = {
+        ...data.plan,
+        explanation: data.explanation,
+      };
+      // Disclose how the template met the data, like paper2agent's corrections.
+      const corrections = (data.corrections || []) as { role: string; to: string; kind: string }[];
+      const correctionText = corrections.length
+        ? "\n\nColumn resolution: " + corrections.map((c) => `\`${c.role}\` → \`${c.to}\``).join(", ")
+        : "";
+      setPlaybookOpen(false);
+      setMessages((prev) => [
+        ...prev,
+        { id: `user-${Date.now()}`, role: "user", content: `📚 Start from playbook: ${selectedPlaybook.title}`, timestamp: new Date() },
+      ]);
+      proposePlan(planData, {
+        content:
+          `Playbook **${selectedPlaybook.title}** instantiated: **${planData.n_steps} steps**. ` +
+          `Review the steps below, then confirm to run:${correctionText}`,
+      });
+    } catch (err) {
+      setPlaybookError(err instanceof Error ? err.message : "Playbook instantiation failed");
+    } finally {
+      setPlaybookBusy(false);
+    }
+  }, [selectedPlaybook, sessionId, roleMapping, playbookBusy, proposePlan]);
+
+  /** Levels of the column chosen for the group/time role (for reference-level selects). */
+  const referenceLevelOptions = useMemo(() => {
+    if (!selectedPlaybook) return [] as string[];
+    const groupRole = roleMapping.group_column || roleMapping.time_column;
+    const col = metadataColumns.find((c) => c.name === groupRole);
+    return col?.values || [];
+  }, [selectedPlaybook, roleMapping, metadataColumns]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(input);
@@ -795,6 +917,18 @@ export function Agent() {
                 e.target.value = "";
               }}
             />
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={isNoSession || isRunning}
+              onClick={openPlaybooks}
+              data-testid="button-playbooks"
+              title="Start from a curated study-type playbook (no prompt needed)"
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              Playbooks
+            </Button>
             <Button
               variant={mode === "execute" ? "default" : "outline"}
               size="sm"
@@ -1191,6 +1325,144 @@ export function Agent() {
           </p>
         </div>
       </div>
+
+      {/* Playbook picker: card grid -> column mapping -> confirmed plan */}
+      <Dialog open={playbookOpen} onOpenChange={setPlaybookOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedPlaybook ? selectedPlaybook.title : "Start from a study-type playbook"}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedPlaybook
+                ? "Map the playbook's roles to your metadata columns (leave on Auto to snap automatically), then generate the plan."
+                : "Curated analysis workflows per study type. No prompt needed — pick the design that matches your study."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {playbookError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {playbookError}
+            </div>
+          )}
+
+          {!selectedPlaybook ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(playbooks || []).map((pb) => (
+                <button
+                  key={pb.id}
+                  type="button"
+                  data-testid={`playbook-card-${pb.id}`}
+                  onClick={() => { setSelectedPlaybook(pb); setRoleMapping({}); setPlaybookError(null); }}
+                  className="rounded-lg border border-border bg-card p-3 text-left transition hover:border-primary hover:shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{pb.title}</span>
+                    <Badge variant="secondary" className="shrink-0 text-[10px]">{pb.n_steps} steps</Badge>
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{pb.title_en}</p>
+                  <p className="mt-1.5 line-clamp-3 text-xs leading-snug">{pb.description}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {pb.required_data.map((d) => (
+                      <Badge key={d} variant="outline" className="text-[10px]">{d}</Badge>
+                    ))}
+                    {Object.keys(pb.required_columns).map((r) => (
+                      <Badge key={r} variant="outline" className="text-[10px] border-amber-300 text-amber-700">
+                        needs: {r}
+                      </Badge>
+                    ))}
+                  </div>
+                </button>
+              ))}
+              {playbooks && playbooks.length === 0 && (
+                <p className="col-span-2 text-sm text-muted-foreground">No playbooks available.</p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted px-3 py-2 text-xs">
+                <p className="font-medium">{selectedPlaybook.title_en}</p>
+                <p className="mt-1 text-muted-foreground">{selectedPlaybook.description}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Archetype: {selectedPlaybook.article_archetype}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {Object.entries(selectedPlaybook.required_columns).map(([role, desc]) => (
+                  <div key={role} className="space-y-1">
+                    <label className="text-xs font-medium">
+                      {role} <span className="text-destructive">*</span>
+                      <span className="ml-1 font-normal text-muted-foreground">{desc}</span>
+                    </label>
+                    <Select
+                      value={roleMapping[role] || "__auto__"}
+                      onValueChange={(v) => setRoleMapping((m) => ({ ...m, [role]: v === "__auto__" ? "" : v }))}
+                    >
+                      <SelectTrigger className="h-8 text-xs" data-testid={`map-${role}`}>
+                        <SelectValue placeholder="Auto (snap by name)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto__">Auto (snap by name)</SelectItem>
+                        {metadataColumns.map((c) => (
+                          <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {Object.entries(selectedPlaybook.optional_columns).map(([role, desc]) => (
+                  <div key={role} className="space-y-1">
+                    <label className="text-xs font-medium">
+                      {role}
+                      <span className="ml-1 font-normal text-muted-foreground">{desc}</span>
+                    </label>
+                    <Select
+                      value={roleMapping[role] || "__auto__"}
+                      onValueChange={(v) => setRoleMapping((m) => ({ ...m, [role]: v === "__auto__" ? "" : v }))}
+                    >
+                      <SelectTrigger className="h-8 text-xs" data-testid={`map-${role}`}>
+                        <SelectValue placeholder={LEVEL_ROLES.has(role) ? "Auto (first level)" : "Auto (snap by name)"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto__">
+                          {LEVEL_ROLES.has(role) ? "Auto (first level)" : "Auto (snap by name)"}
+                        </SelectItem>
+                        {(LEVEL_ROLES.has(role) ? referenceLevelOptions : metadataColumns.map((c) => c.name)).map((v) => (
+                          <SelectItem key={v} value={v}>{v}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+
+              {metadataColumns.length === 0 && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  This session has no readable metadata yet — the playbook needs metadata columns to map onto.
+                  Upload metadata first, or the instantiate step will fail.
+                </p>
+              )}
+
+              <div className="flex items-center justify-between pt-1">
+                <Button variant="ghost" size="sm" onClick={() => { setSelectedPlaybook(null); setPlaybookError(null); }}>
+                  ← Back
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={playbookBusy}
+                  onClick={instantiatePlaybook}
+                  data-testid="button-instantiate-playbook"
+                >
+                  {playbookBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  Generate plan
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       </>
       )}
     </div>
